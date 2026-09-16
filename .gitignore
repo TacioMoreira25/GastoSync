@@ -1,48 +1,76 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+# ==============================================================================
+# GastoSync Monorepo - .gitignore
+# ==============================================================================
 
-# IntelliJ related
+# Operating System & IDEs
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+.idea/
+.vscode/
 *.iml
 *.ipr
 *.iws
-.idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# Environment Variables & Secrets (Groq API, Tokens, MASVS compliance)
+.env
+.env.*
+!.env.example
 
-# Flutter/Dart/Pub related
+# Local Databases (Drift / SQLite)
+*.sqlite
+*.sqlite-journal
+*.sqlite3
+*.db
+*.db-journal
+
+# ------------------------------------------------------------------------------
+# Flutter / Dart (gastosync_app)
+# ------------------------------------------------------------------------------
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/coverage/
 **/doc/api/
+**/.widget_preview/
+
+# Android build artifacts
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+
+# iOS build artifacts
 **/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
 
-# Symbolication related
-app.*.symbols
+# Linux build artifacts
+**/linux/flutter/ephemeral/
 
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release  
-
-# Widget Preview related
-.widget_preview/
+# ------------------------------------------------------------------------------
+# Python Backend (gastosync_agent)
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
