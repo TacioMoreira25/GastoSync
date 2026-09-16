@@ -1,0 +1,48 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../constants/api_constants.dart';
+
+/// Provedor Riverpod para a instância configurada do Dio
+final dioProvider = Provider<Dio>((ref) {
+  final baseOptions = BaseOptions(
+    baseUrl: ApiConstants.defaultBaseUrl,
+    connectTimeout: ApiConstants.connectTimeout,
+    receiveTimeout: ApiConstants.receiveTimeout,
+    sendTimeout: ApiConstants.sendTimeout,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    responseType: ResponseType.json,
+  );
+
+  final dio = Dio(baseOptions);
+
+  // Interceptor de Segurança e Auditoria (OWASP MASVS compliance)
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) {
+        // Sanitização de logs em ambiente de produção para evitar vazamento de PII/Tokens
+        if (kDebugMode) {
+          debugPrint('🌐 [DIO REQ] [${options.method}] => ${options.uri}');
+        }
+        return handler.next(options);
+      },
+      onResponse: (response, handler) {
+        if (kDebugMode) {
+          debugPrint('✅ [DIO RESP] [${response.statusCode}] <= ${response.requestOptions.uri}');
+        }
+        return handler.next(response);
+      },
+      onError: (DioException e, handler) {
+        if (kDebugMode) {
+          debugPrint('❌ [DIO ERR] [${e.response?.statusCode}] <= ${e.requestOptions.uri}: ${e.message}');
+        }
+        return handler.next(e);
+      },
+    ),
+  );
+
+  return dio;
+});
