@@ -54,8 +54,6 @@ Thumbs.db
 **/ios/Flutter/Flutter.framework
 **/ios/Flutter/Flutter.podspec
 
-# Linux build artifacts
-**/linux/flutter/ephemeral/
 
 # ------------------------------------------------------------------------------
 # Python Backend (gastosync_agent)
