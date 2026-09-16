@@ -1,17 +1,20 @@
-# gastosync
+# GastoSync - Monorepo
 
-A new Flutter project.
+Sistema de gestão financeira pessoal multiplataforma com agente preditivo e orçamentário por IA.
 
-## Getting Started
+## Estrutura do Repositório
 
-This project is a starting point for a Flutter application.
+```text
+gastosync/
+├── gastosync_app/     # Cliente Flutter Multiplataforma (Web, Android, iOS)
+└── gastosync_agent/   # Backend Python para orquestração de LLM via Groq API
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### Tecnologias do Cliente (`gastosync_app`)
+- **UI & Design**: Material Design 3 (Light/Dark Mode), Google Fonts (Inter)
+- **Gerenciamento de Estado**: Flutter Riverpod & Riverpod Annotation
+- **Navegação Adaptativa**: GoRouter com `StatefulShellRoute.indexedStack` (NavigationRail / NavigationBar)
+- **Persistência Reativa**: Drift + sqlite3_flutter_libs (Offline-First)
+- **Dashboard & Gráficos**: fl_chart
+- **Serialização & Imutabilidade**: Freezed & JSON Serializable
+- **Rede**: Dio (configurado com BaseOptions para comunicação REST)
