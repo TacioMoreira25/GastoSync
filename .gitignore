@@ -72,3 +72,9 @@ dist/
 build/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.uv/
+
+# Spec Kit Machine-local state
+.specify/feature.json
+
