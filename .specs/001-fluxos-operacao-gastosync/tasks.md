@@ -20,9 +20,9 @@
 **⚠️ CRÍTICO**: Nenhuma User Story pode ser finalizada sem a camada Drift ativa
 
 - [x] T005 Implementar tabelas `LocalTransactions` e `LocalBudgets` em `gastosync_app/lib/core/database/app_database.dart`
-- [ ] T006 Implementar tabela `LocalMetrics` (snapshots históricos das 9 métricas) em `gastosync_app/lib/core/database/app_database.dart`
-- [ ] T007 Implementar tabela `LocalAgentInsights` (persistência das sugestões do Llama 3.3) em `gastosync_app/lib/core/database/app_database.dart`
-- [ ] T008 Executar `build_runner` para regenerar `app_database.g.dart` com as 4 tabelas
+- [x] T006 Implementar tabela `LocalMetrics` (snapshots históricos das 9 métricas) em `gastosync_app/lib/core/database/app_database.dart`
+- [x] T007 Implementar tabela `LocalAgentInsights` (persistência das sugestões do Llama 3.3) em `gastosync_app/lib/core/database/app_database.dart`
+- [x] T008 Executar `build_runner` para regenerar `app_database.g.dart` com as 4 tabelas
 - [x] T009 Configurar cliente HTTP `Dio` com timeouts de 10s/20s e base URL em `gastosync_app/lib/core/network/dio_client.dart`
 - [x] T010 [P] Configurar `GoRouter` com navegação adaptativa em `gastosync_app/lib/core/router/app_router.dart`
 
@@ -38,14 +38,14 @@
 
 ### Testes da User Story 1 ⚠️
 - [x] T011 [P] [US1] Testes unitários de inserção e stream no Drift em `gastosync_app/test/core/database/app_database_test.dart`
-- [ ] T012 [P] [US1] Teste de cálculo de saldo com múltiplas transações de receita/despesa em `gastosync_app/test/features/transactions/domain/transaction_calculations_test.dart`
+- [x] T012 [P] [US1] Teste de cálculo de saldo com múltiplas transações de receita/despesa em `gastosync_app/test/features/transactions/domain/transaction_calculations_test.dart`
 
 ### Implementação da User Story 1
-- [ ] T013 [P] [US1] Criar modelo de domínio e DTOs de Transação em `gastosync_app/lib/features/transactions/domain/models/transaction.dart`
-- [ ] T014 [US1] Implementar repositório `TransactionRepository` conectando ao `AppDatabase` em `gastosync_app/lib/features/transactions/data/repositories/transaction_repository_impl.dart`
-- [ ] T015 [US1] Criar provedor Riverpod `watchTransactionsProvider` escutando a stream do Drift em `gastosync_app/lib/features/transactions/presentation/controllers/transactions_controller.dart`
-- [ ] T016 [US1] Implementar tela de listagem de transações em `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`
-- [ ] T017 [US1] Implementar formulário manual de cadastro rápido de transação com validação de campos
+- [x] T013 [P] [US1] Criar modelo de domínio e DTOs de Transação em `gastosync_app/lib/features/transactions/domain/models/transaction.dart`
+- [x] T014 [US1] Implementar repositório `TransactionRepository` conectando ao `AppDatabase` em `gastosync_app/lib/features/transactions/data/repositories/transaction_repository_impl.dart`
+- [x] T015 [US1] Criar provedor Riverpod `watchTransactionsProvider` escutando a stream do Drift em `gastosync_app/lib/features/transactions/presentation/controllers/transactions_controller.dart`
+- [x] T016 [US1] Implementar tela de listagem de transações em `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`
+- [x] T017 [US1] Implementar formulário manual de cadastro rápido de transação com validação de campos
 
 **Checkpoint**: User Story 1 funcional de ponta a ponta em modo 100% offline (MVP validado!)
 
@@ -58,15 +58,15 @@
 **Independent Test**: Chamar o fluxo com texto vago ("lanche tarde 25"), receber a categorização da IA, abrir o modal de confirmação, alterar a categoria manualmente e verificar persistência no Drift e na tabela `LocalAgentInsights`
 
 ### Testes da User Story 2 ⚠️
-- [ ] T018 [P] [US2] Testes unitários do cliente de predição com mock HTTP do Dio em `gastosync_app/test/features/budget_agent/data/budget_agent_api_test.dart`
-- [ ] T019 [P] [US2] Testes de widget do Modal Human-in-the-Loop (edição e confirmação) em `gastosync_app/test/features/transactions/presentation/widgets/human_in_the_loop_modal_test.dart`
+- [x] T018 [P] [US2] Testes unitários do cliente de predição com mock HTTP do Dio em `gastosync_app/test/features/budget_agent/data/budget_agent_api_test.dart`
+- [x] T019 [P] [US2] Testes de widget do Modal Human-in-the-Loop (edição e confirmação) em `gastosync_app/test/features/transactions/presentation/widgets/human_in_the_loop_modal_test.dart`
 
 ### Implementação da User Story 2
-- [ ] T020 [P] [US2] Criar modelos Freezed para request e response de predição (`AgentPredictionRequest`, `AgentPredictionResponse`)
-- [ ] T021 [US2] Implementar serviço de comunicação `BudgetAgentService` acionando `POST /predict/categorize`
-- [ ] T022 [US2] Implementar widget adaptativo `HumanInTheLoopModal` (BottomSheet para mobile, Dialog para Web) com edição de categoria, valor e descrição
-- [ ] T023 [US2] Integrar confirmação do modal com a gravação simultânea na tabela `LocalTransactions` e `LocalAgentInsights` no Drift
-- [ ] T024 [US2] Implementar tratamento de fallback gracioso (timeout de 10s ou falha de rede) permitindo cadastro manual sem interrupção
+- [x] T020 [P] [US2] Criar modelos Freezed para request e response de predição (`AgentPredictionRequest`, `AgentPredictionResponse`)
+- [x] T021 [US2] Implementar serviço de comunicação `BudgetAgentService` acionando `POST /predict/categorize`
+- [x] T022 [US2] Implementar widget adaptativo `HumanInTheLoopModal` (BottomSheet para mobile, Dialog para Web) com edição de categoria, valor e descrição
+- [x] T023 [US2] Integrar confirmação do modal com a gravação simultânea na tabela `LocalTransactions` e `LocalAgentInsights` no Drift
+- [x] T024 [US2] Implementar tratamento de fallback gracioso (timeout de 10s ou falha de rede) permitindo cadastro manual sem interrupção
 
 **Checkpoint**: Fluxo B integrado com sucesso mantendo o usuário no controle total dos dados
 
@@ -79,10 +79,10 @@
 **Independent Test**: Digitar texto livre e carregar imagem de recibo, verificando se os campos são preenchidos corretamente no modal Human-in-the-Loop
 
 ### Implementação da User Story 3
-- [ ] T025 [P] [US3] Criar componente de entrada de texto informal `QuickExpenseInputField` no Dashboard
-- [ ] T026 [P] [US3] Implementar seletor/captura de imagem de comprovante via `image_picker`
-- [ ] T027 [US3] Implementar chamada multipart `POST /predict/ocr` no `BudgetAgentService` com timeout de 20s
-- [ ] T028 [US3] Conectar o retorno do OCR diretamente ao `HumanInTheLoopModal` para revisão humana
+- [x] T025 [P] [US3] Criar componente de entrada de texto informal `QuickExpenseInputField` no Dashboard
+- [x] T026 [P] [US3] Implementar seletor/captura de imagem de comprovante via `image_picker`
+- [x] T027 [US3] Implementar chamada multipart `POST /predict/ocr` no `BudgetAgentService` com timeout de 20s
+- [x] T028 [US3] Conectar o retorno do OCR diretamente ao `HumanInTheLoopModal` para revisão humana
 
 ---
 
@@ -93,11 +93,11 @@
 **Independent Test**: Cadastrar múltiplas receitas e despesas e validar matematicamente os 9 cards e o gráfico de fluxo de caixa
 
 ### Implementação da User Story 4
-- [ ] T029 [P] [US4] Implementar classe de domínio `FinancialHealthEngine` com os algoritmos das 9 métricas
-- [ ] T030 [US4] Criar `financialMetricsStreamProvider` no Riverpod que consome as transações do Drift e emite o objeto `FinancialMetrics`
-- [ ] T031 [US4] Atualizar `DashboardScreen` conectando os 9 cards aos dados reativos reais do provider (substituindo dados mockados)
-- [ ] T032 [US4] Conectar o gráfico `LineChart` do `fl_chart` aos dados reais de receitas vs despesas dos últimos 6 meses
-- [ ] T033 [US4] Implementar card de insight dinâmico consumindo o último registro de `LocalAgentInsights`
+- [x] T029 [P] [US4] Implementar classe de domínio `FinancialHealthEngine` com os algoritmos das 9 métricas
+- [x] T030 [US4] Criar `financialMetricsStreamProvider` no Riverpod que consome as transações do Drift e emite o objeto `FinancialMetrics`
+- [x] T031 [US4] Atualizar `DashboardScreen` conectando os 9 cards aos dados reativos reais do provider (substituindo dados mockados)
+- [x] T032 [US4] Conectar o gráfico `LineChart` do `fl_chart` aos dados reais de receitas vs despesas dos últimos 6 meses
+- [x] T033 [US4] Implementar card de insight dinâmico consumindo o último registro de `LocalAgentInsights`
 
 ---
 
@@ -105,9 +105,9 @@
 
 **Purpose**: Qualidade transversal, responsividade e documentação
 
-- [ ] T034 [P] Testes de regressão multiplataforma (Android, iOS e Web)
-- [ ] T035 [P] Testes de persistência em modo offline simulando perda súbita de conexão
-- [ ] T036 Documentação técnica da aplicação Web e guia de build para Vercel/Firebase
+- [x] T034 [P] Testes de regressão multiplataforma (Android, iOS e Web)
+- [x] T035 [P] Testes de persistência em modo offline simulando perda súbita de conexão
+- [x] T036 Documentação técnica da aplicação Web e guia de build para Vercel/Firebase
 
 ---
 

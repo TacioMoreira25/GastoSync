@@ -1,28 +1,43 @@
+import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../../core/database/app_database.dart';
+import '../../../transactions/presentation/widgets/manual_transaction_form_modal.dart';
+import '../../domain/services/financial_health_engine.dart';
+import '../controllers/dashboard_controller.dart';
+import '../widgets/quick_expense_input_field.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currencyFormatter =
+        NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isCompact = screenWidth < 600;
+
+    final metricsAsync = ref.watch(financialMetricsStreamProvider);
+    final latestInsightAsync = ref.watch(latestAgentInsightStreamProvider);
+
+    final metrics = metricsAsync.valueOrNull ??
+        FinancialHealthEngine.calculate(const []);
+    final latestInsight = latestInsightAsync.valueOrNull;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Visão Geral'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_none_rounded),
-            tooltip: 'Notificações',
-            onPressed: () {},
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            tooltip: 'Novo Lançamento Manual',
+            onPressed: () => ManualTransactionFormModal.show(context),
           ),
           IconButton(
-            icon: const Icon(Icons.filter_alt_outlined),
-            tooltip: 'Filtrar Período',
+            icon: const Icon(Icons.notifications_none_rounded),
+            tooltip: 'Notificações',
             onPressed: () {},
           ),
           const SizedBox(width: 8),
@@ -34,12 +49,19 @@ class DashboardScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildWelcomeHeader(context),
+            const SizedBox(height: 18),
+            const QuickExpenseInputField(),
             const SizedBox(height: 24),
-            _buildMetricCardsGrid(context, currencyFormatter, screenWidth),
+            _buildMetricCardsGrid(
+              context,
+              currencyFormatter,
+              screenWidth,
+              metrics,
+            ),
             const SizedBox(height: 28),
-            _buildChartCard(context),
+            _buildChartCard(context, metrics.sixMonthsSeries),
             const SizedBox(height: 28),
-            _buildAgentInsightCard(context),
+            _buildAgentInsightCard(context, latestInsight, metrics),
           ],
         ),
       ),
@@ -60,7 +82,7 @@ class DashboardScreen extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Métricas consolidadas de saúde financeira e previsões do assistente.',
+          'As 9 métricas canônicas de saúde financeira calculadas 100% localmente em tempo real.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -73,82 +95,142 @@ class DashboardScreen extends StatelessWidget {
     BuildContext context,
     NumberFormat formatter,
     double screenWidth,
+    FinancialMetrics metrics,
   ) {
     final cards = [
+      // 1. Saldo Líquido
       _MetricData(
-        title: 'Saldo Disponível',
-        value: formatter.format(14250.80),
+        title: '1. Saldo Líquido',
+        value: formatter.format(metrics.currentBalance),
         icon: Icons.account_balance_wallet_rounded,
         color: const Color(0xFF0F766E),
-        growthIndicator: '+8.4% vs mês anterior',
-        isPositiveGrowth: true,
+        growthIndicator: metrics.currentBalance >= 0
+            ? 'Patrimônio positivo'
+            : 'Atenção: saldo negativo',
+        isPositiveGrowth: metrics.currentBalance >= 0,
       ),
+      // 2. Receita Mensal Total
       _MetricData(
-        title: 'Receitas (Mês)',
-        value: formatter.format(21500.00),
+        title: '2. Receitas (Mês)',
+        value: formatter.format(metrics.totalIncome),
         icon: Icons.arrow_upward_rounded,
         color: const Color(0xFF16A34A),
-        growthIndicator: '+12.1% no período',
+        growthIndicator: 'Entradas acumuladas no mês',
         isPositiveGrowth: true,
       ),
+      // 3. Despesa Mensal Total
       _MetricData(
-        title: 'Despesas (Mês)',
-        value: formatter.format(7249.20),
+        title: '3. Despesas (Mês)',
+        value: formatter.format(metrics.totalExpense),
         icon: Icons.arrow_downward_rounded,
         color: const Color(0xFFDC2626),
-        growthIndicator: '-3.2% abaixo da meta',
-        isPositiveGrowth: true,
+        growthIndicator: 'Saídas acumuladas no mês',
+        isPositiveGrowth: metrics.totalExpense <= metrics.totalIncome,
       ),
+      // 4. Taxa de Poupança (%)
       _MetricData(
-        title: 'Taxa de Poupança',
-        value: '66.2%',
+        title: '4. Taxa de Poupança',
+        value: '${metrics.savingsRate.toStringAsFixed(1)}%',
         icon: Icons.savings_rounded,
         color: const Color(0xFF0284C7),
-        growthIndicator: 'Meta: 50.0%',
-        isPositiveGrowth: true,
+        growthIndicator: 'Meta recomendada: ≥ 20.0%',
+        isPositiveGrowth: metrics.savingsRate >= 20.0,
       ),
+      // 5. Reserva de Emergência em Meses
       _MetricData(
-        title: 'Reserva em Meses',
-        value: '5.8 meses',
+        title: '5. Reserva em Meses',
+        value: '${metrics.emergencyMonths.toStringAsFixed(1)} meses',
         icon: Icons.shield_rounded,
-        color: const Color(0xFF8B5CF6), // Purple 500
+        color: const Color(0xFF8B5CF6),
         growthIndicator: 'Meta: 6 meses de gastos',
-        isPositiveGrowth: true,
+        isPositiveGrowth: metrics.emergencyMonths >= 6.0,
+      ),
+      // 6. Comprometimento da Renda (%)
+      _MetricData(
+        title: '6. Comprometimento Renda',
+        value: '${metrics.incomeCommitment.toStringAsFixed(1)}%',
+        icon: Icons.pie_chart_outline_rounded,
+        color: const Color(0xFFF59E0B),
+        growthIndicator: 'Limite saudável: ≤ 80.0%',
+        isPositiveGrowth: metrics.incomeCommitment <= 80.0,
+      ),
+      // 7. Burn Rate Diário
+      _MetricData(
+        title: '7. Burn Rate Diário',
+        value: '${formatter.format(metrics.dailyBurnRate)}/dia',
+        icon: Icons.local_fire_department_rounded,
+        color: const Color(0xFFEA580C),
+        growthIndicator: 'Velocidade média de gasto',
+        isPositiveGrowth:
+            metrics.totalIncome == 0 ||
+            (metrics.dailyBurnRate * 30) <= metrics.totalIncome,
+      ),
+      // 8. Projeção de Fim de Mês
+      _MetricData(
+        title: '8. Projeção Fim de Mês',
+        value: formatter.format(metrics.monthEndProjection),
+        icon: Icons.trending_up_rounded,
+        color: const Color(0xFF4F46E5),
+        growthIndicator: metrics.monthEndProjection <= metrics.totalIncome
+            ? 'Dentro da receita mensal'
+            : 'Acima da receita mensal',
+        isPositiveGrowth: metrics.monthEndProjection <= metrics.totalIncome,
+      ),
+      // 9. Score de Saúde Financeira (0-100)
+      _MetricData(
+        title: '9. Score Saúde Financeira',
+        value: '${metrics.healthScore.toStringAsFixed(0)} / 100',
+        icon: Icons.favorite_rounded,
+        color: const Color(0xFF10B981),
+        growthIndicator: metrics.healthScore >= 70
+            ? 'Saúde Financeira Excelente'
+            : (metrics.healthScore >= 40 ? 'Estável • Em evolução' : 'Requer atenção'),
+        isPositiveGrowth: metrics.healthScore >= 50,
       ),
     ];
 
     int crossAxisCount = 1;
-    if (screenWidth >= 1400) {
-      crossAxisCount = 5;
-    } else if (screenWidth >= 1000) {
+    if (screenWidth >= 1200) {
       crossAxisCount = 3;
     } else if (screenWidth >= 600) {
       crossAxisCount = 2;
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return GridView.builder(
-          physics: const NeverScrollableScrollPhysics(),
-          shrinkWrap: true,
-          itemCount: cards.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            mainAxisExtent: 140,
-          ),
-          itemBuilder: (context, index) {
-            final item = cards[index];
-            return _MetricCard(data: item);
-          },
-        );
+    return GridView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
+      itemCount: cards.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        mainAxisExtent: 140,
+      ),
+      itemBuilder: (context, index) {
+        final item = cards[index];
+        return _MetricCard(data: item);
       },
     );
   }
 
-  Widget _buildChartCard(BuildContext context) {
+  Widget _buildChartCard(
+    BuildContext context,
+    List<MonthlyCashFlowPoint> series,
+  ) {
     final theme = Theme.of(context);
+    double maxVal = 1000.0;
+    for (final pt in series) {
+      maxVal = math.max(maxVal, math.max(pt.income, pt.expense));
+    }
+    final maxY = (maxVal * 1.25).ceilToDouble();
+    final interval = math.max(200.0, (maxY / 4).roundToDouble());
+
+    final incomeSpots = <FlSpot>[];
+    final expenseSpots = <FlSpot>[];
+    for (int i = 0; i < series.length; i++) {
+      incomeSpots.add(FlSpot(i.toDouble(), series[i].income));
+      expenseSpots.add(FlSpot(i.toDouble(), series[i].expense));
+    }
 
     return Card(
       child: Padding(
@@ -172,7 +254,7 @@ class DashboardScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Receitas vs Despesas (Últimos 6 meses)',
+                        'Receitas vs Despesas (Últimos 6 meses - Dados Reais Drift)',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -184,8 +266,16 @@ class DashboardScreen extends StatelessWidget {
                 Wrap(
                   spacing: 12,
                   children: [
-                    _buildLegendItem(context, 'Receita', theme.colorScheme.primary),
-                    _buildLegendItem(context, 'Despesa', theme.colorScheme.error),
+                    _buildLegendItem(
+                      context,
+                      'Receita',
+                      theme.colorScheme.primary,
+                    ),
+                    _buildLegendItem(
+                      context,
+                      'Despesa',
+                      theme.colorScheme.error,
+                    ),
                   ],
                 ),
               ],
@@ -198,27 +288,36 @@ class DashboardScreen extends StatelessWidget {
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
-                    horizontalInterval: 5000,
+                    horizontalInterval: interval,
                     getDrawingHorizontalLine: (value) {
                       return FlLine(
-                        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                        color: theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.3,
+                        ),
                         strokeWidth: 1,
                         dashArray: [4, 4],
                       );
                     },
                   ),
                   titlesData: FlTitlesData(
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        reservedSize: 45,
-                        interval: 5000,
+                        reservedSize: 48,
+                        interval: interval,
                         getTitlesWidget: (value, meta) {
                           if (value == 0) return const SizedBox.shrink();
+                          final label = value >= 1000
+                              ? '${(value / 1000).toStringAsFixed(1)}k'
+                              : value.toInt().toString();
                           return Text(
-                            '${(value / 1000).toInt()}k',
+                            label,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -231,13 +330,12 @@ class DashboardScreen extends StatelessWidget {
                         showTitles: true,
                         reservedSize: 28,
                         getTitlesWidget: (value, meta) {
-                          const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'];
                           final index = value.toInt();
-                          if (index >= 0 && index < months.length) {
+                          if (index >= 0 && index < series.length) {
                             return Padding(
                               padding: const EdgeInsets.only(top: 8.0),
                               child: Text(
-                                months[index],
+                                series[index].label,
                                 style: theme.textTheme.labelSmall?.copyWith(
                                   fontWeight: FontWeight.w600,
                                   color: theme.colorScheme.onSurfaceVariant,
@@ -252,25 +350,18 @@ class DashboardScreen extends StatelessWidget {
                   ),
                   borderData: FlBorderData(show: false),
                   minX: 0,
-                  maxX: 5,
+                  maxX: math.max(0, series.length - 1).toDouble(),
                   minY: 0,
-                  maxY: 25000,
+                  maxY: maxY,
                   lineBarsData: [
                     LineChartBarData(
-                      spots: const [
-                        FlSpot(0, 14000),
-                        FlSpot(1, 16500),
-                        FlSpot(2, 15000),
-                        FlSpot(3, 19000),
-                        FlSpot(4, 18500),
-                        FlSpot(5, 21500),
-                      ],
+                      spots: incomeSpots,
                       isCurved: true,
                       curveSmoothness: 0.35,
                       color: theme.colorScheme.primary,
                       barWidth: 3,
                       isStrokeCapRound: true,
-                      dotData: const FlDotData(show: false),
+                      dotData: const FlDotData(show: true),
                       belowBarData: BarAreaData(
                         show: true,
                         gradient: LinearGradient(
@@ -284,20 +375,13 @@ class DashboardScreen extends StatelessWidget {
                       ),
                     ),
                     LineChartBarData(
-                      spots: const [
-                        FlSpot(0, 8000),
-                        FlSpot(1, 9200),
-                        FlSpot(2, 7800),
-                        FlSpot(3, 10500),
-                        FlSpot(4, 8900),
-                        FlSpot(5, 7249),
-                      ],
+                      spots: expenseSpots,
                       isCurved: true,
                       curveSmoothness: 0.35,
                       color: theme.colorScheme.error,
                       barWidth: 3,
                       isStrokeCapRound: true,
-                      dotData: const FlDotData(show: false),
+                      dotData: const FlDotData(show: true),
                       belowBarData: BarAreaData(
                         show: true,
                         gradient: LinearGradient(
@@ -342,10 +426,18 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAgentInsightCard(BuildContext context) {
+  Widget _buildAgentInsightCard(
+    BuildContext context,
+    LocalAgentInsight? latestInsight,
+    FinancialMetrics metrics,
+  ) {
     final theme = Theme.of(context);
+    final tipText = latestInsight != null
+        ? '[Categoria: ${latestInsight.categorySuggested} • Confiança ${(latestInsight.confidenceScore * 100).round()}%] ${latestInsight.budgetTip}'
+        : 'Sua reserva de emergência atual cobre ${metrics.emergencyMonths.toStringAsFixed(1)} meses de despesas e seu Score de Saúde Financeira está em ${metrics.healthScore.toStringAsFixed(0)}/100. Utilize o campo rápido acima para obter dicas personalizadas do Llama 3.3.';
 
     return Container(
+      key: const Key('dynamic_agent_insight_card'),
       padding: const EdgeInsets.all(18.0),
       decoration: BoxDecoration(
         color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.4),
@@ -383,9 +475,11 @@ class DashboardScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Sua reserva de emergência atual cobre 5.8 meses de despesas. Você está a apenas R\$ 1.450,00 da meta de 6 meses. O agente orçamentário recomenda canalizar o excedente deste mês para essa cobertura.',
+                  tipText,
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer.withValues(alpha: 0.9),
+                    color: theme.colorScheme.onSecondaryContainer.withValues(
+                      alpha: 0.9,
+                    ),
                     height: 1.4,
                   ),
                 ),
