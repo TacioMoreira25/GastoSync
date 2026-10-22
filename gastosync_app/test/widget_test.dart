@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,5 +23,8 @@ void main() {
     expect(find.text('Visão Geral'), findsOneWidget);
     expect(find.text('1. Saldo Líquido'), findsOneWidget);
     expect(find.text('9. Score Saúde Financeira'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 100));
   });
 }

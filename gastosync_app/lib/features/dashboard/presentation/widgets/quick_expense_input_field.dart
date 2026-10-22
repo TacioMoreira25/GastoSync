@@ -149,60 +149,123 @@ class _QuickExpenseInputFieldState
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  'Lançamento Rápido por Linguagem Natural ou OCR',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Text(
+                    'Lançamento Rápido por Linguagem Natural ou OCR',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const Key('quick_expense_input_field'),
-                    controller: _textController,
-                    enabled: !isBusy,
-                    onSubmitted: (_) => _submitInformalText(),
-                    decoration: const InputDecoration(
-                      hintText: 'Ex: "uber 22 reais" ou "almoço equipe 85"',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.chat_bubble_outline_rounded, size: 18),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 480;
+                if (isNarrow) {
+                  return Column(
+                    children: [
+                      TextField(
+                        key: const Key('quick_expense_input_field'),
+                        controller: _textController,
+                        enabled: !isBusy,
+                        onSubmitted: (_) => _submitInformalText(),
+                        decoration: const InputDecoration(
+                          hintText: 'Ex: "uber 22 reais" ou "almoço equipe 85"',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              key: const Key('quick_expense_submit_button'),
+                              onPressed: isBusy ? null : _submitInformalText,
+                              icon: _isProcessingText
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.auto_awesome_rounded, size: 18),
+                              label: const Text('IA'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              key: const Key('quick_expense_ocr_button'),
+                              onPressed: isBusy
+                                  ? null
+                                  : () => _handleOcrReceipt(ImageSource.gallery),
+                              icon: _isProcessingOcr
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.document_scanner_outlined, size: 18),
+                              label: const Text('OCR Recibo'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('quick_expense_input_field'),
+                        controller: _textController,
+                        enabled: !isBusy,
+                        onSubmitted: (_) => _submitInformalText(),
+                        decoration: const InputDecoration(
+                          hintText: 'Ex: "uber 22 reais" ou "almoço equipe 85"',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  key: const Key('quick_expense_submit_button'),
-                  onPressed: isBusy ? null : _submitInformalText,
-                  icon: _isProcessingText
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.auto_awesome_rounded, size: 18),
-                  label: const Text('IA'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  key: const Key('quick_expense_ocr_button'),
-                  onPressed: isBusy
-                      ? null
-                      : () => _handleOcrReceipt(ImageSource.gallery),
-                  icon: _isProcessingOcr
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.document_scanner_outlined, size: 18),
-                  label: const Text('OCR Recibo'),
-                ),
-              ],
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      key: const Key('quick_expense_submit_button'),
+                      onPressed: isBusy ? null : _submitInformalText,
+                      icon: _isProcessingText
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.auto_awesome_rounded, size: 18),
+                      label: const Text('IA'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      key: const Key('quick_expense_ocr_button'),
+                      onPressed: isBusy
+                          ? null
+                          : () => _handleOcrReceipt(ImageSource.gallery),
+                      icon: _isProcessingOcr
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.document_scanner_outlined, size: 18),
+                      label: const Text('OCR Recibo'),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),
