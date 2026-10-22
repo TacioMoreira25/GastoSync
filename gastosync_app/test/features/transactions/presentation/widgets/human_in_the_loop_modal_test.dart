@@ -55,25 +55,28 @@ void main() {
       );
 
       await tester.tap(find.byKey(const Key('hitl_confirm_button')));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 500));
 
-      // Verifica persistência simultânea no Drift (LocalTransactions + LocalAgentInsights)
-      final transactions = await database.watchAllTransactions().first;
+      final transactions = await database.select(database.localTransactions).get();
       expect(transactions.length, equals(1));
       expect(transactions.first.description, equals('Padaria Artesanal'));
       expect(transactions.first.amount, equals(32.50));
       expect(transactions.first.category, equals('Alimentação'));
       expect(transactions.first.isSynced, isFalse);
 
-      final latestInsight = await database.watchLatestAgentInsight().first;
+      final insights = await database.select(database.localAgentInsights).get();
+      expect(insights.length, equals(1));
+      final latestInsight = insights.first;
       expect(latestInsight, isNotNull);
-      expect(latestInsight!.transactionId, equals(transactions.first.id));
+      expect(latestInsight.transactionId, equals(transactions.first.id));
       expect(latestInsight.categorySuggested, equals('Alimentação'));
       expect(latestInsight.confidenceScore, closeTo(0.92, 0.001));
       expect(
         latestInsight.budgetTip,
         equals('Dentro da meta diária de alimentação.'),
       );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
     },
   );
 }

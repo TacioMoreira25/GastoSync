@@ -22,9 +22,9 @@ class DashboardScreen extends ConsumerWidget {
     final metricsAsync = ref.watch(financialMetricsStreamProvider);
     final latestInsightAsync = ref.watch(latestAgentInsightStreamProvider);
 
-    final metrics = metricsAsync.valueOrNull ??
+    final metrics = metricsAsync.asData?.value ??
         FinancialHealthEngine.calculate(const []);
-    final latestInsight = latestInsightAsync.valueOrNull;
+    final latestInsight = latestInsightAsync.asData?.value;
 
     return Scaffold(
       appBar: AppBar(

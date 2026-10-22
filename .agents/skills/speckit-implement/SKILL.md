@@ -1,6 +1,6 @@
 ---
 name: "speckit-implement"
-description: "Execute the implementation plan by processing and executing all tasks defined in tasks.md"
+description: "Execute the implementation plan by processing and executing ONLY ONE task at a time from tasks.md"
 compatibility: "Requires spec-kit project structure with .specify/ directory"
 metadata:
   author: "github-spec-kit"
@@ -15,6 +15,13 @@ $ARGUMENTS
 ```
 
 You **MUST** consider the user input before proceeding (if not empty).
+
+> **⚠️ STRICT SINGLE-TASK EXECUTION RULE (NON-NEGOTIABLE)**:
+> You MUST execute **ONLY ONE (1) single task** per invocation of `/speckit-implement`.
+> - If `$ARGUMENTS` specifies a task ID (e.g., `T005`), execute **only** that specific task.
+> - If `$ARGUMENTS` is empty, find the **first unchecked task (`- [ ]`)** in `tasks.md` and execute **only** that single task.
+> - **NEVER** execute multiple tasks, an entire phase, or all tasks in a single run, even if tasks are marked `[P]` (parallelizable).
+> - Immediately after completing that **one** task and marking it `[x]` in `tasks.md`, **STOP** execution and report to the user.
 
 ## Pre-Execution Checks
 
@@ -149,33 +156,26 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Task details**: ID, description, file paths, parallel markers [P]
    - **Execution flow**: Order and dependency requirements
 
-6. Execute implementation following the task plan:
-   - **Phase-by-phase execution**: Complete each phase before moving to the next
-   - **Respect dependencies**: Run sequential tasks in order, parallel tasks [P] can run together
-   - **Follow TDD approach**: Execute test tasks before their corresponding implementation tasks
-   - **File-based coordination**: Tasks affecting the same files must run sequentially
-   - **Validation checkpoints**: Verify each phase completion before proceeding
+6. Select and execute **ONLY ONE (1) task** from `tasks.md`:
+   - **Single-Task Selection**:
+     - If the user specified a task ID in `$ARGUMENTS` (e.g. `T010`), select **only** that task.
+     - Otherwise, select **only the very first unchecked task (`- [ ]`)** in `tasks.md`.
+   - **Strict Stop Boundary**: Do **NOT** continue to the next task after completing the selected task. Ignore `[P]` markers for batching — execute strictly 1 task per run.
+   - **Respect dependencies**: If the selected task depends on an earlier unchecked task, warn the user and stop (or execute the prerequisite first if no explicit task ID was forced).
 
-7. Implementation execution rules:
-   - **Setup first**: Initialize project structure, dependencies, configuration
-   - **Tests before code**: If you need to write tests for contracts, entities, and integration scenarios
-   - **Core development**: Implement models, services, CLI commands, endpoints
-   - **Integration work**: Database connections, middleware, logging, external services
-   - **Polish and validation**: Unit tests, performance optimization, documentation
+7. Implementation execution rules (for the single selected task):
+   - Implement **only** the files and changes required by the single selected task.
+   - Do not anticipatorily implement code belonging to subsequent tasks.
 
 8. Progress tracking and error handling:
-   - Report progress after each completed task
-   - Halt execution if any non-parallel task fails
-   - For parallel tasks [P], continue with successful tasks, report failed ones
-   - Provide clear error messages with context for debugging
-   - Suggest next steps if implementation cannot proceed
-   - **IMPORTANT** For completed tasks, make sure to mark the task off as [X] in the tasks file.
+   - Halt execution if the task fails and provide clear error messages with context for debugging.
+   - **IMPORTANT**: Once the single selected task is completed and verified, mark **only** that task as `[x]` in `tasks.md`.
+   - **STOP IMMEDIATELY** after updating `tasks.md`. Do NOT loop or proceed to the next unchecked task.
 
-9. Completion validation:
-   - Verify all required tasks are completed
-   - Check that implemented features match the original specification
-   - Validate that tests pass and coverage meets requirements
-   - Confirm the implementation follows the technical plan
+9. Single-Task Completion validation:
+   - Verify the single selected task is completed and matches the specification/plan.
+   - Validate that relevant tests/analysis pass for the modified files.
+   - Report the completed task ID, what was done, and which task is next in `tasks.md`.
 
 Note: This command assumes a complete task breakdown exists in tasks.md. If tasks are incomplete or missing, suggest running `/speckit-tasks` first to regenerate the task list.
 
@@ -216,11 +216,12 @@ Check if `.specify/extensions.yml` exists in the project root.
 
 ## Completion Report
 
-Report final status with summary of completed work.
+Report status of the **single executed task**, files changed, and indicate the next pending task in `tasks.md`.
 
 ## Done When
 
-- [ ] All tasks in tasks.md completed and marked `[X]`
-- [ ] Implementation validated against specification, plan, and test coverage
+- [ ] Exactly ONE (1) task in `tasks.md` was executed and marked `[x]`
+- [ ] Execution stopped immediately without touching any subsequent tasks
+- [ ] Implementation of the single task validated against specification and plan
 - [ ] Extension hooks dispatched or skipped according to the rules in Mandatory Post-Execution Hooks above
-- [ ] Completion reported to user with summary of completed work
+- [ ] Completion reported to user with summary of the single completed task and next task in queue
