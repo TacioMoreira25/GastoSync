@@ -11,7 +11,7 @@ import 'package:gastosync_app/features/transactions/presentation/controllers/tra
 import 'package:gastosync_app/main.dart';
 
 void main() {
-  group('Multiplatform Regression & Offline Resilience Tests (T034, T035)', () {
+  group('Multiplatform Regression & Offline Resilience Tests (T034, T035, T047)', () {
     test('FinancialHealthEngine calcula matematicamente todas as 9 métricas (US4)', () {
       final refDate = DateTime(2026, 10, 15); // Dia 15 de um mês de 31 dias
       final transactions = [
@@ -68,7 +68,7 @@ void main() {
     });
 
     testWidgets(
-      'Responsividade Multiplataforma: Mobile (360dp NavigationBar) vs Web/Desktop (1280dp NavigationRail) (T034)',
+      'Responsividade Multiplataforma v2: Mobile (360dp BottomBar + Header) vs Web/Desktop (1280dp Sidebar + TopBar) (T034, T047)',
       (tester) async {
         final db = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() => db.close());
@@ -87,15 +87,21 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.byType(NavigationBar), findsOneWidget);
-        expect(find.byType(NavigationRail), findsNothing);
+        expect(find.byKey(const Key('gastosync_mobile_header')), findsOneWidget);
+        expect(find.byKey(const Key('gastosync_mobile_bottom_bar')), findsOneWidget);
+        expect(find.byKey(const Key('mobile_center_add_button')), findsOneWidget);
+        expect(find.byKey(const Key('gastosync_ai_fab_button')), findsOneWidget);
+        expect(find.byKey(const Key('gastosync_web_sidebar')), findsNothing);
 
         // 2. Web / Desktop Viewport (1280x900)
         tester.view.physicalSize = const Size(1280, 900);
         await tester.pumpAndSettle();
 
-        expect(find.byType(NavigationRail), findsOneWidget);
-        expect(find.byType(NavigationBar), findsNothing);
+        expect(find.byKey(const Key('gastosync_web_sidebar')), findsOneWidget);
+        expect(find.byKey(const Key('gastosync_web_top_bar')), findsOneWidget);
+        expect(find.byKey(const Key('web_sidebar_new_transaction_button')), findsOneWidget);
+        expect(find.byKey(const Key('web_sidebar_offline_box')), findsOneWidget);
+        expect(find.byKey(const Key('gastosync_mobile_bottom_bar')), findsNothing);
 
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(milliseconds: 100));
@@ -103,7 +109,7 @@ void main() {
     );
 
     test(
-      'Persistência Offline sob perda súbita de conexão garante gravação íntegra no Drift (T035)',
+      'Persistência Offline sob perda súbita de conexão e metas mensais LocalBudgets no Drift (T035, T044, T047)',
       () async {
         final db = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(() => db.close());
@@ -147,6 +153,25 @@ void main() {
         expect(savedList.length, equals(1));
         expect(savedList.first.description, equals('Supermercado Modo Avião'));
         expect(savedList.first.isSynced, isFalse);
+
+        // Valida seed padrão e upsertBudget em LocalBudgets (T044)
+        final initialBudgets = await db.watchAllBudgets(month: 10, year: 2026).first;
+        expect(initialBudgets.length, equals(4));
+        expect(
+          initialBudgets.map((b) => b.category),
+          containsAll(['Alimentação', 'Moradia', 'Transporte', 'Lazer']),
+        );
+
+        await db.upsertBudget(
+          category: 'Alimentação',
+          limitAmount: 1500.0,
+          month: 10,
+          year: 2026,
+        );
+        final updatedBudgets = await db.watchAllBudgets(month: 10, year: 2026).first;
+        final alimentacao =
+            updatedBudgets.firstWhere((b) => b.category == 'Alimentação');
+        expect(alimentacao.limitAmount, closeTo(1500.0, 0.01));
       },
     );
   });

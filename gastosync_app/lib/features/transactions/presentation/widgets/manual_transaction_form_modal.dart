@@ -1,9 +1,15 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/database/app_database.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../budget_agent/data/services/budget_agent_service.dart';
+import '../../../budget_agent/domain/models/agent_prediction_models.dart';
+import '../../../dashboard/presentation/widgets/quick_expense_input_field.dart';
 import '../../domain/models/transaction.dart';
 import '../controllers/transactions_controller.dart';
-import 'human_in_the_loop_modal.dart';
 
 class ManualTransactionFormModal extends ConsumerStatefulWidget {
   const ManualTransactionFormModal({super.key});
@@ -14,9 +20,10 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
       return showDialog<bool>(
         context: context,
         builder: (ctx) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          backgroundColor: AppTheme.cardSurface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 500),
+            constraints: const BoxConstraints(maxWidth: 520),
             child: const ManualTransactionFormModal(),
           ),
         ),
@@ -27,6 +34,7 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      backgroundColor: AppTheme.cardSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -45,36 +53,226 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
 class _ManualTransactionFormModalState
     extends ConsumerState<ManualTransactionFormModal> {
   final _formKey = GlobalKey<FormState>();
+  final _smartInputController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
+
   TransactionType _selectedType = TransactionType.expense;
   String _selectedCategory = 'Alimentação';
+  DateTime _selectedDate = DateTime.now();
+
+  final List<String> _categories = [
+    'Alimentação',
+    'Moradia',
+    'Transporte',
+    'Lazer',
+    'Saúde',
+    'Renda',
+  ];
+
+  AgentPredictionResponse? _lastAiPrediction;
   bool _isSubmitting = false;
   bool _isPredictingAi = false;
+  bool _isProcessingOcr = false;
 
   @override
   void dispose() {
+    _smartInputController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
     super.dispose();
   }
 
-  Future<void> _saveDirectlyOffline() async {
-    if (!_formKey.currentState!.validate()) return;
+  void _applyPredictionToFields(AgentPredictionResponse prediction) {
+    setState(() {
+      _lastAiPrediction = prediction;
+      if (prediction.normalizedDescription.trim().isNotEmpty) {
+        _descriptionController.text = prediction.normalizedDescription.trim();
+      }
+      if (prediction.estimatedAmount > 0) {
+        _amountController.text =
+            prediction.estimatedAmount.toStringAsFixed(2).replaceAll('.', ',');
+      }
+      final cat = prediction.category.trim();
+      if (cat.isNotEmpty) {
+        if (!_categories.contains(cat)) {
+          _categories.add(cat);
+        }
+        _selectedCategory = cat;
+      }
+      if (prediction.inferredDate != null) {
+        _selectedDate = prediction.inferredDate!;
+      }
+    });
+  }
+
+  Future<void> _fillWithAi() async {
+    final rawText = _smartInputController.text.trim().isNotEmpty
+        ? _smartInputController.text.trim()
+        : _descriptionController.text.trim();
+
+    if (rawText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Digite uma frase no campo de Entrada inteligente (ex: "Almoço 45,90 no débito").',
+          ),
+        ),
+      );
+      return;
+    }
 
     final rawAmount = _amountController.text.trim().replaceAll(',', '.');
-    final amount = double.parse(rawAmount);
+    final explicitAmount = double.tryParse(rawAmount);
+
+    setState(() => _isPredictingAi = true);
+    try {
+      final agentService = ref.read(budgetAgentServiceProvider);
+      final prediction = await agentService.predictCategoryWithFallback(
+        rawInput: rawText,
+        explicitAmount: explicitAmount,
+      );
+
+      if (!mounted) return;
+      _applyPredictionToFields(prediction);
+    } finally {
+      if (mounted) {
+        setState(() => _isPredictingAi = false);
+      }
+    }
+  }
+
+  Future<void> _fillWithOcr() async {
+    setState(() => _isProcessingOcr = true);
+    try {
+      final picker = ref.read(receiptImagePickerProvider);
+      final picked = await picker.pickReceipt(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+
+      final agentService = ref.read(budgetAgentServiceProvider);
+      final prediction = await agentService.extractReceiptFromOcrWithFallback(
+        imageBytes: picked.bytes,
+        fileName: picked.fileName,
+      );
+
+      if (!mounted) return;
+      _applyPredictionToFields(prediction);
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessingOcr = false);
+      }
+    }
+  }
+
+  Future<void> _promptNewCategory() async {
+    final controller = TextEditingController();
+    final newCat = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nova Categoria'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Ex: Educação, Investimentos, Pets...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Adicionar'),
+          ),
+        ],
+      ),
+    );
+
+    if (newCat != null && newCat.isNotEmpty && mounted) {
+      setState(() {
+        final exists = _categories.any(
+          (c) => c.toLowerCase() == newCat.toLowerCase(),
+        );
+        if (!exists) {
+          _categories.add(newCat);
+        }
+        _selectedCategory = newCat;
+      });
+
+      // Persiste imediatamente a nova categoria em LocalBudgets para aparecer em Planejamento
+      if (newCat.toLowerCase() != 'renda') {
+        await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
+              newCat,
+              defaultLimit: 500.0,
+            );
+      }
+    }
+  }
+
+  Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  Future<void> _confirmAndSave() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final rawAmount = _amountController.text
+        .trim()
+        .replaceAll('R\$', '')
+        .replaceAll(' ', '')
+        .replaceAll('.', '')
+        .replaceAll(',', '.');
+    final fallbackAmount =
+        double.tryParse(_amountController.text.trim().replaceAll(',', '.'));
+    final amount = double.tryParse(rawAmount) ?? fallbackAmount ?? 0.0;
     final description = _descriptionController.text.trim();
 
     setState(() => _isSubmitting = true);
     try {
-      await ref.read(transactionsControllerProvider).createManualTransaction(
-            description: description,
-            amount: amount,
-            date: DateTime.now(),
-            type: _selectedType,
-            category: _selectedCategory,
-          );
+      final controller = ref.read(transactionsControllerProvider);
+      final prediction = _lastAiPrediction;
+
+      if (prediction != null) {
+        await controller.createAiConfirmedTransaction(
+          description: description,
+          amount: amount,
+          date: _selectedDate,
+          type: _selectedType,
+          category: _selectedCategory,
+          rawSuggestion: jsonEncode(prediction.toJson()),
+          confidenceScore: prediction.confidence,
+          categorySuggested: prediction.category,
+          budgetTip: prediction.budgetTip,
+        );
+      } else {
+        await controller.createManualTransaction(
+          description: description,
+          amount: amount,
+          date: _selectedDate,
+          type: _selectedType,
+          category: _selectedCategory,
+        );
+      }
+
+      if (_selectedType == TransactionType.expense) {
+        await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
+              _selectedCategory,
+              defaultLimit: 500.0,
+            );
+      }
+
       if (mounted) {
         Navigator.of(context).pop(true);
       }
@@ -91,127 +289,351 @@ class _ManualTransactionFormModalState
     }
   }
 
-  Future<void> _categorizeWithAi() async {
-    final description = _descriptionController.text.trim();
-    if (description.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Digite uma descrição ou frase informal para consultar a IA.'),
-        ),
-      );
-      return;
-    }
-
-    final rawAmount = _amountController.text.trim().replaceAll(',', '.');
-    final explicitAmount = double.tryParse(rawAmount);
-
-    setState(() => _isPredictingAi = true);
-    try {
-      final agentService = ref.read(budgetAgentServiceProvider);
-      final prediction = await agentService.predictCategoryWithFallback(
-        rawInput: description,
-        explicitAmount: explicitAmount,
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      await HumanInTheLoopModal.show(
-        context,
-        prediction: prediction,
-        initialType: _selectedType,
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isPredictingAi = false);
-      }
-    }
+  String _formatSelectedDate(DateTime date) {
+    final now = DateTime.now();
+    final isToday = date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
+    final formatted = DateFormat('dd/MM/yyyy').format(date);
+    return isToday ? 'Hoje, $formatted' : formatted;
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final isBusy = _isSubmitting || _isPredictingAi || _isProcessingOcr;
+    final budgets = ref.watch(watchBudgetsProvider).value ?? const <LocalBudget>[];
+    final transactions =
+        ref.watch(watchTransactionsProvider).value ?? const <Transaction>[];
+
+    // Unifica categorias padrão + categorias criadas no Planejamento + categorias usadas em Transações
+    final categoryMap = <String, String>{};
+    for (final c in _categories) {
+      categoryMap[c.trim().toLowerCase()] = c.trim();
+    }
+    for (final b in budgets) {
+      final trimmed = b.category.trim();
+      if (trimmed.isNotEmpty) {
+        categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+      }
+    }
+    for (final t in transactions) {
+      final trimmed = t.category.trim();
+      if (trimmed.isNotEmpty) {
+        categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+      }
+    }
+    final allCategories = categoryMap.values.toList();
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
       child: Form(
         key: _formKey,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Cabeçalho: NOVO LANÇAMENTO / Adicionar transação
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Nova Transação (Offline-First)',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'NOVO LANÇAMENTO',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Adicionar transação',
+                        style: TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.4,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 IconButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  icon: const Icon(Icons.close_rounded),
+                  onPressed:
+                      isBusy ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: AppTheme.textMuted,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Salve diretamente no banco local SQLite (Drift) ou peça categorização preditiva da IA.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            const SizedBox(height: 16),
+
+            // Bloco superior: Entrada inteligente (IA + OCR)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.subtleSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 16,
+                        color: AppTheme.emeraldPrimary,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'Entrada inteligente',
+                        style: TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const Key('smart_input_text_field'),
+                    controller: _smartInputController,
+                    enabled: !isBusy,
+                    onSubmitted: (_) => _fillWithAi(),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: "Ex: 'Almoço 45,90 no débito'...",
+                      hintStyle: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 13,
+                      ),
+                      isDense: true,
+                      filled: true,
+                      fillColor: AppTheme.cardSurface,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppTheme.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppTheme.cardBorder),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          key: const Key('manual_ai_suggest_button'),
+                          onPressed: isBusy ? null : _fillWithAi,
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: AppTheme.cardSurface,
+                            foregroundColor: AppTheme.textPrimary,
+                            side: const BorderSide(color: AppTheme.cardBorder),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: _isPredictingAi
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.auto_awesome_rounded,
+                                  size: 16,
+                                  color: AppTheme.emeraldPrimary,
+                                ),
+                          label: const Text(
+                            'Preencher com IA',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        key: const Key('manual_ocr_button'),
+                        onPressed: isBusy ? null : _fillWithOcr,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: AppTheme.cardSurface,
+                          foregroundColor: AppTheme.textPrimary,
+                          side: const BorderSide(color: AppTheme.cardBorder),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: _isProcessingOcr
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.camera_alt_outlined,
+                                size: 16,
+                                color: AppTheme.textSecondary,
+                              ),
+                        label: const Text(
+                          'OCR',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_lastAiPrediction != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppTheme.emeraldSoftBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.emeraldBadgeBg),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.check_circle_rounded,
+                            size: 16,
+                            color: AppTheme.emeraldDeep,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _lastAiPrediction!.budgetTip,
+                              style: const TextStyle(
+                                color: AppTheme.emeraldDeep,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // Abas Despesa / Receita
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: AppTheme.subtleSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _TypeTabButton(
+                      key: const Key('tab_expense_button'),
+                      label: 'Despesa',
+                      isSelected: _selectedType == TransactionType.expense,
+                      selectedColor: AppTheme.navyDark,
+                      onTap: () {
+                        setState(() {
+                          _selectedType = TransactionType.expense;
+                          if (_selectedCategory == 'Renda') {
+                            _selectedCategory = 'Alimentação';
+                          }
+                        });
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _TypeTabButton(
+                      key: const Key('tab_income_button'),
+                      label: 'Receita',
+                      isSelected: _selectedType == TransactionType.income,
+                      selectedColor: AppTheme.emeraldPrimary,
+                      onTap: () {
+                        setState(() {
+                          _selectedType = TransactionType.income;
+                          _selectedCategory = 'Renda';
+                        });
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
-            SegmentedButton<TransactionType>(
-              segments: const [
-                ButtonSegment(
-                  value: TransactionType.expense,
-                  label: Text('Despesa'),
-                  icon: Icon(Icons.arrow_downward_rounded),
-                ),
-                ButtonSegment(
-                  value: TransactionType.income,
-                  label: Text('Receita'),
-                  icon: Icon(Icons.arrow_upward_rounded),
-                ),
-              ],
-              selected: {_selectedType},
-              onSelectionChanged: (selection) {
-                setState(() {
-                  _selectedType = selection.first;
-                  if (_selectedType == TransactionType.income) {
-                    _selectedCategory = 'Renda Principal';
-                  } else if (_selectedCategory.startsWith('Renda')) {
-                    _selectedCategory = 'Alimentação';
-                  }
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              key: const Key('manual_description_field'),
-              controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Descrição (ex: Almoço executivo, Salário)',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.edit_note_rounded),
+
+            // Campo Valor R$ 0,00
+            const Text(
+              'Valor',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'A descrição não pode ser vazia.';
-                }
-                return null;
-              },
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 6),
             TextFormField(
               key: const Key('manual_amount_field'),
               controller: _amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Valor (R\$)',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money_rounded),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+              decoration: InputDecoration(
+                hintText: 'R\$ 0,00',
+                prefixText: 'R\$ ',
+                prefixStyle: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+                filled: true,
+                fillColor: AppTheme.backgroundLight,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
               ),
               validator: (value) {
                 final raw = (value ?? '').trim().replaceAll(',', '.');
@@ -223,61 +645,222 @@ class _ManualTransactionFormModalState
               },
             ),
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              key: const Key('manual_category_dropdown'),
-              initialValue: _selectedCategory,
-              decoration: const InputDecoration(
-                labelText: 'Categoria',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.category_outlined),
+
+            // Campo Descrição
+            const Text(
+              'Descrição',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
-              items: HumanInTheLoopModalStateCategories.list
-                  .map(
-                    (cat) => DropdownMenuItem<String>(
-                      value: cat,
-                      child: Text(cat),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _selectedCategory = value);
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              key: const Key('manual_description_field'),
+              controller: _descriptionController,
+              decoration: InputDecoration(
+                hintText: 'Nome da transação (ex: Supermercado, Aluguel)',
+                hintStyle: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 14,
+                ),
+                filled: true,
+                fillColor: AppTheme.backgroundLight,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.cardBorder),
+                ),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'A descrição não pode ser vazia.';
                 }
+                return null;
               },
             ),
-            const SizedBox(height: 20),
-            Row(
+            const SizedBox(height: 16),
+
+            // Chips de Categoria + botão "+ Nova Categoria"
+            const Text(
+              'Categoria',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key('manual_ai_suggest_button'),
-                    onPressed: (_isSubmitting || _isPredictingAi)
-                        ? null
-                        : _categorizeWithAi,
-                    icon: _isPredictingAi
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome_rounded),
-                    label: const Text('Sugerir com IA'),
+                ...allCategories.map((cat) {
+                  final isSelected =
+                      _selectedCategory.toLowerCase() == cat.toLowerCase();
+                  return ChoiceChip(
+                    key: Key('category_chip_$cat'),
+                    label: Text(cat),
+                    selected: isSelected,
+                    showCheckmark: false,
+                    selectedColor: AppTheme.navyDark,
+                    backgroundColor: AppTheme.cardSurface,
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.white : AppTheme.textSecondary,
+                      fontSize: 12,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                    onSelected: (_) {
+                      setState(() => _selectedCategory = cat);
+                    },
+                  );
+                }),
+                ActionChip(
+                  key: const Key('add_custom_category_chip'),
+                  backgroundColor: AppTheme.emeraldSoftBg,
+                  side: const BorderSide(color: AppTheme.emeraldBadgeBg),
+                  label: const Text(
+                    '+ Nova Categoria',
+                    style: TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    key: const Key('manual_save_button'),
-                    onPressed: (_isSubmitting || _isPredictingAi)
-                        ? null
-                        : _saveDirectlyOffline,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('Salvar Local'),
-                  ),
+                  onPressed: isBusy ? null : _promptNewCategory,
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+
+            // Seletor de Data
+            const Text(
+              'Data',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            InkWell(
+              key: const Key('manual_date_selector'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: isBusy ? null : _selectDate,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.backgroundLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.cardBorder),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _formatSelectedDate(_selectedDate),
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Icon(
+                      Icons.calendar_today_outlined,
+                      size: 18,
+                      color: AppTheme.textMuted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 22),
+
+            // Botão largo inferior verde "Confirmar e Salvar"
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                key: const Key('manual_save_button'),
+                onPressed: isBusy ? null : _confirmAndSave,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.emeraldPrimary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'Confirmar e Salvar',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+              ),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TypeTabButton extends StatelessWidget {
+  const _TypeTabButton({
+    required this.label,
+    required this.isSelected,
+    required this.selectedColor,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final bool isSelected;
+  final Color selectedColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(9),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected ? selectedColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : AppTheme.textSecondary,
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+          ),
         ),
       ),
     );
