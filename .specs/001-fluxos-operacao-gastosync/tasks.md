@@ -101,9 +101,9 @@
 
 ---
 
-## Phase 7: Polish, Testes Integrados & Homologação
+## Phase 7: Polish, Testes Integrados & Homologação (Base v1)
 
-**Purpose**: Qualidade transversal, responsividade e documentação
+**Purpose**: Qualidade transversal, responsividade e documentação inicial
 
 - [x] T034 [P] Testes de regressão multiplataforma (Android, iOS e Web)
 - [x] T035 [P] Testes de persistência em modo offline simulando perda súbita de conexão
@@ -111,17 +111,37 @@
 
 ---
 
-## Phase 8: Fronteira Externa - Tarefas do Agente IA (Equipe de Backend / Terceiros)
+## Phase 8: Redesign de Interface v2 (Fidelidade ao Protótipo Final do Figma)
+
+**Goal**: Atualizar a camada visual (`theme`, `router`, `screens` e `widgets`) para refletir com 100% de fidelidade as 5 telas do novo protótipo do Figma, mantendo intacta a camada de dados reativa Drift e os serviços Dio.
+
+> **⚠️ REGRA DE EXECUÇÃO (`/speckit-implement`)**: Cada invocação do comando `/speckit-implement` executará **APENAS UMA (1)** tarefa desta lista por vez e parará imediatamente.
+
+- [x] T037 Atualizar paleta de cores (`#0F172A` Navy, `#10B981` Emerald, `#F8FAFC` Background) e estilos de cards/badges em `gastosync_app/lib/core/theme/app_theme.dart`
+- [ ] T038 Criar modelo/provedor de perfil de usuário (`UserProfileNotifier` com nome, e-mail e iniciais dinâmicas, com fallback padrão) e componentes de cabeçalho: `GastoSyncMobileHeader` (topo escuro com widget de logo isolado `GastoSyncBrandLogo`, saudação dinâmica `Olá, {nome}` e avatar com iniciais), `GastoSyncWebTopBar` (barra superior clara Web com badge `Local sincronizado`, sino e avatar dinâmico), e o modal/sheet conversacional do botão `G✨` (assistente de IA para dúvidas e análises financeiras) em `gastosync_app/lib/core/widgets/gastosync_top_header.dart` e `gastosync_app/lib/features/settings/domain/models/user_profile.dart`
+- [ ] T039 Atualizar `ScaffoldWithAdaptiveNavigation` e rotas no `GoRouter` para as 4 abas (`Início`, `Transações`, `Planejamento`, `Mais`): no Mobile com barra inferior + botão `+` verde central, e na Web (`>= 800dp`) com Sidebar esquerda escura (`#0F172A`, logo `GastoSync`, botão verde `+ Nova Transação`, menu lateral, box `Modo Offline-First · Sincronizado` e perfil dinâmico `{iniciais} · {nome}`) + botão flutuante `G✨` em `gastosync_app/lib/core/router/app_router.dart`
+- [ ] T040 [US1] Implementar o modal unificado de lançamento `Adicionar transação` (acionado pelo botão `+` verde): bloco superior `Entrada inteligente` (*"Ex: 'Almoço 45,90 no débito'..."* com botões `Preencher com IA` e `OCR`), abas `Despesa`/`Receita`, campo `Valor R$ 0,00`, campo `Descrição`, chips de `Categoria` com botão `+ Nova Categoria`, seletor de `Data` e botão largo verde `Confirmar e Salvar` em `gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart`
+- [ ] T041 [US4] Refatorar a Tela 1 (`Início`) com layout responsivo Mobile/Web: no Mobile em coluna única e na Web em grid de 2 colunas (Hero Card escuro `SALDO DISPONÍVEL` à esquerda + Grid 2x2 `Resumo do Mês` com `Taxa de Poupança`, `Reserva de Emergência`, `Comprometimento` e `Score Financeiro` à direita; card `Burn Rate` com alerta amarelo e gráfico `fl_chart` embaixo) em `gastosync_app/lib/features/dashboard/presentation/screens/dashboard_screen.dart`
+- [ ] T042 [US4] Implementar o card `Últimas Transações & Insights` na Tela 1 (`Início`) (posicionado abaixo do Burn Rate no Mobile e ao lado direito do Burn Rate na Web), exibindo o banner cinza de insight da IA seguido pelas últimas 4 transações com ícones temáticos e status (`Sincronizado` / `Pendente local`) em `gastosync_app/lib/features/dashboard/presentation/screens/dashboard_screen.dart`
+- [ ] T043 [US1] Refatorar a Tela 2 (`Transações`) conforme o Figma: cabeçalho `MOVIMENTAÇÕES` com badge verde `X sincronizadas`, barra de pesquisa (`Pesquisar transações, categorias...`), chips horizontais de categoria sem scrollbar visível e card unificado listando as transações com ícones por categoria e status `Sincronizado` (verde) ou `Pendente local` (laranja) em `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`
+- [ ] T044 [US4] Implementar métodos de consulta/escrita de metas mensais (`watchAllBudgets`, `upsertBudget`) na tabela `LocalBudgets` do Drift (com seed padrão para `Alimentação`, `Moradia`, `Transporte` e `Lazer`) em `gastosync_app/lib/core/database/app_database.dart`
+- [ ] T045 [US4] Criar a Tela 3 (`Planejamento` — `Orçamentos & Metas` e `Saúde Financeira`) com badge `Score XX · Saudável`, seletor de abas, botão largo `+ Nova Categoria / Meta` e cards de progresso por categoria (barra verde ou laranja, valor gasto vs. teto e botão `Editar teto`) em `gastosync_app/lib/features/planning/presentation/screens/planning_screen.dart`
+- [ ] T046 [US1] Criar a Tela 4 (`Mais` — `CONTA`) exibindo o card de perfil (`Marcos Pereira` + badge `Conta local ativa`), o card `Status Offline-First (SQLite Local)` com contagem real de transações pendentes e botão `Sincronizar agora`, e a lista `Configurações financeiras` (`Renda Base Mensal`, `Meta de Taxa de Poupança`, `Gerenciar Categorias`, `Exportar Relatório CSV`) em `gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`
+- [ ] T047 Atualizar os testes de widget e regressão para validar as 4 novas abas (`Início`, `Transações`, `Planejamento`, `Mais`) e os novos componentes do protótipo v2 em `gastosync_app/test/widget_test.dart` e `gastosync_app/test/multiplatform_regression_test.dart`
+
+---
+
+## Phase 9: Fronteira Externa - Tarefas do Agente IA (Equipe de Backend / Terceiros)
 
 > [!NOTE]
 > Esta seção mapeia estritamente o backlog da equipe externa do agente (`gastosync_agent`) para rastreabilidade de contratos, sem necessidade de implementação no app Flutter.
 
-- [x] T-IA01 Configuração de Ambiente e Chaves Groq (`gastosync_agent`)
-- [x] T-IA02 Prompt Engineering (PLN/Texto para categorização Llama 3.3)
-- [ ] T-IA03 Prompt Engineering (OCR/Visão para leitura de comprovantes)
-- [ ] T-IA04 Modelagem do Agente Preditivo e Burn Rate
-- [ ] T-IA05 Sanitização contra Prompt Injection na API FastAPI
-- [ ] T-IA06 Definição e validação dos Contratos JSON (Pydantic schemas)
+- [ ] T-IA01 Configuração de Ambiente, CORS, `requirements.txt` e Chaves Groq (`gastosync_agent`)
+- [ ] T-IA02 Prompt Engineering (PLN/Texto para categorização JSON e classificador de contexto)
+- [ ] T-IA03 Prompt Engineering (OCR/Visão para leitura de comprovantes em JSON)
+- [ ] T-IA04 Modelagem do Agente Preditivo e Burn Rate (`GET /api/v1/agent/budget-burn-rate`)
+- [ ] T-IA05 Sanitização contra Prompt Injection na API FastAPI (corrigir erro de sintaxe e `models.reverse()`)
+- [ ] T-IA06 Definição e validação dos Contratos JSON (`POST /api/v1/predict/categorize` e `POST /api/v1/predict/ocr` com Pydantic schemas)
 - [ ] T-IA07 Testes de Acurácia e Rate Limits da API Groq
 - [ ] T-IA08 Documentação Técnica da API do Agente
 
@@ -134,4 +154,5 @@
 3. **Phase 4 (User Story 2 - Agente IA & Human-in-the-Loop)** conecta o cliente Dio ao backend Python.
 4. **Phase 5 (User Story 3 - OCR & Texto Informal)** expande os canais de input.
 5. **Phase 6 (User Story 4 - 9 Métricas)** conecta o Dashboard analítico reativo.
-6. **Phase 7 (Polish)** finaliza a entrega e homologação.
+6. **Phase 7 (Polish Base v1)** consolida os testes de base.
+7. **Phase 8 (Redesign de Interface v2 - Figma)** atualiza incrementalmente (1 tarefa por vez) o tema, cabeçalhos, navegação e as 4 telas (`Início`, `Transações`, `Planejamento`, `Mais`).

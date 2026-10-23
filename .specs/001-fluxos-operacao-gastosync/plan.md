@@ -41,7 +41,31 @@ O GastoSync é implementado em monorepo com duas frentes isoladas:
 - [x] **Human-in-the-Loop**: Sugestões preditivas e OCR passam por BottomSheet/Dialog de confirmação.
 - [x] **Reatividade por Streams**: Riverpod `StreamProvider` consome queries do Drift.
 - [x] **9 Métricas Canônicas**: Fórmulas matemáticas implementadas localmente em domínio Flutter.
-- [x] **Design Adaptativo**: Shell adaptativo (`NavigationBar` vs `NavigationRail`).
+- [x] **Design Adaptativo & Fidelidade ao Protótipo v2**: Shell adaptativo com Header escuro (`#0F172A`), 4 abas (`Início`, `Transações`, `Planejamento`, `Mais`), FAB central verde (`+`) e FAB flutuante da IA (`G✨`).
+
+## Especificação Visual do Protótipo v2 (Design System)
+
+- **Paleta de Cores**:
+  - **Navy Escuro (Header, Hero Card e FAB IA)**: `#0F172A`
+  - **Verde Esmeralda Primário (Destaques, Botão `+`, Barras Saudáveis, Receitas)**: `#10B981` / `#059669`
+  - **Verde Claro Suave (Badges `Sincronizadas`, `Score Saudável`, Botão `+ Nova Categoria / Meta`)**: Fundo `#D1FAE5` / `#ECFDF5` com texto `#047857`
+  - **Alerta / Limite Próximo (Barra Moradia 93%, Lazer 81%, Banner Burn Rate, `Pendente local`)**: `#D97706` / `#F59E0B` (fundo do banner `#FEF3C7` com borda `#FCD34D`)
+  - **Fundo Geral das Telas**: `#F8FAFC` e Cards brancos `#FFFFFF` com borda sutil `#E2E8F0`.
+- **Estrutura de Navegação (`GoRouter` - Mobile & Web/Desktop)**:
+  - **Shell Mobile (`< 600dp`)**: Header superior escuro (`#0F172A`) + Barra inferior com 4 abas (`Início`, `Transações`, `Planejamento`, `Mais`) + FAB central verde (`+`) + FAB flutuante escuro (`G✨`).
+  - **Shell Web / Desktop (`>= 800dp`)**:
+    - **Sidebar Esquerda Fixa (`#0F172A`, largura ~250px)**: Logo `G` + `GastoSync`, botão verde `+ Nova Transação`, itens de navegação (`Início`, `Transações`, `Planejamento`, `Mais`), card inferior `Modo Offline-First / Sincronizado` e perfil dinâmico com iniciais e nome do usuário (`{Iniciais} · {Nome} · Conta pessoal`).
+    - **Top Bar Web Clara**: Badge verde `Local sincronizado`, ícone de sino com indicador vermelho e avatar dinâmico com as iniciais do usuário.
+    - **Grid Web da Tela 1 (`Início`)**:
+      - Linha superior: Hero Card escuro `SALDO DISPONÍVEL` (esquerda) + Grid 2x2 `Resumo do Mês` contendo os 4 cards (`Taxa de Poupança`, `Reserva de Emergência`, `Comprometimento` e `Score Financeiro 84/100`) (direita), além de seletor de período (`Outubro 2024`).
+      - Linha inferior: Card `Burn Rate — Outubro` com gráfico de linha vs. Teto Mensal (esquerda, flex 3) + Card `Últimas Transações & Insights` (direita, flex 2).
+  1. `/dashboard` (**Início**): Hero Card de Saldo Disponível + Resumo do Mês + Burn Rate Diário com gráfico de linha vs. Teto Mensal + Últimas Transações & Insights.
+  2. `/transactions` (**Transações**): Header `MOVIMENTAÇÕES` com badge `X sincronizadas`, campo de busca textual, chips horizontais sem scrollbar (`Todos`, `Alimentação`, `Moradia`, `Transporte`, `Lazer`, `Saúde`, `Renda`) e lista de transações com ícones por categoria.
+  3. `/planning` (**Planejamento**): Header `PLANEJAMENTO` com badge `Score XX · Saudável`, Segmented Control (`Orçamentos & Metas` | `Saúde Financeira`), botão full-width `+ Nova Categoria / Meta` e cards de progresso por categoria consumindo `LocalBudgets` + despesas do mês.
+  4. `/more` (**Mais**): Header `CONTA`, card de perfil (`Marcos Pereira` + badge `Conta local ativa`), card `Status Offline-First (SQLite Local)` com contagem real de `isSynced == false` e botão `Sincronizar agora`, e lista `Configurações financeiras`.
+- **Ações Globais**:
+  - **Botão Central Verde (`+`)**: Abre o modal unificado **`Adicionar transação`** com bloco de **Entrada Inteligente** (*"Ex: 'Almoço 45,90 no débito'..."* + botões **`Preencher com IA`** e **`OCR`**), abas Despesa/Receita, Valor, Descrição, chips de Categoria (`+ Nova Categoria`), Data e botão **`Confirmar e Salvar`**.
+  - **Botão Flutuante Escuro (`G✨`)**: Abre o assistente conversacional do Agente de IA (**GastoSync Chat / Dúvidas & Análises Financeiras**), destinado a responder dúvidas de orçamento, comportamento de gastos e dicas financeiras personalizadas conectando à rota do agente.
 
 ## Architecture & Data Flow
 

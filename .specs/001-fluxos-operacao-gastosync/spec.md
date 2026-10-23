@@ -56,18 +56,23 @@ Como usuário em trânsito, quero registrar gastos digitando frases naturais (ex
 
 ---
 
-### User Story 4 - Visualização Consolidada das 9 Métricas de Saúde Financeira (Priority: P2)
+### User Story 4 - Visualização Consolidada das 9 Métricas de Saúde Financeira e Planejamento (Priority: P2)
 
-Como usuário focado em educação financeira, quero visualizar no Dashboard um painel composto pelos 9 indicadores vitais de saúde financeira e gráficos evolutivos para entender meu comportamento de gastos.
+Como usuário focado em educação financeira, quero visualizar no Dashboard (aba `Início`) e na tela de `Planejamento` meus indicadores vitais de saúde financeira, limites mensais de orçamento por categoria e gráficos evolutivos de Burn Rate para entender meu comportamento de gastos.
 
-**Why this priority**: Entrega a percepção de valor analítico e saúde patrimonial do usuário.
+**Why this priority**: Entrega a percepção de valor analítico, controle de tetos orçamentários e saúde patrimonial do usuário conforme o novo protótipo de alta fidelidade.
 
-**Independent Test**: Inserir uma série de receitas e despesas e validar matematicamente cada um dos 9 cards e as curvas de receita/despesa no gráfico `fl_chart`.
+**Independent Test**: Inserir uma série de receitas, despesas e limites de categoria (`LocalBudgets`) e validar matematicamente os cards da tela `Início`, a curva de Burn Rate vs. Teto Mensal e as barras de progresso por categoria na aba `Planejamento`.
 
 **Acceptance Scenarios**:
 
-1. **Given** o histórico de transações locais, **When** o Dashboard é renderizado, **Then** os 9 cards exibem: Saldo Líquido, Receita Total, Despesa Total, Taxa de Poupança (%), Reserva em Meses, Comprometimento da Renda (%), Burn Rate Diário, Projeção de Fim de Mês e Score de Saúde Financeira (0-100).
-2. **Given** a alteração em uma despesa, **When** a stream do Drift atualiza os dados, **Then** a projeção de fim de mês e o score reagem automaticamente.
+1. **Given** o histórico de transações locais, **When** a aba `Início` é renderizada, **Then** o sistema exibe:
+   - **Hero Card escuro (`#0F172A`)**: Saldo Disponível (com toggle `Ocultar`), badge de evolução (`+12,4% vs. mês anterior`), Renda Mensal e Despesas do Mês.
+   - **Resumo do Mês**: Cards de Taxa de Poupança (`%` + meta) e Reserva de Emergência (`R$` + meses cobertos) com botão `Ver tudo`.
+   - **Card Burn Rate Mensal**: Velocidade (`R$/dia`), Projeção de Fim de Mês (`R$`), banner de alerta amarelo de redução diária e gráfico `fl_chart` comparando a linha verde de gasto acumulado com a linha pontilhada vermelha de `Teto mensal`.
+   - **Card Últimas Transações & Insights**: Banner de insight dinâmico da IA seguido pelas últimas movimentações com status `Sincronizado` ou `Pendente local`.
+2. **Given** a navegação para a aba `Planejamento`, **When** a sub-aba `Orçamentos & Metas` está ativa, **Then** o sistema exibe o badge `Score XX · Saudável`, o botão full-width `+ Nova Categoria / Meta` e os cards de progresso de cada categoria (`Alimentação`, `Moradia`, `Transporte`, `Lazer`, etc.) com barra colorida (verde quando confortável, laranja/vermelho próximo ao limite) e botão `Editar teto`.
+3. **Given** a navegação para a aba `Mais`, **When** a tela é renderizada, **Then** exibe o perfil local (`Conta local ativa`), o card `Status Offline-First (SQLite Local)` indicando a integridade do banco e a contagem exata de transações pendentes de sincronia com botão `Sincronizar agora`, além das `Configurações financeiras` (Renda Base Mensal, Meta de Taxa de Poupança, Gerenciar Categorias e Exportar Relatório CSV).
 
 ---
 
@@ -86,13 +91,25 @@ Como usuário focado em educação financeira, quero visualizar no Dashboard um 
 - **FR-002**: O sistema DEVE expor streams reativas (`watchAllTransactions`, `watchBudgets`, etc.) que notificam a interface automaticamente sobre qualquer alteração no banco.
 - **FR-003**: O sistema DEVE calcular localmente as 9 Métricas de Saúde Financeira sem requisições a serviços externos.
 - **FR-004**: O sistema DEVE fornecer um cliente HTTP (Dio) configurado com timeouts de 10s para texto e 20s para OCR, com base URL configurável para o backend `gastosync_agent`.
-- **FR-005**: O sistema DEVE exibir o Modal Human-in-the-Loop como BottomSheet em telas móveis (< 600dp) e Dialog centralizado na Web (≥ 800dp).
-- **FR-006**: O sistema DEVE permitir ao usuário editar `description`, `amount`, `category` e `type` no modal antes de persistir no banco local.
+- **FR-005**: O sistema DEVE fornecer o modal **`NOVO LANÇAMENTO / Adicionar transação`** acionado pelo botão verde central (`+`), contendo:
+  - Bloco superior de **Entrada Inteligente**: campo de texto *"Ex: 'Almoço 45,90 no débito'..."* com botão cinza **`Preencher com IA`** e botão **`OCR`** com ícone de câmera (ao acionar, a IA preenche automaticamente os campos abaixo).
+  - Seletor de tipo de transação: abas **`Despesa`** e **`Receita`**.
+  - Campo de valor monetário em destaque (**`Valor R$ 0,00`**).
+  - Campo de texto **`Descrição / Nome da transação`**.
+  - Chips selecionáveis de **`Categoria`** (`Alimentação`, `Moradia`, `Transporte`, `Lazer`, `Saúde`) com botão **`+ Nova Categoria`**.
+  - Seletor de **`Data`** com ícone de calendário.
+  - Botão largo inferior verde **`Confirmar e Salvar`**.
+- **FR-006**: O botão flutuante escuro (**`G✨`**) DEVE abrir o assistente conversacional do Agente de IA (**GastoSync Chat / Dúvidas & Análises Financeiras**), destinado a tirar dúvidas do usuário, sugerir estratégias de economia e avaliar o orçamento mensal, operando de forma integrada ao endpoint `/chatbot` do backend.
 - **FR-007**: O sistema DEVE armazenar os insights e recomendações preditivas retornados pelo agente na tabela local `LocalAgentInsights`.
 - **FR-008**: O sistema DEVE armazenar as métricas consolidadas na tabela `LocalMetrics` para histórico e performance de consultas offline.
 - **FR-009**: O sistema DEVE sanitizar e validar campos obrigatórios (valor > 0, descrição não vazia, data válida).
-- **FR-010**: O sistema DEVE renderizar os gráficos de fluxo de caixa (Receita vs Despesa) utilizando a biblioteca `fl_chart`.
+- **FR-010**: O sistema DEVE renderizar os gráficos financeiros utilizando a biblioteca `fl_chart`, incluindo o gráfico de evolução diária de Burn Rate vs. Teto Mensal na aba `Início`.
 - **FR-011**: O sistema DEVE garantir que nenhuma chave de API secreta (ex: Groq API Key) seja armazenada ou exposta no código-fonte do cliente Flutter.
+- **FR-012**: O sistema DEVE apresentar o Cabeçalho Global Escuro (`#0F172A`) com mini-logo verde `G` + `GastoSync` na linha superior, saudação personalizada com o nome real do usuário autenticado/cadastrado localmente (`Olá, {Nome do Usuário}`) na linha principal, botão de notificações com indicador e avatar com as iniciais do usuário.
+- **FR-013**: O sistema DEVE implementar navegação adaptativa conforme o viewport:
+  - **Mobile (`< 600dp`)**: Barra de navegação inferior com 4 abas (`Início`, `Transações`, `Planejamento`, `Mais`), botão central verde (`+`) para lançamento manual rápido e botão flutuante escuro (`G✨`) para acionar o assistente de IA.
+  - **Web / Desktop (`>= 800dp`)**: Barra lateral esquerda escura (`#0F172A`) contendo logo `G` + `GastoSync`, botão verde largo `+ Nova Transação`, as 4 abas de navegação, card inferior `Modo Offline-First · Sincronizado` e rodapé do usuário (`{Iniciais} · {Nome Completo} · Conta pessoal`), acompanhada de barra superior clara com badge `Local sincronizado`, sino de notificações e avatar com iniciais, e no Dashboard Web layout em 2 colunas (Hero Card à esquerda + Grid 2x2 `Resumo do Mês` com `Taxa de Poupança`, `Reserva de Emergência`, `Comprometimento` e `Score Financeiro` à direita; gráfico `Burn Rate` à esquerda inferior + `Últimas Transações & Insights` à direita inferior).
+- **FR-014**: A tela de `Transações` DEVE exibir contador de sincronizadas no topo (`5 sincronizadas`), barra de busca por texto (`Pesquisar transações, categorias...`), chips de categoria sem scrollbar visível (`Todos`, `Alimentação`, `Moradia`, `Transporte`, `Lazer`, `Saúde`, `Renda`) e listagem com ícones temáticos e status (`Sincronizado` em verde vs `Pendente local` em laranja).
 
 ### Key Entities
 

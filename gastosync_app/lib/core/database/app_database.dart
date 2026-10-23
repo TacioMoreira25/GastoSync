@@ -1,10 +1,7 @@
-import 'dart:io';
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+
+import 'connection/connection.dart' as impl;
 
 part 'app_database.g.dart';
 
@@ -63,7 +60,7 @@ class LocalAgentInsights extends Table {
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : super(impl.constructDb());
 
   AppDatabase.forTesting(super.executor);
 
@@ -126,17 +123,6 @@ class AppDatabase extends _$AppDatabase {
           ..orderBy([(i) => OrderingTerm.desc(i.createdAt), (i) => OrderingTerm.desc(i.id)]))
         .watch();
   }
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    if (kIsWeb) {
-      return NativeDatabase.memory();
-    }
-    final dbFolder = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dbFolder.path, 'gastosync.sqlite'));
-    return NativeDatabase.createInBackground(file);
-  });
 }
 
 /// Provedor Riverpod para a instância do banco de dados Drift

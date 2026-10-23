@@ -46,21 +46,84 @@ gasto-sync/
 
 ## Como Executar
 
-**1. Backend IA (`gastosync_agent`)**:
+### Pré-requisitos
+- **Flutter SDK**: 3.x+ (com suporte a Web e Android configurado)
+- **Python**: 3.11+
+- **Chave de API do Groq**: Opcional para o app (já que funciona 100% offline), necessária para os recursos de IA do backend.
+
+---
+
+### 1. Backend IA (`gastosync_agent`)
+
 ```bash
 cd gastosync_agent
-python -m venv .venv && source .venv/bin/activate
+
+# Criar e ativar ambiente virtual
+python -m venv .venv
+source .venv/bin/activate  # No Windows: .venv\Scripts\activate
+
+# Instalar dependências
 pip install -r requiriments.txt
-cp .env.example .env # Adicione sua API_KEY_GROQ
+
+# Configurar variáveis de ambiente
+cp .env.example .env # Adicione sua API_KEY_GROQ no arquivo .env
+
+# Iniciar o servidor FastAPI
 uvicorn main:app --reload --port 8000
 ```
+> O backend estará disponível em `http://localhost:8000` (documentação interativa em `/docs`).
 
-**2. App Multiplataforma (`gastosync_app`)**:
+---
+
+### 2. App Multiplataforma (`gastosync_app`)
+
+Instale as dependências:
 ```bash
 cd gastosync_app
 flutter pub get
+```
+
+#### A. Rodando na Web (Navegador)
+Você pode rodar no Chrome ou em um servidor local (Firefox/qualquer navegador):
+
+```bash
+# Opção 1: Abrir diretamente no Chrome
+flutter run -d chrome
+
+# Opção 2: Subir servidor Web local (útil para Firefox ou outro navegador)
+flutter run -d web-server --web-hostname=localhost --web-port=3000
+
+# Conectando com a API local do Backend IA:
 flutter run -d chrome --dart-define=GASTOSYNC_API_URL=http://localhost:8000
 ```
+> Acesse `http://localhost:3000` no seu navegador se usar a opção de servidor local.
+
+#### B. Rodando no Android (Emulador ou Dispositivo Físico)
+
+Certifique-se de que o emulador está ligado ou o celular conectado via USB com depuração ativa:
+
+```bash
+# Listar dispositivos detectados
+flutter devices
+
+# Iniciar a aplicação
+flutter run
+```
+
+> **Dica (Erro de armazenamento no emulador Android)**:  
+> Se encontrar o erro `INSTALL_FAILED_INSUFFICIENT_STORAGE`, limpe os dados do emulador via linha de comando ou pelo Android Studio:
+> ```bash
+> $HOME/Android/Sdk/emulator/emulator -avd <NOME_DO_AVD> -wipe-data
+> ```
+
+#### C. Build de Produção para Web
+Para gerar os arquivos estáticos para publicação (Vercel, Firebase Hosting, Nginx, etc.):
+
+```bash
+flutter build web --release
+```
+Os arquivos prontos serão gerados em `gastosync_app/build/web/`.
+
 
 ## Especificações (Spec-Driven Development)
 
