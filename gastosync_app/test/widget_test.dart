@@ -27,6 +27,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // 0. Tela de Login: valida campos obrigatórios e realiza login seguro
+      expect(find.byKey(const Key('login_screen')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('login_submit_button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Informe seu e-mail.'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('login_email_input')),
+        'marcos.pereira@gastosync.local',
+      );
+      await tester.enterText(
+        find.byKey(const Key('login_password_input')),
+        '12345678',
+      );
+      await tester.ensureVisible(find.byKey(const Key('login_submit_button')));
+      await tester.tap(find.byKey(const Key('login_submit_button')));
+      await tester.pumpAndSettle();
+
       // 1. Aba Início (Dashboard v2)
       expect(find.text('Início'), findsOneWidget);
       expect(find.text('Transações'), findsOneWidget);
@@ -63,6 +81,19 @@ void main() {
       expect(find.text('Status Offline-First (SQLite Local)'), findsOneWidget);
       expect(find.text('Sincronizar agora'), findsOneWidget);
       expect(find.text('Configurações financeiras'), findsOneWidget);
+
+      // 5. Abre a Central de Notificações pelo sino e marca todas como lidas
+      expect(find.byKey(const Key('notification_bell_unread_badge')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('gastosync_notification_bell_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('gastosync_notifications_modal')), findsOneWidget);
+      expect(find.text('Notificações'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('notifications_mark_all_read_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('notification_bell_unread_badge')), findsNothing);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(milliseconds: 100));

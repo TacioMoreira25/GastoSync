@@ -87,6 +87,19 @@ void main() {
         );
         await tester.pumpAndSettle();
 
+        // Realiza login na tela inicial
+        await tester.enterText(
+          find.byKey(const Key('login_email_input')),
+          'marcos.pereira@gastosync.local',
+        );
+        await tester.enterText(
+          find.byKey(const Key('login_password_input')),
+          '12345678',
+        );
+        await tester.ensureVisible(find.byKey(const Key('login_submit_button')));
+        await tester.tap(find.byKey(const Key('login_submit_button')));
+        await tester.pumpAndSettle();
+
         expect(find.byKey(const Key('gastosync_mobile_header')), findsOneWidget);
         expect(find.byKey(const Key('gastosync_mobile_bottom_bar')), findsOneWidget);
         expect(find.byKey(const Key('mobile_center_add_button')), findsOneWidget);

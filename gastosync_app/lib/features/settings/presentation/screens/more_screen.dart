@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
+import '../../../auth/domain/auth_provider.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
 import '../../domain/models/user_profile.dart';
@@ -458,6 +459,14 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 subtitle:
                     'Exportar ${transactions.length} transação(ões) do banco local',
                 onTap: () => _exportCsvReport(context, transactions),
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 1),
+              _SettingsTile(
+                key: const Key('more_logout_button'),
+                icon: Icons.logout_rounded,
+                title: 'Sair da conta',
+                subtitle: 'Encerrar sessão atual neste dispositivo',
+                onTap: () => ref.read(authProvider.notifier).logout(),
               ),
             ],
           ),

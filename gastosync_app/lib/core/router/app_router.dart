@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../features/auth/domain/auth_provider.dart';
+import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/planning/presentation/screens/planning_screen.dart';
 import '../../features/settings/domain/models/user_profile.dart';
@@ -17,13 +19,19 @@ final _transactionsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'transac
 final _planningNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'planningNav');
 final _moreNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'moreNav');
 
-/// Provedor Riverpod do GoRouter (goRouterProvider) com as 4 abas do protótipo Figma v2
+/// Provedor Riverpod do GoRouter (goRouterProvider) com guarda de autenticação e as 4 abas do protótipo Figma v2
 final goRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/dashboard',
     debugLogDiagnostics: true,
+    errorBuilder: (context, state) => const LoginScreen(),
     routes: [
+      GoRoute(
+        path: '/login',
+        name: 'login',
+        redirect: (context, state) => '/dashboard',
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
           return ScaffoldWithAdaptiveNavigation(navigationShell: navigationShell);
@@ -152,6 +160,13 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isAuthenticated = ref.watch(
+      authProvider.select((state) => state.isAuthenticated),
+    );
+    if (!isAuthenticated) {
+      return const LoginScreen();
+    }
+
     final width = MediaQuery.sizeOf(context).width;
     final isDesktop = width >= 800;
     final currentIndex = navigationShell.currentIndex.clamp(0, _navTabs.length - 1);
@@ -172,6 +187,7 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
               selectedIndex: currentIndex,
               onDestinationSelected: _onDestinationSelected,
               onNewTransactionTap: () => ManualTransactionFormModal.show(context),
+              onLogoutTap: () => ref.read(authProvider.notifier).logout(),
               profile: profile,
               pendingCount: pendingCount,
             ),
@@ -406,6 +422,7 @@ class _GastoSyncWebSidebar extends StatelessWidget {
     required this.selectedIndex,
     required this.onDestinationSelected,
     required this.onNewTransactionTap,
+    required this.onLogoutTap,
     required this.profile,
     required this.pendingCount,
   });
@@ -413,6 +430,7 @@ class _GastoSyncWebSidebar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback onNewTransactionTap;
+  final VoidCallback onLogoutTap;
   final UserProfile profile;
   final int pendingCount;
 
@@ -562,49 +580,65 @@ class _GastoSyncWebSidebar extends StatelessWidget {
           const Divider(color: AppTheme.navyBorder, height: 1),
           const SizedBox(height: 14),
 
-          // Rodapé de perfil dinâmico "{iniciais} · {nome}"
-          InkWell(
-            key: const Key('web_sidebar_user_profile'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => onDestinationSelected(3),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  GastoSyncUserAvatar(
-                    initials: profile.initials,
-                    size: 36,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+          // Rodapé de perfil dinâmico "{iniciais} · {nome}" + botão Sair
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  key: const Key('web_sidebar_user_profile'),
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => onDestinationSelected(3),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
                       children: [
-                        Text(
-                          profile.fullName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        GastoSyncUserAvatar(
+                          initials: profile.initials,
+                          size: 36,
                         ),
-                        Text(
-                          profile.accountLabel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF94A3B8),
-                            fontSize: 11,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                profile.fullName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                profile.accountLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF94A3B8),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+              IconButton(
+                key: const Key('web_sidebar_logout_button'),
+                tooltip: 'Sair da conta',
+                onPressed: onLogoutTap,
+                icon: const Icon(
+                  Icons.logout_rounded,
+                  color: Color(0xFF94A3B8),
+                  size: 19,
+                ),
+              ),
+            ],
           ),
         ],
       ),
