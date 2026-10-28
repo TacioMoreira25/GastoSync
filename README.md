@@ -5,10 +5,10 @@
 <p align="left">
   <img src="https://img.shields.io/badge/FLUTTER%203-02569B?style=for-the-badge&logo=flutter&logoColor=white" height="28" alt="Flutter 3" />
   <img src="https://img.shields.io/badge/DART%203-0175C2?style=for-the-badge&logo=dart&logoColor=white" height="28" alt="Dart 3" />
-  <img src="https://img.shields.io/badge/RIVERPOD-00B4AB?style=for-the-badge&logo=flutter&logoColor=white" height="28" alt="Riverpod" />
+  <img src="https://img.shields.io/badge/GO%201.23+-00ADD8?style=for-the-badge&logo=go&logoColor=white" height="28" alt="Go" />
+  <img src="https://img.shields.io/badge/POSTGRESQL%20%2F%20NEON-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" height="28" alt="PostgreSQL Neon" />
   <img src="https://img.shields.io/badge/DRIFT%20%2F%20SQLITE-003B57?style=for-the-badge&logo=sqlite&logoColor=white" height="28" alt="Drift SQLite" />
-  <img src="https://img.shields.io/badge/PYTHON%203.11-3776AB?style=for-the-badge&logo=python&logoColor=white" height="28" alt="Python 3.11" />
-  <img src="https://img.shields.io/badge/FASTAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" height="28" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/DOCKER-2496ED?style=for-the-badge&logo=docker&logoColor=white" height="28" alt="Docker" />
   <img src="https://img.shields.io/badge/GROQ%20%2F%20LLAMA%203.3-F55036?style=for-the-badge&logo=meta&logoColor=white" height="28" alt="Groq AI" />
 </p>
 
@@ -16,7 +16,7 @@
 
 ## Sobre o Projeto
 
-O **GastoSync** opera com persistência local reativa via **Drift (SQLite)** para garantir funcionamento imediato mesmo sem internet, enquanto consome de forma assíncrona um orquestrador em **Python (FastAPI + Groq Cloud)** para categorização de despesas em linguagem natural, leitura de comprovantes via OCR e recomendações de orçamento com revisão **Human-in-the-Loop**.
+O **GastoSync** opera com persistência local reativa via **Drift (SQLite)** no Mobile (100% Offline-First) e operação online direta na Web, sincronizando de forma segura com o microsserviço **`gastosync_api` em Go (Golang)** conectado ao **Neon Serverless PostgreSQL**. De maneira desacoplada, consome o orquestrador **`gastosync_agent` em Python (FastAPI + Groq Cloud)** para categorização de despesas em linguagem natural, leitura de comprovantes via OCR e recomendações de orçamento com revisão **Human-in-the-Loop**.
 
 ## Estrutura do Repositório
 
@@ -25,21 +25,28 @@ gasto-sync/
 ├── .agents/skills/    # Skills do Spec Kit configuradas para execução controlada
 ├── .specify/          # Constituição arquitetural e scripts de governança (SDD)
 ├── .specs/            # Especificações de features, plano técnico e tasks
-├── gastosync_app/     # Cliente Flutter Multiplataforma (Android, iOS, Web)
-└── gastosync_agent/   # Backend Python (FastAPI + Groq SDK) para orquestração de IA
+├── gastosync_app/     # Cliente Flutter Multiplataforma (Mobile Offline-First & Web Online)
+├── gastosync_api/     # Microsserviço Core em Go (Auth JWT/Bcrypt, Sync & Neon Postgres + Docker)
+└── gastosync_agent/   # Serviço Satélite em Python (FastAPI + Groq SDK) para orquestração de IA
 ```
 
 ## Stack Técnica
 
-### Cliente (`gastosync_app`)
-- **UI**: Material Design 3 (Adaptativo Mobile/Web, Light & Dark Mode)
+### 1. Cliente (`gastosync_app` — Hospedado no Cloudflare Pages)
+- **UI**: Material Design 3 (Adaptativo Mobile/Web conforme Protótipo v2)
 - **Estado**: Flutter Riverpod (`StreamProvider` reativo)
 - **Navegação**: GoRouter (`StatefulShellRoute`)
-- **Persistência**: Drift + SQLite (100% Offline-First)
+- **Persistência**: Drift + SQLite no Mobile (100% Offline-First) e API REST direta na Web
 - **Gráficos**: `fl_chart` (Painel com as 9 Métricas de Saúde Financeira)
-- **Rede**: Dio (REST com timeouts de 10s/20s e fallback offline)
+- **Rede**: Dio (REST com JWT, timeouts de 10s/20s e fallback offline)
 
-### Agente Backend (`gastosync_agent`)
+### 2. Backend Core (`gastosync_api` — Hospedado no Render via Docker)
+- **Linguagem & Framework**: Go (Golang) + Fiber v2
+- **Banco em Nuvem**: Neon Serverless PostgreSQL (`pgx/v5` com SSL/TLS obrigatório)
+- **Segurança**: Hash de senhas em Bcrypt, autenticação JWT e isolamento estrito por `user_id`
+- **Container**: Multi-stage Dockerfile (`alpine:3.20` não-root, ~15 MB de imagem final)
+
+### 3. Agente IA Satélite (`gastosync_agent` — Hospedado no Render)
 - **API**: FastAPI + Pydantic
 - **Segurança**: Classificador de contexto contra *Prompt Injection*
 - **Inferência**: Llama 3.3 70B & Visão via Groq Cloud SDK (LPU)
@@ -48,12 +55,33 @@ gasto-sync/
 
 ### Pré-requisitos
 - **Flutter SDK**: 3.x+ (com suporte a Web e Android configurado)
-- **Python**: 3.11+
-- **Chave de API do Groq**: Opcional para o app (já que funciona 100% offline), necessária para os recursos de IA do backend.
+- **Go**: 1.23+ (ou Docker para rodar `gastosync_api`)
+- **Python**: 3.11+ (para o agente de IA `gastosync_agent`)
+- **Banco de Dados**: String de conexão do **Neon Serverless Postgres** (`DATABASE_URL` com `sslmode=require`)
 
 ---
 
-### 1. Backend IA (`gastosync_agent`)
+### 1. Backend Core em Go (`gastosync_api`)
+
+```bash
+cd gastosync_api
+
+# Copiar template de variáveis de ambiente (NUNCA faça commit do .env real)
+cp .env.example .env
+
+# Rodar direto com Go:
+go mod tidy
+go run ./cmd/api
+
+# Ou rodar via container Docker:
+docker build -t gastosync-api .
+docker run --rm -p 8080:8080 --env-file .env gastosync-api
+```
+> Veja o passo a passo completo de deploy gratuito (Neon + Render + Cloudflare Pages) em [`gastosync_api/README.md`](gastosync_api/README.md).
+
+---
+
+### 2. Serviço Satélite de IA (`gastosync_agent`)
 
 ```bash
 cd gastosync_agent

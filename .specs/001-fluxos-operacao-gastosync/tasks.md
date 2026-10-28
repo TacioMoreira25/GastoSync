@@ -153,12 +153,27 @@
 
 ---
 
+## Phase 10: Backend Core em Go & Nuvem (Auth, Sync, Docker & Neon Postgres)
+
+**Purpose**: Criação do microsserviço independente de alta performance `gastosync_api` em **Go (Golang + Fiber + pgx + Bcrypt + JWT)** com Docker multi-stage, conectado ao **Neon Postgres**, e integração de Login/Sync no Flutter.
+
+- [x] T048 [P] Configurar containerização Docker multi-stage (`Dockerfile`, `.dockerignore`), template seguro de variáveis (`.env.example`) e documentação completa de deploy em `gastosync_api/README.md`
+- [ ] T049 Inicializar módulo Go (`go.mod`), configuração de variáveis (`internal/config/config.go`), pool de conexão SSL com o Neon PostgreSQL (`pgx/v5`) e migração automática das tabelas (`users`, `transactions`, `budgets`) em `gastosync_api/internal/database/postgres.go`
+- [ ] T050 Implementar modelos (`internal/models/models.go`), middleware JWT (`internal/middleware/auth_middleware.go`) e handlers de autenticação com Bcrypt (`POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`) em `gastosync_api/internal/handlers/auth_handler.go`
+- [ ] T051 Implementar handlers de sincronização bidirecional (`POST /api/v1/sync/push` e `GET /api/v1/sync/pull`) e entrypoint HTTP Fiber (`cmd/api/main.go`) com CORS e rota `/health` em `gastosync_api/`
+- [ ] T052 Criar serviço de autenticação (`AuthService`), provedor de sessão Riverpod com armazenamento seguro do JWT e telas de Login/Cadastro responsivas (Mobile e Web) em `gastosync_app/lib/features/auth/`
+- [ ] T053 Integrar guard de autenticação no `GoRouter` e sincronização com `gastosync_api` (rotina de push/pull das transações pendentes no Mobile e operação online autenticada na Web, incluindo limpeza segura no Logout) em `gastosync_app/`
+
+---
+
 ## Dependências e Ordem de Execução
 
-1. **Phase 1 (Setup)** e **Phase 2 (Fundação Drift)** DEcVEM ser concluídas primeiro.
+1. **Phase 1 (Setup)** e **Phase 2 (Fundação Drift)** DEVEM ser concluídas primeiro.
 2. **Phase 3 (User Story 1 - MVP)** entrega a aplicação funcional 100% offline.
 3. **Phase 4 (User Story 2 - Agente IA & Human-in-the-Loop)** conecta o cliente Dio ao backend Python.
 4. **Phase 5 (User Story 3 - OCR & Texto Informal)** expande os canais de input.
 5. **Phase 6 (User Story 4 - 9 Métricas)** conecta o Dashboard analítico reativo.
 6. **Phase 7 (Polish Base v1)** consolida os testes de base.
-7. **Phase 8 (Redesign de Interface v2 - Figma)** atualiza incrementalmente (1 tarefa por vez) o tema, cabeçalhos, navegação e as 4 telas (`Início`, `Transações`, `Planejamento`, `Mais`).
+7. **Phase 8 (Redesign de Interface v2 - Figma)** entrega a fidelidade visual das 4 abas e navegação responsiva.
+8. **Phase 9 (Agente IA - Terceiros)** executa em paralelo de forma desacoplada no `gastosync_agent`.
+9. **Phase 10 (Backend Core em Go & Nuvem)** implementa o microsserviço seguro de Auth/Sync em Go no Render com Neon Postgres e tela de login no Flutter.

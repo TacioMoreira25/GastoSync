@@ -14,10 +14,13 @@ Thumbs.db
 *.ipr
 *.iws
 
-# Environment Variables & Secrets (Groq API, Tokens, MASVS compliance)
+# Environment Variables & Secrets (Groq API, Neon DB, JWT Secrets, MASVS compliance)
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
 # Local Databases (Drift / SQLite)
 *.sqlite
@@ -80,4 +83,21 @@ teste.py
 
 # Spec Kit Machine-local state
 .specify/feature.json
+
+# ------------------------------------------------------------------------------
+# Go Backend (gastosync_api)
+# ------------------------------------------------------------------------------
+gastosync_api/bin/
+gastosync_api/gastosync_api
+gastosync_api/main
+gastosync_api/tmp/
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
 

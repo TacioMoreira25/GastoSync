@@ -111,9 +111,15 @@ Como usuário focado em educação financeira, quero visualizar no Dashboard (ab
   - **Web / Desktop (`>= 800dp`)**: Barra lateral esquerda escura (`#0F172A`) contendo logo `G` + `GastoSync`, botão verde largo `+ Nova Transação`, as 4 abas de navegação, card inferior `Modo Offline-First · Sincronizado` e rodapé do usuário (`{Iniciais} · {Nome Completo} · Conta pessoal`), acompanhada de barra superior clara com badge `Local sincronizado`, sino de notificações e avatar com iniciais, e no Dashboard Web layout em 2 colunas (Hero Card à esquerda + Grid 2x2 `Resumo do Mês` com `Taxa de Poupança`, `Reserva de Emergência`, `Comprometimento` e `Score Financeiro` à direita; gráfico `Burn Rate` à esquerda inferior + `Últimas Transações & Insights` à direita inferior).
 - **FR-014**: A tela de `Transações` DEVE exibir contador de sincronizadas no topo (`5 sincronizadas`), barra de busca por texto (`Pesquisar transações, categorias...`), chips de categoria sem scrollbar visível (`Todos`, `Alimentação`, `Moradia`, `Transporte`, `Lazer`, `Saúde`, `Renda`) e listagem com ícones temáticos e status (`Sincronizado` em verde vs `Pendente local` em laranja).
 
+- **FR-015**: O sistema DEVE fornecer fluxo de autenticação por e-mail e senha, armazenando o Bearer Token JWT de forma segura no dispositivo (`flutter_secure_storage` no mobile).
+- **FR-016**: No Mobile, o sistema DEVE manter o banco SQLite local via Drift operacional 100% offline e sincronizar movimentações pendentes (`isSynced = false`) com a API na nuvem assim que houver conexão.
+- **FR-017**: Na Web, o sistema DEVE operar como aplicação online direta consumindo a API REST autenticada, não exigindo persistência local complexa quando sem rede.
+- **FR-018**: O banco central de dados na nuvem (PostgreSQL no Neon) DEVE ser acessado exclusivamente pela API backend com isolamento estrito de consultas por `user_id`, garantindo que nenhuma credencial direta do banco seja exposta ao frontend.
+
 ### Key Entities
 
-- **Transaction (`LocalTransactions`)**: Representa uma movimentação financeira individual. Atributos: `id`, `description`, `amount`, `date`, `type` (income/expense), `category`, `isSynced`.
+- **User**: Representa a conta do usuário. Atributos: `id`, `name`, `email`, `passwordHash`, `createdAt`.
+- **Transaction (`LocalTransactions`)**: Representa uma movimentação financeira individual. Atributos: `id`, `userId`, `description`, `amount`, `date`, `type` (income/expense), `category`, `isSynced`.
 - **Budget (`LocalBudgets`)**: Limite orçamentário mensal definido por categoria. Atributos: `id`, `category`, `limitAmount`, `month`, `year`.
 - **MetricRecord (`LocalMetrics`)**: Snapshot consolidado das métricas de saúde financeira. Atributos: `id`, `calculatedAt`, `currentBalance`, `totalIncome`, `totalExpense`, `savingsRate`, `emergencyMonths`, `incomeCommitment`, `dailyBurnRate`, `monthEndProjection`, `healthScore`.
 - **AgentInsight (`LocalAgentInsights`)**: Registro do insight fornecido pela IA para acompanhamento e auditoria. Atributos: `id`, `transactionId` (opcional), `rawSuggestion`, `confidenceScore`, `categorySuggested`, `budgetTip`, `createdAt`.

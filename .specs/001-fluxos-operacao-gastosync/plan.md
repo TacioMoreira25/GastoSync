@@ -6,33 +6,44 @@
 
 ## Summary
 
-O GastoSync é implementado em monorepo com duas frentes isoladas:
-1. **Cliente Multiplataforma (`gastosync_app`)**: Desenvolvido em Flutter, gerencia ciclo de vida, rotas adaptativas (`GoRouter`), gerenciamento de estado reativo (`Riverpod`) e persistência 100% local e offline-first (`Drift` sobre SQLite).
-2. **Orquestrador de IA (`gastosync_agent`)**: Backend Python (FastAPI) mantido externamente, responsável por autenticação de segredos com Groq Cloud API, sanitização contra Prompt Injection e execução de LLM (Llama 3.3 70B). É consumido pelo app como caixa-preta via cliente HTTP `Dio`.
+O GastoSync é implementado em monorepo com três camadas bem delimitadas:
+1. **Cliente Multiplataforma (`gastosync_app`)**: Desenvolvido em Flutter, gerencia ciclo de vida, rotas adaptativas (`GoRouter`), gerenciamento de estado reativo (`Riverpod`), persistência 100% local e offline-first no Mobile (`Drift` sobre SQLite nativo) e operação online autenticada via API REST no Web.
+2. **Backend Core & Sync (`gastosync_api`)**: Microsserviço em **Go (Golang)** com **Fiber v2** e **pgx/v5**, containerizado via Docker multi-stage. Gerencia autenticação JWT com senhas em Bcrypt, controle de usuários e sincronização bidirecional ultra rápida com o banco de dados **PostgreSQL (Neon)**.
+3. **Orquestrador de IA Satélite (`gastosync_agent`)**: Backend Python (FastAPI) mantido externamente, responsável por autenticação de segredos com Groq Cloud API, sanitização contra Prompt Injection e execução de LLM (Llama 3.3 70B). É consumido pelo app como caixa-preta via cliente HTTP `Dio`, de modo que falhas na IA nunca bloqueiam o fluxo financeiro.
 
 ## Technical Context
 
-**Language/Version**: Dart 3.x+ / Flutter 3.x+ (Client) | Python 3.11+ (Agent Backend)
+**Language/Version**: Dart 3.x+ / Flutter 3.x+ (Client) | **Go 1.23+** (Backend Core `gastosync_api`) | Python 3.11+ (Agent `gastosync_agent`)
 
 **Primary Dependencies**:
-- Client: `flutter_riverpod`, `riverpod_annotation`, `drift`, `sqlite3_flutter_libs`, `dio`, `go_router`, `fl_chart`, `freezed_annotation`, `json_annotation`, `intl`
-- Agent Backend (Black-box): `fastapi`, `groq`, `pydantic`, `uvicorn`
+- Client (`gastosync_app`): `flutter_riverpod`, `riverpod_annotation`, `drift`, `sqlite3_flutter_libs`, `dio`, `go_router`, `fl_chart`, `freezed_annotation`, `json_annotation`, `intl`, `flutter_secure_storage`
+- Backend Core (`gastosync_api` - Go): `github.com/gofiber/fiber/v2`, `github.com/jackc/pgx/v5/pgxpool`, `golang.org/x/crypto/bcrypt`, `github.com/golang-jwt/jwt/v5`, `github.com/joho/godotenv`
+- Agent Backend (`gastosync_agent` - Python): `fastapi`, `uvicorn`, `pydantic`, `groq`
 
-**Storage**: SQLite Local via Drift (`LocalTransactions`, `LocalBudgets`, `LocalMetrics`, `LocalAgentInsights`) com suporte a native (Mobile) e memory/WASM (Web).
+**Storage & Hosting Topology (100% Gratuito & Seguro)**:
+- **Mobile Local Storage**: SQLite Local via Drift (`LocalTransactions`, `LocalBudgets`, `LocalMetrics`, `LocalAgentInsights`) nativo via FFI.
+- **Web Client Hosting**: **Cloudflare Pages** (Banda ilimitada, proteção DDoS corporativa, CDN global).
+- **Backend Core Hosting (`gastosync_api`)**: **Render.com** via Docker multi-stage (~10 MB de consumo de RAM).
+- **Agent IA Hosting (`gastosync_agent`)**: **Render.com** (Web Service Python separado).
+- **Cloud Database**: **Neon Serverless Postgres** (1 GB permanente, SSL/TLS obrigatório, scale-to-zero).
 
-**Testing**: `flutter_test`, `drift/native` (testes de persistência em memória), mocks HTTP Dio com `mocktail`/`http_mock_adapter`.
+**Testing**: `flutter_test`, `drift/native` (testes de persistência em memória), mocks HTTP Dio, `go test ./...` para `gastosync_api`.
 
-**Target Platform**: Android, iOS, Web (navegadores modernos via Vercel/Firebase).
+**Target Platform**: Android, iOS, Web.
 
 **Performance Goals**:
-- Escrita local e emissão de stream no Drift < 100ms.
+- Escrita local e emissão de stream no Drift (Mobile) < 100ms.
 - Renderização inicial do Dashboard < 300ms.
+- Autenticação e sincronia REST < 1.5s.
 - Timeout de requisições de texto à IA: 10s; OCR de comprovantes: 20s.
 
-**Constraints**:
-- Princípio Offline-First incondicional: Nenhuma falha de rede pode interromper o registro ou visualização de métricas locais.
-- Chaves de API do Groq nunca expostas no Flutter.
-- Modal Human-in-the-Loop obrigatório para validação de dados inferidos por IA.
+**Constraints & Security Rules**:
+- **Princípio Offline-First no Mobile**: Nenhuma falha de rede pode interromper o registro ou visualização de métricas locais no celular.
+- **Web Online Direto**: A versão Web opera online conectada via JWT diretamente à API REST; sem internet a aplicação Web não roda, evitando complexidades desnecessárias de Wasm/IndexedDB.
+- **Isolamento de Falhas**: Falhas na IA não impactam autenticação, cadastro e leitura de dados financeiros.
+- **Segurança de Dados**: O banco Postgres (Neon) NUNCA é exposto diretamente ao cliente; o acesso ocorre unicamente através da API com validação estrita do `user_id` no JWT.
+- **Senhas Seguras**: Senhas criptografadas com hash Bcrypt.
+- **Modal Human-in-the-Loop**: Obrigatório para validação de dados inferidos por IA antes de gravar.
 
 ## Constitution Check
 
@@ -170,7 +181,61 @@ class LocalAgentInsights extends Table {
 9. **Score de Saúde Financeira (0-100)**: Fórmula ponderada local:
    $$\text{Score} = (\text{Poupança} \times 0.3) + (\min(\text{Reserva em Meses} / 6, 1) \times 35) + ((1 - \min(\text{Comprometimento}, 1)) \times 35)$$
 
-## REST API Contracts (`gastosync_agent`)
+## REST API Contracts (`gastosync_api` — Go Core API)
+
+### 1. Registro de Usuário (`POST /api/v1/auth/register`)
+- **Request Payload**:
+  ```json
+  {
+    "name": "Marcos Paulo",
+    "email": "marcos@exemplo.com",
+    "password": "SenhaForte123!"
+  }
+  ```
+- **Response Payload (201 Created)**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "user": {
+      "id": "uuid-gerado",
+      "name": "Marcos Paulo",
+      "email": "marcos@exemplo.com"
+    }
+  }
+  ```
+
+### 2. Autenticação / Login (`POST /api/v1/auth/login`)
+- **Request Payload**:
+  ```json
+  {
+    "email": "marcos@exemplo.com",
+    "password": "SenhaForte123!"
+  }
+  ```
+- **Response Payload (200 OK)**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "user": {
+      "id": "uuid-gerado",
+      "name": "Marcos Paulo",
+      "email": "marcos@exemplo.com"
+    }
+  }
+  ```
+
+### 3. Sincronização Push (`POST /api/v1/sync/push`)
+- **Headers**: `Authorization: Bearer <JWT_TOKEN>`
+- **Request Payload**: Lista de transações e orçamentos locais pendentes (`isSynced == false`).
+- **Response Payload (200 OK)**: Confirmação dos IDs sincronizados no Neon Postgres.
+
+### 4. Sincronização Pull & Listagem (`GET /api/v1/sync/pull`)
+- **Headers**: `Authorization: Bearer <JWT_TOKEN>`
+- **Response Payload (200 OK)**: Transações e limites de orçamento do usuário autenticado (`user_id` extraído exclusivamente do JWT).
+
+---
+
+## REST API Contracts (`gastosync_agent` — Python IA Satélite)
 
 ### 1. Categorização e Previsão de Despesa Vaga
 - **Rota**: `POST /api/v1/predict/categorize`

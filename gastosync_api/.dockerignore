@@ -1,0 +1,14 @@
+# Ignorar variáveis de ambiente locais e segredos no contexto de build Docker
+.env
+.env.*
+!.env.example
+
+# Ignorar artefatos de compilação locais e git
+bin/
+tmp/
+*.exe
+*.test
+*.out
+.git/
+.gitignore
+README.md
