@@ -1,14 +1,9 @@
-class Prompt:
-    user: str
-    prompt: str
-    session: int
+from fastapi import FastAPI
+from services import classificator, fibo, chatbot
+from schemas import ChatbotRequest
+from groq import AuthenticationError, Groq
 
-@app.get("/chatbot")
+app = FastAPI()
 
+app.post('/chatbot')(chatbot)
 
-
-
-
-    
-
-    
