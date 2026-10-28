@@ -574,7 +574,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
         ),
         const SizedBox(height: 16),
 
-        // Cards de indicadores vitais
+        // Cards dos 9 Indicadores Contábeis Consolidados (Motor em Dart)
         Container(
           padding: const EdgeInsets.all(18),
           decoration: AppTheme.whiteCardDecoration,
@@ -582,7 +582,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Indicadores Consolidados do Mês',
+                'Os 9 Indicadores Contábeis Consolidados (Motor Local Dart)',
                 style: TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: 15,
@@ -591,7 +591,30 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               ),
               const SizedBox(height: 14),
               _HealthMetricRow(
-                label: 'Taxa de Poupança',
+                label: '1. Renda Mensal',
+                value: currencyFormatter.format(metrics.totalIncome),
+                subtitle:
+                    'Renda base configurada: ${currencyFormatter.format(profile.monthlyBaseIncome)}',
+                icon: Icons.arrow_upward_rounded,
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 22),
+              _HealthMetricRow(
+                label: '2. Despesas do Mês',
+                value: currencyFormatter.format(metrics.totalExpense),
+                subtitle:
+                    'Burn Rate: ${currencyFormatter.format(metrics.dailyBurnRate)}/dia · Projeção: ${currencyFormatter.format(metrics.monthEndProjection)}',
+                icon: Icons.arrow_downward_rounded,
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 22),
+              _HealthMetricRow(
+                label: '3. Saldo Atual',
+                value: currencyFormatter.format(metrics.currentBalance),
+                subtitle: 'Saldo líquido disponível em caixa local',
+                icon: Icons.account_balance_wallet_outlined,
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 22),
+              _HealthMetricRow(
+                label: '4. Taxa de Poupança',
                 value: '${metrics.savingsRate.toStringAsFixed(1)}%',
                 subtitle:
                     'Meta configurada: ${profile.savingsRateTarget.toStringAsFixed(0)}% da renda',
@@ -599,26 +622,43 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
               _HealthMetricRow(
-                label: 'Reserva de Emergência',
-                value: '${metrics.emergencyMonths.toStringAsFixed(1)} meses',
+                label: '5. Gastos Fixos',
+                value: currencyFormatter.format(metrics.fixedExpenses),
                 subtitle:
-                    'Saldo acumulado: ${currencyFormatter.format(metrics.currentBalance)}',
-                icon: Icons.shield_outlined,
+                    'Moradia, educação, assinaturas e contas recorrentes',
+                icon: Icons.lock_clock_outlined,
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
               _HealthMetricRow(
-                label: 'Comprometimento da Renda',
+                label: '6. Gastos Variáveis',
+                value: currencyFormatter.format(metrics.variableExpenses),
+                subtitle:
+                    'Alimentação, transporte, lazer e consumo flexível',
+                icon: Icons.tune_rounded,
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 22),
+              _HealthMetricRow(
+                label: '7. Comprometimento de Renda (<30%)',
                 value: '${metrics.incomeCommitment.toStringAsFixed(1)}%',
-                subtitle: 'Recomendado manter abaixo de 70%',
+                subtitle: metrics.isCommitmentWithin30Percent
+                    ? 'Dentro da diretriz saudável (< 30% da renda)'
+                    : 'Acima da faixa ideal de 30% — revise gastos variáveis',
                 icon: Icons.pie_chart_outline_rounded,
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
               _HealthMetricRow(
-                label: 'Burn Rate Diário & Projeção',
-                value: '${currencyFormatter.format(metrics.dailyBurnRate)}/dia',
+                label: '8. Reserva de Emergência (em meses)',
+                value: '${metrics.emergencyMonths.toStringAsFixed(1)} meses',
+                subtitle: 'Meta recomendada: 6 meses de custo de vida cobertos',
+                icon: Icons.shield_outlined,
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 22),
+              _HealthMetricRow(
+                label: '9. Patrimônio Líquido',
+                value: currencyFormatter.format(metrics.netWorth),
                 subtitle:
-                    'Projeção fim do mês: ${currencyFormatter.format(metrics.monthEndProjection)}',
-                icon: Icons.speed_rounded,
+                    'Soma de Saldo Atual + reservas e investimentos acumulados',
+                icon: Icons.workspace_premium_outlined,
               ),
             ],
           ),
@@ -718,6 +758,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 final parsedLimit = double.tryParse(normalizedLimit);
 
                 if (category.isEmpty ||
+                    category.toLowerCase().startsWith('renda') ||
                     parsedLimit == null ||
                     parsedLimit <= 0) {
                   return;

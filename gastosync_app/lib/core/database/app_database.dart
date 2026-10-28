@@ -5,9 +5,11 @@ import 'connection/connection.dart' as impl;
 
 part 'app_database.g.dart';
 
-/// Tabela de Transações com suporte a sincronização offline-first
+/// Tabela de Transações com suporte a sincronização offline-first e isolamento por conta
 class LocalTransactions extends Table {
   IntColumn get id => integer().autoIncrement()();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
   TextColumn get description => text().withLength(min: 1, max: 255)();
   RealColumn get amount => real()();
   DateTimeColumn get date => dateTime()();
@@ -65,7 +67,16 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.addColumn(localTransactions, localTransactions.userEmail);
+          }
+        },
+      );
 
   /// Seed padrão de metas mensais por categoria conforme protótipo Figma v2 (T044)
   static const Map<String, double> defaultCategoryBudgets = <String, double>{
@@ -75,10 +86,18 @@ class AppDatabase extends _$AppDatabase {
     'Lazer': 500.0,
   };
 
-  /// Stream reativa de todas as transações ordenadas por data
-  Stream<List<LocalTransaction>> watchAllTransactions() {
-    return (select(localTransactions)
-          ..orderBy([(t) => OrderingTerm.desc(t.date), (t) => OrderingTerm.desc(t.id)]))
+  /// Stream reativa de transações filtradas por conta (`userEmail`) ordenadas por data
+  Stream<List<LocalTransaction>> watchAllTransactions({String? userEmail}) {
+    final query = select(localTransactions);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((t) => t.userEmail.equals(normalized));
+    }
+    return (query
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.date),
+            (t) => OrderingTerm.desc(t.id),
+          ]))
         .watch();
   }
 
@@ -334,6 +353,78 @@ class AppDatabase extends _$AppDatabase {
         year: targetYear,
       ),
     );
+  }
+
+  /// Inicializa tabelas dinâmicas de contas locais e sessão autenticada (persistência 100% SQLite)
+  Future<void> initCustomAuthTables() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS local_auth_accounts (
+        email TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL
+      );
+    ''');
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS local_auth_session (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        current_email TEXT,
+        is_authenticated INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> getPersistedAuthAccounts() async {
+    await initCustomAuthTables();
+    final rows = await customSelect(
+      'SELECT email, full_name, salt, password_hash FROM local_auth_accounts',
+    ).get();
+    return rows.map((r) => r.data).toList();
+  }
+
+  Future<void> saveAuthAccount({
+    required String email,
+    required String fullName,
+    required String salt,
+    required String passwordHash,
+  }) async {
+    await initCustomAuthTables();
+    await customStatement(
+      'INSERT OR REPLACE INTO local_auth_accounts (email, full_name, salt, password_hash) VALUES (?, ?, ?, ?);',
+      [email.trim().toLowerCase(), fullName.trim(), salt, passwordHash],
+    );
+  }
+
+  Future<void> updateAuthPassword({
+    required String email,
+    required String salt,
+    required String passwordHash,
+  }) async {
+    await initCustomAuthTables();
+    await customStatement(
+      'UPDATE local_auth_accounts SET salt = ?, password_hash = ? WHERE email = ?;',
+      [salt, passwordHash, email.trim().toLowerCase()],
+    );
+  }
+
+  Future<void> saveAuthSession({
+    required String? currentEmail,
+    required bool isAuthenticated,
+  }) async {
+    await initCustomAuthTables();
+    await customStatement(
+      'INSERT OR REPLACE INTO local_auth_session (id, current_email, is_authenticated) VALUES (1, ?, ?);',
+      [currentEmail, isAuthenticated ? 1 : 0],
+    );
+  }
+
+  Future<Map<String, dynamic>?> getPersistedAuthSession() async {
+    await initCustomAuthTables();
+    final rows = await customSelect(
+      'SELECT current_email, is_authenticated FROM local_auth_session WHERE id = 1',
+    ).get();
+    if (rows.isEmpty) return null;
+    return rows.first.data;
   }
 }
 

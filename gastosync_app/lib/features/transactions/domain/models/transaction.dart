@@ -27,6 +27,7 @@ class TransactionValidationException implements Exception {
 class Transaction {
   const Transaction({
     this.id,
+    this.userEmail,
     required this.description,
     required this.amount,
     required this.date,
@@ -36,6 +37,7 @@ class Transaction {
   });
 
   final int? id;
+  final String? userEmail;
   final String description;
   final double amount;
   final DateTime date;
@@ -68,11 +70,17 @@ class Transaction {
         'A categoria da transação é obrigatória.',
       );
     }
+    if (isExpense && category.trim().toLowerCase().startsWith('renda')) {
+      throw const TransactionValidationException(
+        'Nenhuma despesa pode ter a categoria Renda.',
+      );
+    }
   }
 
   factory Transaction.fromLocal(LocalTransaction row) {
     return Transaction(
       id: row.id,
+      userEmail: row.userEmail,
       description: row.description,
       amount: row.amount,
       date: row.date,
@@ -86,6 +94,9 @@ class Transaction {
     validate();
     return LocalTransactionsCompanion(
       id: id != null ? drift.Value(id!) : const drift.Value.absent(),
+      userEmail: userEmail != null && userEmail!.trim().isNotEmpty
+          ? drift.Value(userEmail!.trim().toLowerCase())
+          : const drift.Value.absent(),
       description: drift.Value(description.trim()),
       amount: drift.Value(amount),
       date: drift.Value(date),
@@ -97,6 +108,7 @@ class Transaction {
 
   Transaction copyWith({
     int? id,
+    String? userEmail,
     String? description,
     double? amount,
     DateTime? date,
@@ -106,6 +118,7 @@ class Transaction {
   }) {
     return Transaction(
       id: id ?? this.id,
+      userEmail: userEmail ?? this.userEmail,
       description: description ?? this.description,
       amount: amount ?? this.amount,
       date: date ?? this.date,

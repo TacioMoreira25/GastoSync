@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/brl_currency_formatter.dart';
 import '../../../budget_agent/data/services/budget_agent_service.dart';
 import '../../../budget_agent/domain/models/agent_prediction_models.dart';
 import '../../../dashboard/presentation/widgets/quick_expense_input_field.dart';
@@ -59,7 +61,16 @@ class _ManualTransactionFormModalState
 
   TransactionType _selectedType = TransactionType.expense;
   String _selectedCategory = 'Alimentação';
+  String _selectedPaymentMethod = 'PIX';
   DateTime _selectedDate = DateTime.now();
+
+  static const List<String> _paymentMethods = [
+    'PIX',
+    'Débito',
+    'Crédito',
+    'Dinheiro',
+    'Transferência',
+  ];
 
   final List<String> _categories = [
     'Alimentação',
@@ -67,8 +78,12 @@ class _ManualTransactionFormModalState
     'Transporte',
     'Lazer',
     'Saúde',
-    'Renda',
   ];
+
+  static bool _isRendaCategory(String category) {
+    final lower = category.trim().toLowerCase();
+    return lower == 'renda' || lower.startsWith('renda ');
+  }
 
   AgentPredictionResponse? _lastAiPrediction;
   bool _isSubmitting = false;
@@ -91,14 +106,23 @@ class _ManualTransactionFormModalState
       }
       if (prediction.estimatedAmount > 0) {
         _amountController.text =
-            prediction.estimatedAmount.toStringAsFixed(2).replaceAll('.', ',');
+            BrlCurrencyInputFormatter.formatValue(prediction.estimatedAmount);
       }
-      final cat = prediction.category.trim();
-      if (cat.isNotEmpty) {
-        if (!_categories.contains(cat)) {
-          _categories.add(cat);
+      if (_selectedType == TransactionType.income) {
+        _selectedCategory = 'Renda';
+      } else {
+        final cat = prediction.category.trim();
+        if (cat.isNotEmpty && !_isRendaCategory(cat)) {
+          if (!_categories.contains(cat)) {
+            _categories.add(cat);
+          }
+          _selectedCategory = cat;
+        } else if (_isRendaCategory(_selectedCategory)) {
+          _selectedCategory = 'Alimentação';
         }
-        _selectedCategory = cat;
+      }
+      if (_paymentMethods.contains(prediction.paymentMethod)) {
+        _selectedPaymentMethod = prediction.paymentMethod;
       }
       if (prediction.inferredDate != null) {
         _selectedDate = prediction.inferredDate!;
@@ -122,8 +146,9 @@ class _ManualTransactionFormModalState
       return;
     }
 
-    final rawAmount = _amountController.text.trim().replaceAll(',', '.');
-    final explicitAmount = double.tryParse(rawAmount);
+    final parsedAmount =
+        BrlCurrencyInputFormatter.parseValue(_amountController.text);
+    final explicitAmount = parsedAmount > 0 ? parsedAmount : null;
 
     setState(() => _isPredictingAi = true);
     try {
@@ -192,6 +217,16 @@ class _ManualTransactionFormModalState
     );
 
     if (newCat != null && newCat.isNotEmpty && mounted) {
+      if (_isRendaCategory(newCat)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "A categoria 'Renda' é exclusiva para Receitas e não pode ser usada em Despesas.",
+            ),
+          ),
+        );
+        return;
+      }
       setState(() {
         final exists = _categories.any(
           (c) => c.toLowerCase() == newCat.toLowerCase(),
@@ -203,12 +238,10 @@ class _ManualTransactionFormModalState
       });
 
       // Persiste imediatamente a nova categoria em LocalBudgets para aparecer em Planejamento
-      if (newCat.toLowerCase() != 'renda') {
-        await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
-              newCat,
-              defaultLimit: 500.0,
-            );
-      }
+      await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
+            newCat,
+            defaultLimit: 500.0,
+          );
     }
   }
 
@@ -228,16 +261,14 @@ class _ManualTransactionFormModalState
   Future<void> _confirmAndSave() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final rawAmount = _amountController.text
-        .trim()
-        .replaceAll('R\$', '')
-        .replaceAll(' ', '')
-        .replaceAll('.', '')
-        .replaceAll(',', '.');
-    final fallbackAmount =
-        double.tryParse(_amountController.text.trim().replaceAll(',', '.'));
-    final amount = double.tryParse(rawAmount) ?? fallbackAmount ?? 0.0;
+    final amount =
+        BrlCurrencyInputFormatter.parseValue(_amountController.text);
     final description = _descriptionController.text.trim();
+    final effectiveCategory = _selectedType == TransactionType.income
+        ? 'Renda'
+        : (_isRendaCategory(_selectedCategory)
+            ? 'Alimentação'
+            : _selectedCategory);
 
     setState(() => _isSubmitting = true);
     try {
@@ -250,10 +281,10 @@ class _ManualTransactionFormModalState
           amount: amount,
           date: _selectedDate,
           type: _selectedType,
-          category: _selectedCategory,
+          category: effectiveCategory,
           rawSuggestion: jsonEncode(prediction.toJson()),
           confidenceScore: prediction.confidence,
-          categorySuggested: prediction.category,
+          categorySuggested: effectiveCategory,
           budgetTip: prediction.budgetTip,
         );
       } else {
@@ -262,13 +293,13 @@ class _ManualTransactionFormModalState
           amount: amount,
           date: _selectedDate,
           type: _selectedType,
-          category: _selectedCategory,
+          category: effectiveCategory,
         );
       }
 
       if (_selectedType == TransactionType.expense) {
         await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
-              _selectedCategory,
+              effectiveCategory,
               defaultLimit: 500.0,
             );
       }
@@ -305,24 +336,29 @@ class _ManualTransactionFormModalState
     final transactions =
         ref.watch(watchTransactionsProvider).value ?? const <Transaction>[];
 
-    // Unifica categorias padrão + categorias criadas no Planejamento + categorias usadas em Transações
+    // Unifica categorias de despesa (nunca inclui 'Renda')
     final categoryMap = <String, String>{};
     for (final c in _categories) {
-      categoryMap[c.trim().toLowerCase()] = c.trim();
+      final trimmed = c.trim();
+      if (trimmed.isNotEmpty && !_isRendaCategory(trimmed)) {
+        categoryMap[trimmed.toLowerCase()] = trimmed;
+      }
     }
     for (final b in budgets) {
       final trimmed = b.category.trim();
-      if (trimmed.isNotEmpty) {
+      if (trimmed.isNotEmpty && !_isRendaCategory(trimmed)) {
         categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
       }
     }
     for (final t in transactions) {
-      final trimmed = t.category.trim();
-      if (trimmed.isNotEmpty) {
-        categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+      if (t.isExpense) {
+        final trimmed = t.category.trim();
+        if (trimmed.isNotEmpty && !_isRendaCategory(trimmed)) {
+          categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+        }
       }
     }
-    final allCategories = categoryMap.values.toList();
+    final allExpenseCategories = categoryMap.values.toList();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
@@ -408,13 +444,19 @@ class _ManualTransactionFormModalState
                     key: const Key('smart_input_text_field'),
                     controller: _smartInputController,
                     enabled: !isBusy,
+                    cursorColor: AppTheme.emeraldPrimary,
                     onSubmitted: (_) => _fillWithAi(),
-                    style: const TextStyle(fontSize: 13),
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
                       hintText: "Ex: 'Almoço 45,90 no débito'...",
                       hintStyle: const TextStyle(
                         color: AppTheme.textMuted,
                         fontSize: 13,
+                        fontWeight: FontWeight.w400,
                       ),
                       isDense: true,
                       filled: true,
@@ -521,21 +563,35 @@ class _ManualTransactionFormModalState
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: AppTheme.emeraldBadgeBg),
                       ),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.check_circle_rounded,
-                            size: 16,
-                            color: AppTheme.emeraldDeep,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _lastAiPrediction!.budgetTip,
-                              style: const TextStyle(
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.verified_user_rounded,
+                                size: 16,
                                 color: AppTheme.emeraldDeep,
-                                fontSize: 12,
                               ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Human-in-the-Loop (Llama 3.3 70B): $_selectedCategory • $_selectedPaymentMethod • ${_formatSelectedDate(_selectedDate)}',
+                                  style: const TextStyle(
+                                    color: AppTheme.emeraldDeep,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _lastAiPrediction!.budgetTip,
+                            style: const TextStyle(
+                              color: AppTheme.emeraldDeep,
+                              fontSize: 12,
                             ),
                           ),
                         ],
@@ -592,7 +648,7 @@ class _ManualTransactionFormModalState
             ),
             const SizedBox(height: 16),
 
-            // Campo Valor R$ 0,00
+            // Campo Valor R$ 0,00 (apenas números, formatado no padrão Real Brasileiro)
             const Text(
               'Valor',
               style: TextStyle(
@@ -605,18 +661,27 @@ class _ManualTransactionFormModalState
             TextFormField(
               key: const Key('manual_amount_field'),
               controller: _amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              cursorColor: AppTheme.emeraldPrimary,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                BrlCurrencyInputFormatter(),
+              ],
               style: const TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
               ),
               decoration: InputDecoration(
-                hintText: 'R\$ 0,00',
+                hintText: '0,00',
+                hintStyle: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
                 prefixText: 'R\$ ',
                 prefixStyle: const TextStyle(
-                  color: AppTheme.textMuted,
+                  color: AppTheme.textSecondary,
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                 ),
@@ -634,11 +699,17 @@ class _ManualTransactionFormModalState
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: AppTheme.cardBorder),
                 ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: AppTheme.emeraldPrimary,
+                    width: 1.5,
+                  ),
+                ),
               ),
               validator: (value) {
-                final raw = (value ?? '').trim().replaceAll(',', '.');
-                final parsed = double.tryParse(raw);
-                if (parsed == null || parsed <= 0) {
+                final parsed = BrlCurrencyInputFormatter.parseValue(value);
+                if (parsed <= 0) {
                   return 'Informe um valor maior que zero.';
                 }
                 return null;
@@ -659,6 +730,12 @@ class _ManualTransactionFormModalState
             TextFormField(
               key: const Key('manual_description_field'),
               controller: _descriptionController,
+              cursorColor: AppTheme.emeraldPrimary,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               decoration: InputDecoration(
                 hintText: 'Nome da transação (ex: Supermercado, Aluguel)',
                 hintStyle: const TextStyle(
@@ -689,9 +766,85 @@ class _ManualTransactionFormModalState
             ),
             const SizedBox(height: 16),
 
-            // Chips de Categoria + botão "+ Nova Categoria"
+            // Categoria: Receita só pode ser 'Renda'; Despesa nunca pode ser 'Renda'
             const Text(
               'Categoria',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_selectedType == TransactionType.income)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const Key('category_chip_Renda'),
+                    label: const Text('Renda'),
+                    selected: true,
+                    showCheckmark: false,
+                    selectedColor: AppTheme.emeraldPrimary,
+                    backgroundColor: AppTheme.emeraldPrimary,
+                    labelStyle: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    onSelected: (_) {},
+                  ),
+                ],
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ...allExpenseCategories.map((cat) {
+                    final isSelected =
+                        _selectedCategory.toLowerCase() == cat.toLowerCase();
+                    return ChoiceChip(
+                      key: Key('category_chip_$cat'),
+                      label: Text(cat),
+                      selected: isSelected,
+                      showCheckmark: false,
+                      selectedColor: AppTheme.navyDark,
+                      backgroundColor: AppTheme.cardSurface,
+                      labelStyle: TextStyle(
+                        color:
+                            isSelected ? Colors.white : AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight:
+                            isSelected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                      onSelected: (_) {
+                        setState(() => _selectedCategory = cat);
+                      },
+                    );
+                  }),
+                  ActionChip(
+                    key: const Key('add_custom_category_chip'),
+                    backgroundColor: AppTheme.emeraldSoftBg,
+                    side: const BorderSide(color: AppTheme.emeraldBadgeBg),
+                    label: const Text(
+                      '+ Nova Categoria',
+                      style: TextStyle(
+                        color: AppTheme.emeraldDeep,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onPressed: isBusy ? null : _promptNewCategory,
+                  ),
+                ],
+              ),
+            const SizedBox(height: 16),
+
+            // Forma de Pagamento (extraída pela IA ou selecionada manualmente)
+            const Text(
+              'Forma de Pagamento',
               style: TextStyle(
                 color: AppTheme.textSecondary,
                 fontSize: 12,
@@ -702,43 +855,25 @@ class _ManualTransactionFormModalState
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [
-                ...allCategories.map((cat) {
-                  final isSelected =
-                      _selectedCategory.toLowerCase() == cat.toLowerCase();
-                  return ChoiceChip(
-                    key: Key('category_chip_$cat'),
-                    label: Text(cat),
-                    selected: isSelected,
-                    showCheckmark: false,
-                    selectedColor: AppTheme.navyDark,
-                    backgroundColor: AppTheme.cardSurface,
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppTheme.textSecondary,
-                      fontSize: 12,
-                      fontWeight:
-                          isSelected ? FontWeight.w600 : FontWeight.w500,
-                    ),
-                    onSelected: (_) {
-                      setState(() => _selectedCategory = cat);
-                    },
-                  );
-                }),
-                ActionChip(
-                  key: const Key('add_custom_category_chip'),
-                  backgroundColor: AppTheme.emeraldSoftBg,
-                  side: const BorderSide(color: AppTheme.emeraldBadgeBg),
-                  label: const Text(
-                    '+ Nova Categoria',
-                    style: TextStyle(
-                      color: AppTheme.emeraldDeep,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+              children: _paymentMethods.map((method) {
+                final isSelected = _selectedPaymentMethod == method;
+                return ChoiceChip(
+                  key: Key('payment_method_chip_$method'),
+                  label: Text(method),
+                  selected: isSelected,
+                  showCheckmark: false,
+                  selectedColor: AppTheme.emeraldPrimary,
+                  backgroundColor: AppTheme.cardSurface,
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.white : AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                   ),
-                  onPressed: isBusy ? null : _promptNewCategory,
-                ),
-              ],
+                  onSelected: (_) {
+                    setState(() => _selectedPaymentMethod = method);
+                  },
+                );
+              }).toList(),
             ),
             const SizedBox(height: 16),
 

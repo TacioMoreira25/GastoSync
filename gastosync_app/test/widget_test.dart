@@ -39,7 +39,7 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('login_password_input')),
-        '12345678',
+        'Gasto@2026!',
       );
       await tester.ensureVisible(find.byKey(const Key('login_submit_button')));
       await tester.tap(find.byKey(const Key('login_submit_button')));

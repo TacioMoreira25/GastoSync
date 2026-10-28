@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/security/owasp_prompt_sanitizer.dart';
 import '../../domain/models/agent_prediction_models.dart';
 
 class BudgetAgentService {
@@ -10,13 +11,16 @@ class BudgetAgentService {
 
   final Dio _dio;
 
-  /// Aciona `POST /api/v1/predict/categorize` com timeout de 10s (T021)
+  /// Aciona `POST /api/v1/predict/categorize` com timeout de 10s e sanitização OWASP MASVS (T021)
   Future<AgentPredictionResponse> predictCategory(
     AgentPredictionRequest request,
   ) async {
+    final sanitizedRequest = request.copyWith(
+      description: OwaspPromptSanitizer.sanitize(request.description),
+    );
     final response = await _dio.post<Map<String, dynamic>>(
       ApiConstants.predictCategorizeEndpoint,
-      data: request.toJson(),
+      data: sanitizedRequest.toJson(),
       options: Options(
         sendTimeout: ApiConstants.textPredictionTimeout,
         receiveTimeout: ApiConstants.textPredictionTimeout,
@@ -40,16 +44,23 @@ class BudgetAgentService {
     double? explicitAmount,
     String? userId,
   }) async {
-    final parsed = InformalExpenseParser.parse(rawInput);
+    final sanitizedInput = OwaspPromptSanitizer.sanitize(rawInput);
+    final parsed = InformalExpenseParser.parse(sanitizedInput);
     final effectiveAmount = explicitAmount ?? parsed.extractedAmount;
     final request = AgentPredictionRequest(
-      description: rawInput.trim(),
+      description: sanitizedInput,
       amount: effectiveAmount,
       userId: userId,
     );
 
     try {
-      return await predictCategory(request);
+      final result = await predictCategory(request);
+      return result.copyWith(
+        paymentMethod: result.paymentMethod.isEmpty
+            ? parsed.inferredPaymentMethod
+            : result.paymentMethod,
+        inferredDate: result.inferredDate ?? parsed.inferredDate,
+      );
     } on DioException catch (e) {
       final isTimeout = e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.sendTimeout ||
@@ -58,13 +69,13 @@ class BudgetAgentService {
           ? 'Tempo limite (10s) excedido na resposta da IA.'
           : 'Assistente indisponível offline.';
       return AgentPredictionResponse.offlineFallback(
-        rawInput: rawInput,
+        rawInput: sanitizedInput,
         initialAmount: effectiveAmount,
         reason: reason,
       );
     } catch (_) {
       return AgentPredictionResponse.offlineFallback(
-        rawInput: rawInput,
+        rawInput: sanitizedInput,
         initialAmount: effectiveAmount,
         reason: 'Assistente indisponível no momento.',
       );

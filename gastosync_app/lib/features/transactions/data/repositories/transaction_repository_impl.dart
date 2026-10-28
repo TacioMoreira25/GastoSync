@@ -4,7 +4,7 @@ import '../../../../core/database/app_database.dart';
 import '../../domain/models/transaction.dart';
 
 abstract class TransactionRepository {
-  Stream<List<Transaction>> watchAllTransactions();
+  Stream<List<Transaction>> watchAllTransactions({String? userEmail});
   Future<int> addTransaction(Transaction transaction);
   Future<int> addTransactionWithAgentInsight({
     required Transaction transaction,
@@ -23,8 +23,8 @@ class TransactionRepositoryImpl implements TransactionRepository {
   final AppDatabase _database;
 
   @override
-  Stream<List<Transaction>> watchAllTransactions() {
-    return _database.watchAllTransactions().map(
+  Stream<List<Transaction>> watchAllTransactions({String? userEmail}) {
+    return _database.watchAllTransactions(userEmail: userEmail).map(
           (rows) => rows.map(Transaction.fromLocal).toList(),
         );
   }

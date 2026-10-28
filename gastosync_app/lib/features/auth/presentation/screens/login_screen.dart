@@ -28,6 +28,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
+  final _nameFocusNode = FocusNode();
+  final _emailFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
+  final _confirmPasswordFocusNode = FocusNode();
+
   bool _isRegisterMode = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -35,6 +40,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   void dispose() {
+    _nameFocusNode.dispose();
+    _emailFocusNode.dispose();
+    _passwordFocusNode.dispose();
+    _confirmPasswordFocusNode.dispose();
+
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -42,12 +52,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
+  void _togglePasswordVisibility() {
+    setState(() => _obscurePassword = !_obscurePassword);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_passwordFocusNode.canRequestFocus) {
+        _passwordFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _toggleConfirmPasswordVisibility() {
+    setState(() => _obscureConfirmPassword = !_obscureConfirmPassword);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_confirmPasswordFocusNode.canRequestFocus) {
+        _confirmPasswordFocusNode.requestFocus();
+      }
+    });
+  }
+
   void _toggleMode(bool registerMode) {
     if (_isRegisterMode == registerMode) return;
     ref.read(authProvider.notifier).clearError();
+    _formKey.currentState?.reset();
     setState(() {
       _isRegisterMode = registerMode;
       _submittedOnce = false;
+      _passwordController.clear();
+      _confirmPasswordController.clear();
     });
   }
 
@@ -62,17 +93,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authNotifier = ref.read(authProvider.notifier);
     if (_isRegisterMode) {
-      authNotifier.register(
+      final created = authNotifier.register(
         fullName: _nameController.text,
         email: _emailController.text,
         password: _passwordController.text,
       );
+      if (created && mounted) {
+        _formKey.currentState?.reset();
+        setState(() {
+          _isRegisterMode = false;
+          _submittedOnce = false;
+          _passwordController.clear();
+          _confirmPasswordController.clear();
+        });
+      }
     } else {
       authNotifier.login(
         email: _emailController.text,
         password: _passwordController.text,
       );
     }
+  }
+
+  Future<void> _showResetPasswordModal() async {
+    ref.read(authProvider.notifier).clearError();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Theme(
+        data: AppTheme.lightTheme,
+        child: _ResetPasswordDialog(
+          initialEmail: _emailController.text.trim(),
+          onEmailUpdated: (email) {
+            if (_emailController.text.trim().isEmpty) {
+              _emailController.text = email;
+            }
+          },
+        ),
+      ),
+    );
   }
 
   InputDecoration _inputDecoration({
@@ -154,7 +212,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     vertical: 32,
                   ),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 400),
+                    constraints: const BoxConstraints(maxWidth: 420),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -212,8 +270,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             const SizedBox(height: 4),
             Text(
               _isRegisterMode
-                  ? 'Leva menos de um minuto.'
-                  : 'Entre para acessar seu painel financeiro.',
+                  ? 'Cadastre seus dados e uma senha forte para criar sua conta.'
+                  : 'Entre com seu e-mail e senha para acessar o painel.',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 13.5),
             ),
             const SizedBox(height: 20),
@@ -249,7 +307,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Banner de erro de autenticação
+            // Banner verde de sucesso (conta criada ou senha alterada)
+            if (authState.successMessage != null) ...[
+              Container(
+                key: const Key('login_success_banner'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.emeraldSoftBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.emeraldBadgeBg),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle_outline_rounded,
+                      color: AppTheme.emeraldDeep,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        authState.successMessage!,
+                        style: const TextStyle(
+                          color: AppTheme.emeraldDeep,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Banner vermelho de erro de autenticação
             if (authState.errorMessage != null) ...[
               Container(
                 key: const Key('login_error_banner'),
@@ -288,12 +383,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Campo Nome (apenas no cadastro)
+            // Campo Nome (apenas na aba Criar conta)
             if (_isRegisterMode) ...[
               _fieldLabel('Nome completo'),
               TextFormField(
                 key: const Key('login_name_input'),
+                focusNode: _nameFocusNode,
                 controller: _nameController,
+                cursorColor: AppTheme.emeraldPrimary,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
                 textInputAction: TextInputAction.next,
                 textCapitalization: TextCapitalization.words,
                 validator: (_) =>
@@ -310,11 +412,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             _fieldLabel('E-mail'),
             TextFormField(
               key: const Key('login_email_input'),
+              focusNode: _emailFocusNode,
               controller: _emailController,
+              cursorColor: AppTheme.emeraldPrimary,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
               autocorrect: false,
-              autofillHints: const [AutofillHints.email],
               validator: (_) =>
                   AuthNotifier.validateEmail(_emailController.text),
               decoration: _inputDecoration(
@@ -324,38 +432,100 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
             const SizedBox(height: 14),
 
-            // Campo Senha
-            _fieldLabel('Senha'),
+            // Rótulo Senha + botão "Alterar senha" (apenas na aba Entrar)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _fieldLabel('Senha'),
+                if (!_isRegisterMode)
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: InkWell(
+                        key: const Key('login_forgot_password_button'),
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: _showResetPasswordModal,
+                        child: const Padding(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Text(
+                            'Esqueceu / Alterar senha?',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppTheme.emeraldDeep,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            // Campo Senha (validação simples no Login vs validação forte no Cadastro)
             TextFormField(
               key: const Key('login_password_input'),
+              focusNode: _passwordFocusNode,
               controller: _passwordController,
+              cursorColor: AppTheme.emeraldPrimary,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               obscureText: _obscurePassword,
-              autofillHints: const [AutofillHints.password],
+              enableSuggestions: false,
+              autocorrect: false,
               textInputAction:
                   _isRegisterMode ? TextInputAction.next : TextInputAction.done,
               onFieldSubmitted: _isRegisterMode ? null : (_) => _submit(),
-              validator: (_) =>
-                  AuthNotifier.validatePassword(_passwordController.text),
+              validator: (_) => _isRegisterMode
+                  ? AuthNotifier.validatePassword(_passwordController.text)
+                  : AuthNotifier.validateLoginPassword(_passwordController.text),
               decoration: _inputDecoration(
-                hint: 'Mínimo de 8 caracteres',
+                hint: _isRegisterMode
+                    ? 'Crie uma senha forte (8+ caracteres)'
+                    : 'Digite sua senha',
                 prefixIcon: Icons.lock_outline_rounded,
                 suffixIcon: _visibilityToggle(
                   key: const Key('login_toggle_password_visibility'),
                   obscured: _obscurePassword,
-                  onPressed: () =>
-                      setState(() => _obscurePassword = !_obscurePassword),
+                  onPressed: _togglePasswordVisibility,
                 ),
               ),
             ),
 
-            // Campo Confirmar Senha (apenas no cadastro)
+            // Medidor de Segurança e Confirmar Senha: APENAS na aba Criar conta
             if (_isRegisterMode) ...[
+              const SizedBox(height: 10),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _passwordController,
+                builder: (context, value, _) {
+                  final analysis = AuthNotifier.analyzePassword(value.text);
+                  return _PasswordSecurityMeter(
+                    analysis: analysis,
+                    hasInput: value.text.trim().isNotEmpty,
+                  );
+                },
+              ),
               const SizedBox(height: 14),
               _fieldLabel('Confirmar senha'),
               TextFormField(
                 key: const Key('login_confirm_password_input'),
+                focusNode: _confirmPasswordFocusNode,
                 controller: _confirmPasswordController,
+                cursorColor: AppTheme.emeraldPrimary,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
                 obscureText: _obscureConfirmPassword,
+                enableSuggestions: false,
+                autocorrect: false,
                 textInputAction: TextInputAction.done,
                 onFieldSubmitted: (_) => _submit(),
                 validator: (_) {
@@ -371,14 +541,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   prefixIcon: Icons.verified_user_outlined,
                   suffixIcon: _visibilityToggle(
                     obscured: _obscureConfirmPassword,
-                    onPressed: () => setState(
-                      () => _obscureConfirmPassword = !_obscureConfirmPassword,
-                    ),
+                    onPressed: _toggleConfirmPasswordVisibility,
                   ),
                 ),
               ),
             ],
-            const SizedBox(height: 24),
+            const SizedBox(height: 22),
 
             // Botão principal Entrar / Criar conta
             SizedBox(
@@ -412,6 +580,417 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Modal para redefinir/alterar senha de uma conta cadastrada
+class _ResetPasswordDialog extends ConsumerStatefulWidget {
+  const _ResetPasswordDialog({
+    required this.initialEmail,
+    required this.onEmailUpdated,
+  });
+
+  final String initialEmail;
+  final ValueChanged<String> onEmailUpdated;
+
+  @override
+  ConsumerState<_ResetPasswordDialog> createState() =>
+      _ResetPasswordDialogState();
+}
+
+class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _emailController;
+  final _newPasswordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+
+  final _emailFocusNode = FocusNode();
+  final _newPasswordFocusNode = FocusNode();
+  final _confirmFocusNode = FocusNode();
+
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
+  String? _dialogError;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController(text: widget.initialEmail);
+  }
+
+  @override
+  void dispose() {
+    _emailFocusNode.dispose();
+    _newPasswordFocusNode.dispose();
+    _confirmFocusNode.dispose();
+
+    _emailController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  void _handleSaveNewPassword() {
+    setState(() => _dialogError = null);
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final err = ref.read(authProvider.notifier).changePassword(
+          email: _emailController.text,
+          newPassword: _newPasswordController.text,
+        );
+    if (err != null) {
+      setState(() => _dialogError = err);
+      return;
+    }
+
+    widget.onEmailUpdated(_emailController.text.trim());
+    Navigator.of(context).pop();
+  }
+
+  void _toggleNewPasswordVisibility() {
+    setState(() => _obscureNew = !_obscureNew);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_newPasswordFocusNode.canRequestFocus) {
+        _newPasswordFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _toggleConfirmNewPasswordVisibility() {
+    setState(() => _obscureConfirm = !_obscureConfirm);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_confirmFocusNode.canRequestFocus) {
+        _confirmFocusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.cardSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Alterar senha',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Informe o e-mail da sua conta e defina uma nova senha forte.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                if (_dialogError != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _LoginColors.errorBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: AppTheme.errorColor.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(
+                      _dialogError!,
+                      style: const TextStyle(
+                        color: AppTheme.errorColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                TextFormField(
+                  controller: _emailController,
+                  focusNode: _emailFocusNode,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'E-mail da conta',
+                    prefixIcon: Icon(Icons.mail_outline_rounded, size: 18),
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: AuthNotifier.validateEmail,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _newPasswordController,
+                  focusNode: _newPasswordFocusNode,
+                  obscureText: _obscureNew,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'Nova senha',
+                    prefixIcon: const Icon(Icons.lock_reset_rounded, size: 18),
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      onPressed: _toggleNewPasswordVisibility,
+                      icon: Icon(
+                        _obscureNew
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                  validator: AuthNotifier.validatePassword,
+                ),
+                const SizedBox(height: 10),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _newPasswordController,
+                  builder: (context, value, _) {
+                    final analysis = AuthNotifier.analyzePassword(value.text);
+                    return _PasswordSecurityMeter(
+                      analysis: analysis,
+                      hasInput: value.text.trim().isNotEmpty,
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _confirmPasswordController,
+                  focusNode: _confirmFocusNode,
+                  obscureText: _obscureConfirm,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'Confirmar nova senha',
+                    prefixIcon:
+                        const Icon(Icons.verified_user_outlined, size: 18),
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      onPressed: _toggleConfirmNewPasswordVisibility,
+                      icon: Icon(
+                        _obscureConfirm
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                  validator: (val) {
+                    if ((val ?? '').trim() !=
+                        _newPasswordController.text.trim()) {
+                      return 'As senhas não coincidem.';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancelar'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.emeraldPrimary,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _handleSaveNewPassword,
+                      child: const Text('Salvar nova senha'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Medidor visual de força da senha + Checklist OWASP ASVS em tempo real (exibido apenas em Criar conta / Alterar senha)
+class _PasswordSecurityMeter extends StatelessWidget {
+  const _PasswordSecurityMeter({
+    required this.analysis,
+    required this.hasInput,
+  });
+
+  final PasswordSecurityAnalysis analysis;
+  final bool hasInput;
+
+  Color _resolveStrengthColor() {
+    if (!hasInput) return AppTheme.cardBorder;
+    if (analysis.strengthScore < 0.5) return AppTheme.errorColor;
+    if (analysis.strengthScore < 0.8) return AppTheme.warningAmber;
+    return AppTheme.emeraldPrimary;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = _resolveStrengthColor();
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.subtleSurface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.shield_outlined,
+                    size: 13,
+                    color: AppTheme.textSecondary,
+                  ),
+                  SizedBox(width: 4),
+                  Text(
+                    'Segurança da senha',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              Flexible(
+                child: Text(
+                  hasInput ? analysis.strengthLabel : 'Requisitos obrigatórios',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: hasInput ? activeColor : AppTheme.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: hasInput ? analysis.strengthScore : 0.0,
+              minHeight: 5,
+              backgroundColor: AppTheme.cardBorder,
+              valueColor: AlwaysStoppedAnimation<Color>(activeColor),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _RequirementPill(
+                label: '8+ caracteres',
+                met: analysis.hasMinLength,
+              ),
+              _RequirementPill(
+                label: 'Maiúscula/minúscula (Aa)',
+                met: analysis.hasMixedCase,
+              ),
+              _RequirementPill(
+                label: 'Número (0-9)',
+                met: analysis.hasDigit,
+              ),
+              _RequirementPill(
+                label: 'Símbolo (!@#\$%)',
+                met: analysis.hasSpecialChar,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RequirementPill extends StatelessWidget {
+  const _RequirementPill({
+    required this.label,
+    required this.met,
+  });
+
+  final String label;
+  final bool met;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: met ? AppTheme.emeraldSoftBg : AppTheme.cardSurface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: met ? AppTheme.emeraldBadgeBg : AppTheme.cardBorder,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            met ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+            size: 12,
+            color: met ? AppTheme.emeraldDeep : AppTheme.textMuted,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: met ? AppTheme.emeraldDeep : AppTheme.textSecondary,
+              fontSize: 10.5,
+              fontWeight: met ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -556,7 +1135,7 @@ class _SecurityNote extends StatelessWidget {
         SizedBox(width: 6),
         Flexible(
           child: Text(
-            'Dados protegidos localmente com hash e bloqueio de tentativas',
+            'Proteção OWASP: Key Stretching 256-bit (2.048 rounds), Salt CSPRNG 128-bit e bloqueio anti-força bruta',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: _LoginColors.mutedOnDark,
@@ -611,7 +1190,7 @@ class _ModeTabButton extends StatelessWidget {
               style: TextStyle(
                 color: selected ? AppTheme.textPrimary : AppTheme.textMuted,
                 fontSize: 13,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ),

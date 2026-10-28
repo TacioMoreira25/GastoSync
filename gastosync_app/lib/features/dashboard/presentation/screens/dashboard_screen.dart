@@ -280,29 +280,52 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.emeraldPrimary.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              isPositive
-                  ? '+12,4% vs. mês anterior'
-                  : 'Atenção ao fluxo negativo',
-              style: const TextStyle(
-                color: AppTheme.emeraldPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.emeraldPrimary.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  isPositive
+                      ? '+12,4% vs. mês anterior'
+                      : 'Atenção ao fluxo negativo',
+                  style: const TextStyle(
+                    color: AppTheme.emeraldPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'Patrimônio Líquido: ${_formatValue(formatter, metrics.netWorth)}',
+                  style: const TextStyle(
+                    color: Color(0xFFE2E8F0),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Container(
             height: 1,
             color: AppTheme.navyBorder.withValues(alpha: 0.7),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -328,6 +351,47 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: AppTheme.navyBorder.withValues(alpha: 0.6),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Fixos: ${_formatValue(formatter, metrics.fixedExpenses)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFCBD5E1),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Variáveis: ${_formatValue(formatter, metrics.variableExpenses)}',
+                    textAlign: TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFCBD5E1),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -411,9 +475,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             _SummaryGridCard(
               title: 'Comprometimento',
               mainValue: '${metrics.incomeCommitment.toStringAsFixed(1)}%',
-              subtitle: 'Da renda mensal (limite 80%)',
+              subtitle: 'Meta saudável: < 30% da renda',
               progress: commitmentProgress,
-              progressColor: metrics.incomeCommitment > 80
+              progressColor: metrics.incomeCommitment > 30
                   ? AppTheme.warningAmber
                   : AppTheme.emeraldPrimary,
             ),

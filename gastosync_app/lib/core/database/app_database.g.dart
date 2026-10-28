@@ -22,6 +22,18 @@ class $LocalTransactionsTable extends LocalTransactions
       'PRIMARY KEY AUTOINCREMENT',
     ),
   );
+  static const VerificationMeta _userEmailMeta = const VerificationMeta(
+    'userEmail',
+  );
+  @override
+  late final GeneratedColumn<String> userEmail = GeneratedColumn<String>(
+    'user_email',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('marcos.pereira@gastosync.local'),
+  );
   static const VerificationMeta _descriptionMeta = const VerificationMeta(
     'description',
   );
@@ -93,6 +105,7 @@ class $LocalTransactionsTable extends LocalTransactions
   @override
   List<GeneratedColumn> get $columns => [
     id,
+    userEmail,
     description,
     amount,
     date,
@@ -114,6 +127,12 @@ class $LocalTransactionsTable extends LocalTransactions
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('user_email')) {
+      context.handle(
+        _userEmailMeta,
+        userEmail.isAcceptableOrUnknown(data['user_email']!, _userEmailMeta),
+      );
     }
     if (data.containsKey('description')) {
       context.handle(
@@ -177,6 +196,10 @@ class $LocalTransactionsTable extends LocalTransactions
         DriftSqlType.int,
         data['${effectivePrefix}id'],
       )!,
+      userEmail: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}user_email'],
+      )!,
       description: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}description'],
@@ -213,6 +236,7 @@ class $LocalTransactionsTable extends LocalTransactions
 class LocalTransaction extends DataClass
     implements Insertable<LocalTransaction> {
   final int id;
+  final String userEmail;
   final String description;
   final double amount;
   final DateTime date;
@@ -221,6 +245,7 @@ class LocalTransaction extends DataClass
   final bool isSynced;
   const LocalTransaction({
     required this.id,
+    required this.userEmail,
     required this.description,
     required this.amount,
     required this.date,
@@ -232,6 +257,7 @@ class LocalTransaction extends DataClass
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
+    map['user_email'] = Variable<String>(userEmail);
     map['description'] = Variable<String>(description);
     map['amount'] = Variable<double>(amount);
     map['date'] = Variable<DateTime>(date);
@@ -244,6 +270,7 @@ class LocalTransaction extends DataClass
   LocalTransactionsCompanion toCompanion(bool nullToAbsent) {
     return LocalTransactionsCompanion(
       id: Value(id),
+      userEmail: Value(userEmail),
       description: Value(description),
       amount: Value(amount),
       date: Value(date),
@@ -260,6 +287,7 @@ class LocalTransaction extends DataClass
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalTransaction(
       id: serializer.fromJson<int>(json['id']),
+      userEmail: serializer.fromJson<String>(json['userEmail']),
       description: serializer.fromJson<String>(json['description']),
       amount: serializer.fromJson<double>(json['amount']),
       date: serializer.fromJson<DateTime>(json['date']),
@@ -273,6 +301,7 @@ class LocalTransaction extends DataClass
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
+      'userEmail': serializer.toJson<String>(userEmail),
       'description': serializer.toJson<String>(description),
       'amount': serializer.toJson<double>(amount),
       'date': serializer.toJson<DateTime>(date),
@@ -284,6 +313,7 @@ class LocalTransaction extends DataClass
 
   LocalTransaction copyWith({
     int? id,
+    String? userEmail,
     String? description,
     double? amount,
     DateTime? date,
@@ -292,6 +322,7 @@ class LocalTransaction extends DataClass
     bool? isSynced,
   }) => LocalTransaction(
     id: id ?? this.id,
+    userEmail: userEmail ?? this.userEmail,
     description: description ?? this.description,
     amount: amount ?? this.amount,
     date: date ?? this.date,
@@ -302,6 +333,7 @@ class LocalTransaction extends DataClass
   LocalTransaction copyWithCompanion(LocalTransactionsCompanion data) {
     return LocalTransaction(
       id: data.id.present ? data.id.value : this.id,
+      userEmail: data.userEmail.present ? data.userEmail.value : this.userEmail,
       description: data.description.present
           ? data.description.value
           : this.description,
@@ -317,6 +349,7 @@ class LocalTransaction extends DataClass
   String toString() {
     return (StringBuffer('LocalTransaction(')
           ..write('id: $id, ')
+          ..write('userEmail: $userEmail, ')
           ..write('description: $description, ')
           ..write('amount: $amount, ')
           ..write('date: $date, ')
@@ -328,13 +361,22 @@ class LocalTransaction extends DataClass
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, description, amount, date, type, category, isSynced);
+  int get hashCode => Object.hash(
+    id,
+    userEmail,
+    description,
+    amount,
+    date,
+    type,
+    category,
+    isSynced,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is LocalTransaction &&
           other.id == this.id &&
+          other.userEmail == this.userEmail &&
           other.description == this.description &&
           other.amount == this.amount &&
           other.date == this.date &&
@@ -345,6 +387,7 @@ class LocalTransaction extends DataClass
 
 class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   final Value<int> id;
+  final Value<String> userEmail;
   final Value<String> description;
   final Value<double> amount;
   final Value<DateTime> date;
@@ -353,6 +396,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   final Value<bool> isSynced;
   const LocalTransactionsCompanion({
     this.id = const Value.absent(),
+    this.userEmail = const Value.absent(),
     this.description = const Value.absent(),
     this.amount = const Value.absent(),
     this.date = const Value.absent(),
@@ -362,6 +406,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   });
   LocalTransactionsCompanion.insert({
     this.id = const Value.absent(),
+    this.userEmail = const Value.absent(),
     required String description,
     required double amount,
     required DateTime date,
@@ -375,6 +420,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
        category = Value(category);
   static Insertable<LocalTransaction> custom({
     Expression<int>? id,
+    Expression<String>? userEmail,
     Expression<String>? description,
     Expression<double>? amount,
     Expression<DateTime>? date,
@@ -384,6 +430,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
+      if (userEmail != null) 'user_email': userEmail,
       if (description != null) 'description': description,
       if (amount != null) 'amount': amount,
       if (date != null) 'date': date,
@@ -395,6 +442,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
 
   LocalTransactionsCompanion copyWith({
     Value<int>? id,
+    Value<String>? userEmail,
     Value<String>? description,
     Value<double>? amount,
     Value<DateTime>? date,
@@ -404,6 +452,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   }) {
     return LocalTransactionsCompanion(
       id: id ?? this.id,
+      userEmail: userEmail ?? this.userEmail,
       description: description ?? this.description,
       amount: amount ?? this.amount,
       date: date ?? this.date,
@@ -418,6 +467,9 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
     final map = <String, Expression>{};
     if (id.present) {
       map['id'] = Variable<int>(id.value);
+    }
+    if (userEmail.present) {
+      map['user_email'] = Variable<String>(userEmail.value);
     }
     if (description.present) {
       map['description'] = Variable<String>(description.value);
@@ -444,6 +496,7 @@ class LocalTransactionsCompanion extends UpdateCompanion<LocalTransaction> {
   String toString() {
     return (StringBuffer('LocalTransactionsCompanion(')
           ..write('id: $id, ')
+          ..write('userEmail: $userEmail, ')
           ..write('description: $description, ')
           ..write('amount: $amount, ')
           ..write('date: $date, ')
@@ -1988,6 +2041,7 @@ class LocalAgentInsightsCompanion extends UpdateCompanion<LocalAgentInsight> {
 
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
+  $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $LocalTransactionsTable localTransactions =
       $LocalTransactionsTable(this);
   late final $LocalBudgetsTable localBudgets = $LocalBudgetsTable(this);
@@ -2004,4 +2058,1099 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     localMetrics,
     localAgentInsights,
   ];
+}
+
+typedef $$LocalTransactionsTableCreateCompanionBuilder =
+    LocalTransactionsCompanion Function({
+      Value<int> id,
+      Value<String> userEmail,
+      required String description,
+      required double amount,
+      required DateTime date,
+      required String type,
+      required String category,
+      Value<bool> isSynced,
+    });
+typedef $$LocalTransactionsTableUpdateCompanionBuilder =
+    LocalTransactionsCompanion Function({
+      Value<int> id,
+      Value<String> userEmail,
+      Value<String> description,
+      Value<double> amount,
+      Value<DateTime> date,
+      Value<String> type,
+      Value<String> category,
+      Value<bool> isSynced,
+    });
+
+class $$LocalTransactionsTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalTransactionsTable> {
+  $$LocalTransactionsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get userEmail => $composableBuilder(
+    column: $table.userEmail,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get amount => $composableBuilder(
+    column: $table.amount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get date => $composableBuilder(
+    column: $table.date,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get type => $composableBuilder(
+    column: $table.type,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalTransactionsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalTransactionsTable> {
+  $$LocalTransactionsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get userEmail => $composableBuilder(
+    column: $table.userEmail,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get amount => $composableBuilder(
+    column: $table.amount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get date => $composableBuilder(
+    column: $table.date,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get type => $composableBuilder(
+    column: $table.type,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalTransactionsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalTransactionsTable> {
+  $$LocalTransactionsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get userEmail =>
+      $composableBuilder(column: $table.userEmail, builder: (column) => column);
+
+  GeneratedColumn<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get amount =>
+      $composableBuilder(column: $table.amount, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get date =>
+      $composableBuilder(column: $table.date, builder: (column) => column);
+
+  GeneratedColumn<String> get type =>
+      $composableBuilder(column: $table.type, builder: (column) => column);
+
+  GeneratedColumn<String> get category =>
+      $composableBuilder(column: $table.category, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+}
+
+class $$LocalTransactionsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalTransactionsTable,
+          LocalTransaction,
+          $$LocalTransactionsTableFilterComposer,
+          $$LocalTransactionsTableOrderingComposer,
+          $$LocalTransactionsTableAnnotationComposer,
+          $$LocalTransactionsTableCreateCompanionBuilder,
+          $$LocalTransactionsTableUpdateCompanionBuilder,
+          (
+            LocalTransaction,
+            BaseReferences<
+              _$AppDatabase,
+              $LocalTransactionsTable,
+              LocalTransaction
+            >,
+          ),
+          LocalTransaction,
+          PrefetchHooks Function()
+        > {
+  $$LocalTransactionsTableTableManager(
+    _$AppDatabase db,
+    $LocalTransactionsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalTransactionsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalTransactionsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalTransactionsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> userEmail = const Value.absent(),
+                Value<String> description = const Value.absent(),
+                Value<double> amount = const Value.absent(),
+                Value<DateTime> date = const Value.absent(),
+                Value<String> type = const Value.absent(),
+                Value<String> category = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
+              }) => LocalTransactionsCompanion(
+                id: id,
+                userEmail: userEmail,
+                description: description,
+                amount: amount,
+                date: date,
+                type: type,
+                category: category,
+                isSynced: isSynced,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> userEmail = const Value.absent(),
+                required String description,
+                required double amount,
+                required DateTime date,
+                required String type,
+                required String category,
+                Value<bool> isSynced = const Value.absent(),
+              }) => LocalTransactionsCompanion.insert(
+                id: id,
+                userEmail: userEmail,
+                description: description,
+                amount: amount,
+                date: date,
+                type: type,
+                category: category,
+                isSynced: isSynced,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LocalTransactionsTable, LocalTransaction>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $LocalTransactionsTable,
+                    LocalTransaction
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalTransactionsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalTransactionsTable,
+      LocalTransaction,
+      $$LocalTransactionsTableFilterComposer,
+      $$LocalTransactionsTableOrderingComposer,
+      $$LocalTransactionsTableAnnotationComposer,
+      $$LocalTransactionsTableCreateCompanionBuilder,
+      $$LocalTransactionsTableUpdateCompanionBuilder,
+      (
+        LocalTransaction,
+        BaseReferences<
+          _$AppDatabase,
+          $LocalTransactionsTable,
+          LocalTransaction
+        >,
+      ),
+      LocalTransaction,
+      PrefetchHooks Function()
+    >;
+typedef $$LocalBudgetsTableCreateCompanionBuilder =
+    LocalBudgetsCompanion Function({
+      Value<int> id,
+      required String category,
+      required double limitAmount,
+      required int month,
+      required int year,
+    });
+typedef $$LocalBudgetsTableUpdateCompanionBuilder =
+    LocalBudgetsCompanion Function({
+      Value<int> id,
+      Value<String> category,
+      Value<double> limitAmount,
+      Value<int> month,
+      Value<int> year,
+    });
+
+class $$LocalBudgetsTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalBudgetsTable> {
+  $$LocalBudgetsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get limitAmount => $composableBuilder(
+    column: $table.limitAmount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalBudgetsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalBudgetsTable> {
+  $$LocalBudgetsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get limitAmount => $composableBuilder(
+    column: $table.limitAmount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get month => $composableBuilder(
+    column: $table.month,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalBudgetsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalBudgetsTable> {
+  $$LocalBudgetsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get category =>
+      $composableBuilder(column: $table.category, builder: (column) => column);
+
+  GeneratedColumn<double> get limitAmount => $composableBuilder(
+    column: $table.limitAmount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get month =>
+      $composableBuilder(column: $table.month, builder: (column) => column);
+
+  GeneratedColumn<int> get year =>
+      $composableBuilder(column: $table.year, builder: (column) => column);
+}
+
+class $$LocalBudgetsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalBudgetsTable,
+          LocalBudget,
+          $$LocalBudgetsTableFilterComposer,
+          $$LocalBudgetsTableOrderingComposer,
+          $$LocalBudgetsTableAnnotationComposer,
+          $$LocalBudgetsTableCreateCompanionBuilder,
+          $$LocalBudgetsTableUpdateCompanionBuilder,
+          (
+            LocalBudget,
+            BaseReferences<_$AppDatabase, $LocalBudgetsTable, LocalBudget>,
+          ),
+          LocalBudget,
+          PrefetchHooks Function()
+        > {
+  $$LocalBudgetsTableTableManager(_$AppDatabase db, $LocalBudgetsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalBudgetsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalBudgetsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalBudgetsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> category = const Value.absent(),
+                Value<double> limitAmount = const Value.absent(),
+                Value<int> month = const Value.absent(),
+                Value<int> year = const Value.absent(),
+              }) => LocalBudgetsCompanion(
+                id: id,
+                category: category,
+                limitAmount: limitAmount,
+                month: month,
+                year: year,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String category,
+                required double limitAmount,
+                required int month,
+                required int year,
+              }) => LocalBudgetsCompanion.insert(
+                id: id,
+                category: category,
+                limitAmount: limitAmount,
+                month: month,
+                year: year,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LocalBudgetsTable, LocalBudget>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $LocalBudgetsTable,
+                    LocalBudget
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalBudgetsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalBudgetsTable,
+      LocalBudget,
+      $$LocalBudgetsTableFilterComposer,
+      $$LocalBudgetsTableOrderingComposer,
+      $$LocalBudgetsTableAnnotationComposer,
+      $$LocalBudgetsTableCreateCompanionBuilder,
+      $$LocalBudgetsTableUpdateCompanionBuilder,
+      (
+        LocalBudget,
+        BaseReferences<_$AppDatabase, $LocalBudgetsTable, LocalBudget>,
+      ),
+      LocalBudget,
+      PrefetchHooks Function()
+    >;
+typedef $$LocalMetricsTableCreateCompanionBuilder =
+    LocalMetricsCompanion Function({
+      Value<int> id,
+      required DateTime calculatedAt,
+      required double currentBalance,
+      required double totalIncome,
+      required double totalExpense,
+      required double savingsRate,
+      required double emergencyMonths,
+      required double incomeCommitment,
+      required double dailyBurnRate,
+      required double monthEndProjection,
+      required double healthScore,
+    });
+typedef $$LocalMetricsTableUpdateCompanionBuilder =
+    LocalMetricsCompanion Function({
+      Value<int> id,
+      Value<DateTime> calculatedAt,
+      Value<double> currentBalance,
+      Value<double> totalIncome,
+      Value<double> totalExpense,
+      Value<double> savingsRate,
+      Value<double> emergencyMonths,
+      Value<double> incomeCommitment,
+      Value<double> dailyBurnRate,
+      Value<double> monthEndProjection,
+      Value<double> healthScore,
+    });
+
+class $$LocalMetricsTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalMetricsTable> {
+  $$LocalMetricsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get calculatedAt => $composableBuilder(
+    column: $table.calculatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get currentBalance => $composableBuilder(
+    column: $table.currentBalance,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get totalIncome => $composableBuilder(
+    column: $table.totalIncome,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get totalExpense => $composableBuilder(
+    column: $table.totalExpense,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get savingsRate => $composableBuilder(
+    column: $table.savingsRate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get emergencyMonths => $composableBuilder(
+    column: $table.emergencyMonths,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get incomeCommitment => $composableBuilder(
+    column: $table.incomeCommitment,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get dailyBurnRate => $composableBuilder(
+    column: $table.dailyBurnRate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get monthEndProjection => $composableBuilder(
+    column: $table.monthEndProjection,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get healthScore => $composableBuilder(
+    column: $table.healthScore,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalMetricsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalMetricsTable> {
+  $$LocalMetricsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get calculatedAt => $composableBuilder(
+    column: $table.calculatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get currentBalance => $composableBuilder(
+    column: $table.currentBalance,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get totalIncome => $composableBuilder(
+    column: $table.totalIncome,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get totalExpense => $composableBuilder(
+    column: $table.totalExpense,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get savingsRate => $composableBuilder(
+    column: $table.savingsRate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get emergencyMonths => $composableBuilder(
+    column: $table.emergencyMonths,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get incomeCommitment => $composableBuilder(
+    column: $table.incomeCommitment,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get dailyBurnRate => $composableBuilder(
+    column: $table.dailyBurnRate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get monthEndProjection => $composableBuilder(
+    column: $table.monthEndProjection,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get healthScore => $composableBuilder(
+    column: $table.healthScore,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalMetricsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalMetricsTable> {
+  $$LocalMetricsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get calculatedAt => $composableBuilder(
+    column: $table.calculatedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get currentBalance => $composableBuilder(
+    column: $table.currentBalance,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get totalIncome => $composableBuilder(
+    column: $table.totalIncome,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get totalExpense => $composableBuilder(
+    column: $table.totalExpense,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get savingsRate => $composableBuilder(
+    column: $table.savingsRate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get emergencyMonths => $composableBuilder(
+    column: $table.emergencyMonths,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get incomeCommitment => $composableBuilder(
+    column: $table.incomeCommitment,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get dailyBurnRate => $composableBuilder(
+    column: $table.dailyBurnRate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get monthEndProjection => $composableBuilder(
+    column: $table.monthEndProjection,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get healthScore => $composableBuilder(
+    column: $table.healthScore,
+    builder: (column) => column,
+  );
+}
+
+class $$LocalMetricsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalMetricsTable,
+          LocalMetric,
+          $$LocalMetricsTableFilterComposer,
+          $$LocalMetricsTableOrderingComposer,
+          $$LocalMetricsTableAnnotationComposer,
+          $$LocalMetricsTableCreateCompanionBuilder,
+          $$LocalMetricsTableUpdateCompanionBuilder,
+          (
+            LocalMetric,
+            BaseReferences<_$AppDatabase, $LocalMetricsTable, LocalMetric>,
+          ),
+          LocalMetric,
+          PrefetchHooks Function()
+        > {
+  $$LocalMetricsTableTableManager(_$AppDatabase db, $LocalMetricsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalMetricsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalMetricsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalMetricsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<DateTime> calculatedAt = const Value.absent(),
+                Value<double> currentBalance = const Value.absent(),
+                Value<double> totalIncome = const Value.absent(),
+                Value<double> totalExpense = const Value.absent(),
+                Value<double> savingsRate = const Value.absent(),
+                Value<double> emergencyMonths = const Value.absent(),
+                Value<double> incomeCommitment = const Value.absent(),
+                Value<double> dailyBurnRate = const Value.absent(),
+                Value<double> monthEndProjection = const Value.absent(),
+                Value<double> healthScore = const Value.absent(),
+              }) => LocalMetricsCompanion(
+                id: id,
+                calculatedAt: calculatedAt,
+                currentBalance: currentBalance,
+                totalIncome: totalIncome,
+                totalExpense: totalExpense,
+                savingsRate: savingsRate,
+                emergencyMonths: emergencyMonths,
+                incomeCommitment: incomeCommitment,
+                dailyBurnRate: dailyBurnRate,
+                monthEndProjection: monthEndProjection,
+                healthScore: healthScore,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required DateTime calculatedAt,
+                required double currentBalance,
+                required double totalIncome,
+                required double totalExpense,
+                required double savingsRate,
+                required double emergencyMonths,
+                required double incomeCommitment,
+                required double dailyBurnRate,
+                required double monthEndProjection,
+                required double healthScore,
+              }) => LocalMetricsCompanion.insert(
+                id: id,
+                calculatedAt: calculatedAt,
+                currentBalance: currentBalance,
+                totalIncome: totalIncome,
+                totalExpense: totalExpense,
+                savingsRate: savingsRate,
+                emergencyMonths: emergencyMonths,
+                incomeCommitment: incomeCommitment,
+                dailyBurnRate: dailyBurnRate,
+                monthEndProjection: monthEndProjection,
+                healthScore: healthScore,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LocalMetricsTable, LocalMetric>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $LocalMetricsTable,
+                    LocalMetric
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalMetricsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalMetricsTable,
+      LocalMetric,
+      $$LocalMetricsTableFilterComposer,
+      $$LocalMetricsTableOrderingComposer,
+      $$LocalMetricsTableAnnotationComposer,
+      $$LocalMetricsTableCreateCompanionBuilder,
+      $$LocalMetricsTableUpdateCompanionBuilder,
+      (
+        LocalMetric,
+        BaseReferences<_$AppDatabase, $LocalMetricsTable, LocalMetric>,
+      ),
+      LocalMetric,
+      PrefetchHooks Function()
+    >;
+typedef $$LocalAgentInsightsTableCreateCompanionBuilder =
+    LocalAgentInsightsCompanion Function({
+      Value<int> id,
+      Value<int?> transactionId,
+      required String rawSuggestion,
+      required double confidenceScore,
+      required String categorySuggested,
+      required String budgetTip,
+      required DateTime createdAt,
+    });
+typedef $$LocalAgentInsightsTableUpdateCompanionBuilder =
+    LocalAgentInsightsCompanion Function({
+      Value<int> id,
+      Value<int?> transactionId,
+      Value<String> rawSuggestion,
+      Value<double> confidenceScore,
+      Value<String> categorySuggested,
+      Value<String> budgetTip,
+      Value<DateTime> createdAt,
+    });
+
+class $$LocalAgentInsightsTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalAgentInsightsTable> {
+  $$LocalAgentInsightsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get rawSuggestion => $composableBuilder(
+    column: $table.rawSuggestion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get confidenceScore => $composableBuilder(
+    column: $table.confidenceScore,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get categorySuggested => $composableBuilder(
+    column: $table.categorySuggested,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get budgetTip => $composableBuilder(
+    column: $table.budgetTip,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalAgentInsightsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalAgentInsightsTable> {
+  $$LocalAgentInsightsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get rawSuggestion => $composableBuilder(
+    column: $table.rawSuggestion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get confidenceScore => $composableBuilder(
+    column: $table.confidenceScore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get categorySuggested => $composableBuilder(
+    column: $table.categorySuggested,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get budgetTip => $composableBuilder(
+    column: $table.budgetTip,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalAgentInsightsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalAgentInsightsTable> {
+  $$LocalAgentInsightsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get rawSuggestion => $composableBuilder(
+    column: $table.rawSuggestion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get confidenceScore => $composableBuilder(
+    column: $table.confidenceScore,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get categorySuggested => $composableBuilder(
+    column: $table.categorySuggested,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get budgetTip =>
+      $composableBuilder(column: $table.budgetTip, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$LocalAgentInsightsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalAgentInsightsTable,
+          LocalAgentInsight,
+          $$LocalAgentInsightsTableFilterComposer,
+          $$LocalAgentInsightsTableOrderingComposer,
+          $$LocalAgentInsightsTableAnnotationComposer,
+          $$LocalAgentInsightsTableCreateCompanionBuilder,
+          $$LocalAgentInsightsTableUpdateCompanionBuilder,
+          (
+            LocalAgentInsight,
+            BaseReferences<
+              _$AppDatabase,
+              $LocalAgentInsightsTable,
+              LocalAgentInsight
+            >,
+          ),
+          LocalAgentInsight,
+          PrefetchHooks Function()
+        > {
+  $$LocalAgentInsightsTableTableManager(
+    _$AppDatabase db,
+    $LocalAgentInsightsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalAgentInsightsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalAgentInsightsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalAgentInsightsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int?> transactionId = const Value.absent(),
+                Value<String> rawSuggestion = const Value.absent(),
+                Value<double> confidenceScore = const Value.absent(),
+                Value<String> categorySuggested = const Value.absent(),
+                Value<String> budgetTip = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => LocalAgentInsightsCompanion(
+                id: id,
+                transactionId: transactionId,
+                rawSuggestion: rawSuggestion,
+                confidenceScore: confidenceScore,
+                categorySuggested: categorySuggested,
+                budgetTip: budgetTip,
+                createdAt: createdAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int?> transactionId = const Value.absent(),
+                required String rawSuggestion,
+                required double confidenceScore,
+                required String categorySuggested,
+                required String budgetTip,
+                required DateTime createdAt,
+              }) => LocalAgentInsightsCompanion.insert(
+                id: id,
+                transactionId: transactionId,
+                rawSuggestion: rawSuggestion,
+                confidenceScore: confidenceScore,
+                categorySuggested: categorySuggested,
+                budgetTip: budgetTip,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LocalAgentInsightsTable, LocalAgentInsight>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $LocalAgentInsightsTable,
+                    LocalAgentInsight
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalAgentInsightsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalAgentInsightsTable,
+      LocalAgentInsight,
+      $$LocalAgentInsightsTableFilterComposer,
+      $$LocalAgentInsightsTableOrderingComposer,
+      $$LocalAgentInsightsTableAnnotationComposer,
+      $$LocalAgentInsightsTableCreateCompanionBuilder,
+      $$LocalAgentInsightsTableUpdateCompanionBuilder,
+      (
+        LocalAgentInsight,
+        BaseReferences<
+          _$AppDatabase,
+          $LocalAgentInsightsTable,
+          LocalAgentInsight
+        >,
+      ),
+      LocalAgentInsight,
+      PrefetchHooks Function()
+    >;
+
+class $AppDatabaseManager {
+  final _$AppDatabase _db;
+  $AppDatabaseManager(this._db);
+  $$LocalTransactionsTableTableManager get localTransactions =>
+      $$LocalTransactionsTableTableManager(_db, _db.localTransactions);
+  $$LocalBudgetsTableTableManager get localBudgets =>
+      $$LocalBudgetsTableTableManager(_db, _db.localBudgets);
+  $$LocalMetricsTableTableManager get localMetrics =>
+      $$LocalMetricsTableTableManager(_db, _db.localMetrics);
+  $$LocalAgentInsightsTableTableManager get localAgentInsights =>
+      $$LocalAgentInsightsTableTableManager(_db, _db.localAgentInsights);
 }

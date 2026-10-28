@@ -7,6 +7,7 @@ import '../../features/dashboard/presentation/controllers/dashboard_controller.d
 import '../../features/settings/domain/models/user_profile.dart';
 import '../constants/api_constants.dart';
 import '../network/dio_client.dart';
+import '../security/owasp_prompt_sanitizer.dart';
 import '../theme/app_theme.dart';
 import 'gastosync_notifications_modal.dart';
 
@@ -645,17 +646,20 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
   }
 
   Future<void> _sendPrompt([String? presetPrompt]) async {
-    final text = (presetPrompt ?? _inputController.text).trim();
-    if (text.isEmpty || _isSending) return;
+    final rawText = (presetPrompt ?? _inputController.text).trim();
+    if (rawText.isEmpty || _isSending) return;
 
     if (presetPrompt == null) {
       _inputController.clear();
     }
 
+    final hasInjection = OwaspPromptSanitizer.containsInjectionAttempt(rawText);
+    final sanitizedText = OwaspPromptSanitizer.sanitize(rawText);
+
     setState(() {
       _messages.add(
         _ChatMessage(
-          text: text,
+          text: sanitizedText,
           isUser: true,
           timestamp: DateTime.now(),
         ),
@@ -664,12 +668,29 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
     });
     _scrollToBottom();
 
+    if (hasInjection) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          _ChatMessage(
+            text:
+                'Proteção OWASP MASVS ativa: entrada bloqueada por conter padrões suspeitos de Prompt Injection. Envie apenas dúvidas ou lançamentos financeiros.',
+            isUser: false,
+            timestamp: DateTime.now(),
+          ),
+        );
+        _isSending = false;
+      });
+      _scrollToBottom();
+      return;
+    }
+
     String replyText;
     try {
       final dio = ref.read(dioProvider);
       final response = await dio.post<Map<String, dynamic>>(
         ApiConstants.agentChatEndpoint,
-        data: {'message': text},
+        data: {'message': sanitizedText},
         options: Options(
           sendTimeout: ApiConstants.textPredictionTimeout,
           receiveTimeout: ApiConstants.textPredictionTimeout,
@@ -679,10 +700,10 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
       replyText = (data?['reply'] ??
               data?['response'] ??
               data?['recommendation'] ??
-              _buildLocalContextualReply(text))
+              _buildLocalContextualReply(sanitizedText))
           .toString();
     } catch (_) {
-      replyText = _buildLocalContextualReply(text);
+      replyText = _buildLocalContextualReply(sanitizedText);
     }
 
     if (!mounted) return;

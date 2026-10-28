@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/api_constants.dart';
+import '../security/owasp_prompt_sanitizer.dart';
 
 /// Provedor Riverpod para a instância configurada do Dio
 final dioProvider = Provider<Dio>((ref) {
@@ -23,6 +24,19 @@ final dioProvider = Provider<Dio>((ref) {
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) {
+        // Sanitização automática contra Prompt Injection em payloads JSON (OWASP MASVS)
+        final data = options.data;
+        if (data is Map<String, dynamic>) {
+          final sanitizedMap = Map<String, dynamic>.from(data);
+          for (final key in const ['description', 'prompt', 'message', 'text']) {
+            final value = sanitizedMap[key];
+            if (value is String) {
+              sanitizedMap[key] = OwaspPromptSanitizer.sanitize(value);
+            }
+          }
+          options.data = sanitizedMap;
+        }
+
         // Sanitização de logs em ambiente de produção para evitar vazamento de PII/Tokens
         if (kDebugMode) {
           debugPrint('🌐 [DIO REQ] [${options.method}] => ${options.uri}');

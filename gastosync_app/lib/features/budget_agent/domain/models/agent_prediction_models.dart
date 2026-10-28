@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import '../../../../core/security/owasp_prompt_sanitizer.dart';
 
 /// Modelo imutável de requisição para categorização preditiva (Llama 3.3 via Groq)
 @immutable
@@ -23,7 +24,7 @@ class AgentPredictionRequest {
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'description': description,
+      'description': OwaspPromptSanitizer.sanitize(description),
       if (amount != null) 'amount': amount,
       if (userId != null) 'user_id': userId,
     };
@@ -51,6 +52,7 @@ class AgentPredictionResponse {
     required this.normalizedDescription,
     required this.estimatedAmount,
     required this.budgetTip,
+    this.paymentMethod = 'PIX',
     this.inferredDate,
     this.isFromOcr = false,
     this.isOfflineFallback = false,
@@ -62,6 +64,7 @@ class AgentPredictionResponse {
   final String normalizedDescription;
   final double estimatedAmount;
   final String budgetTip;
+  final String paymentMethod;
   final DateTime? inferredDate;
   final bool isFromOcr;
   final bool isOfflineFallback;
@@ -71,17 +74,23 @@ class AgentPredictionResponse {
   bool get isLowConfidence => confidence < 0.50;
 
   factory AgentPredictionResponse.fromJson(Map<String, dynamic> json) {
+    final normalizedDesc =
+        (json['normalized_description'] ?? json['merchant'] ?? '') as String;
+    final rawPayment =
+        (json['payment_method'] ?? json['forma_pagamento']) as String?;
     return AgentPredictionResponse(
       category: json['category'] as String? ?? 'Outros',
       confidence: (json['confidence'] as num?)?.toDouble() ?? 0.0,
-      normalizedDescription:
-          (json['normalized_description'] ?? json['merchant'] ?? '') as String,
+      normalizedDescription: normalizedDesc,
       estimatedAmount:
           ((json['estimated_amount'] ?? json['amount']) as num?)?.toDouble() ??
           0.0,
       budgetTip:
           json['budget_tip'] as String? ??
           'Revise os dados antes de confirmar o lançamento.',
+      paymentMethod: rawPayment != null && rawPayment.trim().isNotEmpty
+          ? rawPayment.trim()
+          : InformalExpenseParser.inferPaymentMethod(normalizedDesc),
       inferredDate: json['date'] != null
           ? DateTime.tryParse(json['date'].toString())
           : null,
@@ -89,14 +98,20 @@ class AgentPredictionResponse {
   }
 
   factory AgentPredictionResponse.fromOcrJson(Map<String, dynamic> json) {
+    final merchant = json['merchant'] as String? ?? 'Comprovante OCR';
+    final rawPayment =
+        (json['payment_method'] ?? json['forma_pagamento']) as String?;
     return AgentPredictionResponse(
       category: json['category'] as String? ?? 'Outros',
       confidence: (json['confidence'] as num?)?.toDouble() ?? 0.0,
-      normalizedDescription: json['merchant'] as String? ?? 'Comprovante OCR',
+      normalizedDescription: merchant,
       estimatedAmount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       budgetTip:
           json['budget_tip'] as String? ??
           'Dados extraídos via leitura óptica de comprovante.',
+      paymentMethod: rawPayment != null && rawPayment.trim().isNotEmpty
+          ? rawPayment.trim()
+          : InformalExpenseParser.inferPaymentMethod(merchant),
       inferredDate: json['date'] != null
           ? DateTime.tryParse(json['date'].toString())
           : null,
@@ -110,16 +125,19 @@ class AgentPredictionResponse {
     double? initialAmount,
     required String reason,
   }) {
-    final parsed = InformalExpenseParser.parse(rawInput);
+    final sanitized = OwaspPromptSanitizer.sanitize(rawInput);
+    final parsed = InformalExpenseParser.parse(sanitized);
     return AgentPredictionResponse(
       category: parsed.inferredCategory,
       confidence: 0.35,
       normalizedDescription: parsed.cleanDescription.isEmpty
-          ? rawInput.trim()
+          ? sanitized
           : parsed.cleanDescription,
       estimatedAmount: initialAmount ?? parsed.extractedAmount ?? 0.0,
       budgetTip:
           '$reason Você pode revisar e salvar manualmente no banco local (100% Offline-First).',
+      paymentMethod: parsed.inferredPaymentMethod,
+      inferredDate: parsed.inferredDate,
       isOfflineFallback: true,
       fallbackReason: reason,
     );
@@ -132,6 +150,7 @@ class AgentPredictionResponse {
       'normalized_description': normalizedDescription,
       'estimated_amount': estimatedAmount,
       'budget_tip': budgetTip,
+      'payment_method': paymentMethod,
       if (inferredDate != null) 'date': inferredDate!.toIso8601String(),
     };
   }
@@ -142,6 +161,7 @@ class AgentPredictionResponse {
     String? normalizedDescription,
     double? estimatedAmount,
     String? budgetTip,
+    String? paymentMethod,
     DateTime? inferredDate,
     bool? isFromOcr,
     bool? isOfflineFallback,
@@ -154,6 +174,7 @@ class AgentPredictionResponse {
           normalizedDescription ?? this.normalizedDescription,
       estimatedAmount: estimatedAmount ?? this.estimatedAmount,
       budgetTip: budgetTip ?? this.budgetTip,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
       inferredDate: inferredDate ?? this.inferredDate,
       isFromOcr: isFromOcr ?? this.isFromOcr,
       isOfflineFallback: isOfflineFallback ?? this.isOfflineFallback,
@@ -162,26 +183,68 @@ class AgentPredictionResponse {
   }
 }
 
-/// Extrator local auxiliar para entradas em linguagem natural (ex: "uber 22 reais", "lanche tarde 25")
+/// Extrator local auxiliar para entradas em linguagem natural (ex: "Almoço R$ 45 no débito")
 class InformalExpenseParser {
   const InformalExpenseParser({
     required this.cleanDescription,
     required this.extractedAmount,
     required this.inferredCategory,
+    this.inferredPaymentMethod = 'PIX',
+    this.inferredDate,
   });
 
   final String cleanDescription;
   final double? extractedAmount;
   final String inferredCategory;
+  final String inferredPaymentMethod;
+  final DateTime? inferredDate;
+
+  static String inferPaymentMethod(String input) {
+    final lower = input.toLowerCase();
+    if (lower.contains('débito') || lower.contains('debito')) {
+      return 'Débito';
+    }
+    if (lower.contains('crédito') ||
+        lower.contains('credito') ||
+        lower.contains('cartão') ||
+        lower.contains('cartao') ||
+        lower.contains('parcelado')) {
+      return 'Crédito';
+    }
+    if (lower.contains('dinheiro') || lower.contains('espécie')) {
+      return 'Dinheiro';
+    }
+    if (lower.contains('boleto') ||
+        lower.contains('transferência') ||
+        lower.contains('transferencia') ||
+        lower.contains('ted')) {
+      return 'Transferência';
+    }
+    if (lower.contains('pix')) {
+      return 'PIX';
+    }
+    return 'PIX';
+  }
 
   static InformalExpenseParser parse(String input) {
-    final trimmed = input.trim();
+    final trimmed = OwaspPromptSanitizer.sanitize(input);
     if (trimmed.isEmpty) {
       return const InformalExpenseParser(
         cleanDescription: '',
         extractedAmount: null,
         inferredCategory: 'Outros',
       );
+    }
+
+    final paymentMethod = inferPaymentMethod(trimmed);
+
+    DateTime? inferredDate;
+    final lower = trimmed.toLowerCase();
+    final now = DateTime.now();
+    if (lower.contains('ontem')) {
+      inferredDate = now.subtract(const Duration(days: 1));
+    } else if (lower.contains('anteontem')) {
+      inferredDate = now.subtract(const Duration(days: 2));
     }
 
     final numberRegex = RegExp(r'(\d+(?:[.,]\d{1,2})?)');
@@ -196,8 +259,10 @@ class InformalExpenseParser {
       description = trimmed
           .replaceRange(lastMatch.start, lastMatch.end, '')
           .replaceAll(
-            RegExp(r'\b(reais|real|r\$|no|debito|crédito|credito|pix)\b',
-                caseSensitive: false),
+            RegExp(
+              r'\b(reais|real|r\$|no|na|em|via|debito|débito|crédito|credito|pix|dinheiro|cartão|cartao|ontem|hoje)\b',
+              caseSensitive: false,
+            ),
             '',
           )
           .replaceAll(RegExp(r'\s+'), ' ')
@@ -211,13 +276,13 @@ class InformalExpenseParser {
           description[0].toUpperCase() + description.substring(1);
     }
 
-    final lower = trimmed.toLowerCase();
     String category = 'Outros';
     if (lower.contains('uber') ||
         lower.contains('99') ||
         lower.contains('gasolina') ||
         lower.contains('posto') ||
         lower.contains('combustivel') ||
+        lower.contains('combustível') ||
         lower.contains('transporte')) {
       category = 'Transporte';
     } else if (lower.contains('almoco') ||
@@ -225,6 +290,7 @@ class InformalExpenseParser {
         lower.contains('lanche') ||
         lower.contains('jantar') ||
         lower.contains('mercado') ||
+        lower.contains('supermercado') ||
         lower.contains('ifood') ||
         lower.contains('habibs') ||
         lower.contains('padaria') ||
@@ -236,7 +302,8 @@ class InformalExpenseParser {
         lower.contains('agua') ||
         lower.contains('água') ||
         lower.contains('internet') ||
-        lower.contains('condominio')) {
+        lower.contains('condominio') ||
+        lower.contains('condomínio')) {
       category = 'Moradia';
     } else if (lower.contains('farmacia') ||
         lower.contains('farmácia') ||
@@ -249,12 +316,24 @@ class InformalExpenseParser {
         lower.contains('spotify') ||
         lower.contains('viagem')) {
       category = 'Lazer';
+    } else if (lower.contains('curso') ||
+        lower.contains('faculdade') ||
+        lower.contains('escola') ||
+        lower.contains('livro')) {
+      category = 'Educação';
+    } else if (lower.contains('investimento') ||
+        lower.contains('tesouro') ||
+        lower.contains('cdb') ||
+        lower.contains('reserva')) {
+      category = 'Investimentos';
     }
 
     return InformalExpenseParser(
       cleanDescription: description,
       extractedAmount: amount,
       inferredCategory: category,
+      inferredPaymentMethod: paymentMethod,
+      inferredDate: inferredDate,
     );
   }
 }
