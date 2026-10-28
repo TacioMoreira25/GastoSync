@@ -4,6 +4,7 @@ from groq import AuthenticationError, Groq
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from schemas import ChatbotRequest
 
 load_dotenv()
 
@@ -12,25 +13,23 @@ prompt_path_fibo = Path(os.getenv("SYSTEM_PROMPT_FIBO", "system_prompt_fibo.txt"
 system_prompt_context_classificator = prompt_path.read_text(encoding="utf-8")
 system_prompt_fibo = prompt_path_fibo.read_text(encoding="utf-8")
 
-app = FastAPI()
+api_key = os.getenv("API_KEY_GROQ")
+client = Groq(
+    api_key=api_key
+)
 
-def classificator(prompt: str) -> str:
-    models = [
+models = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
         "meta-llama/llama-guard-4-12b",
         "meta-models/muse-spark-open",
         "openai/gpt-oss-safeguard-20b",
         "qwen/qwen3.8-27b"
-    ]
+]
 
+def classificator(prompt: str) -> str:
     models = models.reverse()
     
-    api_key = os.getenv("API_KEY_GROQ")
-    client = Groq(
-        api_key=api_key
-    )
-
     response_verificatorModel = client.chat.completions.create(
         model=models[1],
         messages=[
@@ -50,22 +49,9 @@ def classificator(prompt: str) -> str:
 
 
 def fibo(prompt: str):
-    models = [
-        "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b",
-        "meta-llama/llama-guard-4-12b",
-        "meta-models/muse-spark-open",
-        "openai/gpt-oss-safeguard-20b",
-        "qwen/qwen3.8-27b"
-    ]
-       
-    api_key = os.getenv("API_KEY_GROQ")
-    client = Groq(
-        api_key=api_key
-    ) 
-
     chatbot = client.chat.completions.create(
         model="openai/gpt-oss-120b",
+        response_format={'type': 'json_object'},
         messages=[
             {
                 "role": "system",
@@ -75,7 +61,8 @@ def fibo(prompt: str):
                 "role": "user",
                 "content": prompt
             }
-        ]
+        ],
+        # documents=
     )
 
     response = chatbot.choices[0].message.content
@@ -85,7 +72,10 @@ def fibo(prompt: str):
 
 
 
-def chatbot(user_name: str, prompt: str, session: int = 1):
+def chatbot(request: ChatbotRequest):
+    user_name = request.user
+    prompt = request.prompt
+
     """
     Para a verificação de contexo:
         Se o erro for 1, a mensagem está fora do contexto.
@@ -93,11 +83,11 @@ def chatbot(user_name: str, prompt: str, session: int = 1):
     """
 
     verification = {
-                "message": "",
-                "erro": None,
-                "user_prompt": prompt,
-                "chabot_response": None   
-            }
+        "message": "",
+        "erro": None,
+        "user_prompt": prompt,
+        "chabot_response": None   
+    }
 
     try:
         response_ClassificatorModel = classificator(prompt=prompt)
@@ -111,28 +101,16 @@ def chatbot(user_name: str, prompt: str, session: int = 1):
             verification["message"] = "✅ Mensagem dentro do contexto!"
             verification["erro"] = "None"
     
-            chatbot = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt_fibo
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
+            chatbot = fibo(prompt)
     
             verification["chabot_response"] = chatbot.choices[0].message.content
     
             return verification
 
     except IndexError as e:
-        print(f'[ERRO] A lista de modelos está vazia. Lista: {models} | Quantidade de itens: {len(models)}')
+        print(f'[ERRO] A lista de modelos está vazia.')
 
-        verification["message"] = f'[ERRO] A lista de modelos está vazia. Lista: {models} | Quantidade de itens: {len(models)}'
+        verification["message"] = f'[ERRO] A lista de modelos está vazia.'
         verification['erro'] = e
 
         return verification
