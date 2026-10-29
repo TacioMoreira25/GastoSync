@@ -158,7 +158,7 @@
 **Purpose**: Criação do microsserviço independente de alta performance `gastosync_api` em **Go (Golang + Fiber + pgx + Bcrypt + JWT)** com Docker multi-stage, conectado ao **Neon Postgres**, e integração de Login/Sync no Flutter.
 
 - [x] T048 [P] Configurar containerização Docker multi-stage (`Dockerfile`, `.dockerignore`), template seguro de variáveis (`.env.example`) e documentação completa de deploy em `gastosync_api/README.md`
-- [ ] T049 Inicializar módulo Go (`go.mod`), configuração de variáveis (`internal/config/config.go`), pool de conexão SSL com o Neon PostgreSQL (`pgx/v5`) e migração automática das tabelas (`users`, `transactions`, `budgets`) em `gastosync_api/internal/database/postgres.go`
+- [x] T049 Inicializar módulo Go (`go.mod`), configuração de variáveis (`internal/config/config.go`), pool de conexão SSL com o Neon PostgreSQL (`pgx/v5`) e migração automática das tabelas (`users`, `transactions`, `budgets`) em `gastosync_api/internal/database/postgres.go`
 - [ ] T050 Implementar modelos (`internal/models/models.go`), middleware JWT (`internal/middleware/auth_middleware.go`) e handlers de autenticação com Bcrypt (`POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`) em `gastosync_api/internal/handlers/auth_handler.go`
 - [ ] T051 Implementar handlers de sincronização bidirecional (`POST /api/v1/sync/push` e `GET /api/v1/sync/pull`) e entrypoint HTTP Fiber (`cmd/api/main.go`) com CORS e rota `/health` em `gastosync_api/`
 - [ ] T052 Criar serviço de autenticação (`AuthService`), provedor de sessão Riverpod com armazenamento seguro do JWT e telas de Login/Cadastro responsivas (Mobile e Web) em `gastosync_app/lib/features/auth/`

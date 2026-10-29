@@ -1,9 +1,9 @@
-# Ignorar variáveis de ambiente locais e segredos no contexto de build Docker
+# Environment configuration and secrets
 .env
 .env.*
 !.env.example
 
-# Ignorar artefatos de compilação locais e git
+# Local build artifacts and version control metadata
 bin/
 tmp/
 *.exe
