@@ -23,7 +23,7 @@ O GastoSync é implementado em monorepo com três camadas bem delimitadas:
 **Storage & Hosting Topology (100% Gratuito & Seguro)**:
 - **Mobile Local Storage**: SQLite Local via Drift (`LocalTransactions`, `LocalBudgets`, `LocalMetrics`, `LocalAgentInsights`) nativo via FFI.
 - **Web Client Hosting**: **Cloudflare Pages** (Banda ilimitada, proteção DDoS corporativa, CDN global).
-- **Backend Core Hosting (`gastosync_api`)**: **Render.com** via Docker multi-stage (~10 MB de consumo de RAM).
+- **Backend Core Hosting (`gastosync_api`)**: **Render.com** via Docker multi-stage em `https://gastosync-api.onrender.com`.
 - **Agent IA Hosting (`gastosync_agent`)**: **Render.com** (Web Service Python separado).
 - **Cloud Database**: **Neon Serverless Postgres** (1 GB permanente, SSL/TLS obrigatório, scale-to-zero).
 

@@ -27,6 +27,7 @@ gasto-sync/
 
 - **Cliente (`gastosync_app`)**: Opera 100% offline no Mobile via SQLite nativo (`Drift`) com sincronização em background, e online direto via API REST na Web.
 - **API Core (`gastosync_api`)**: Microsserviço em Go (`Fiber v2` + `pgx/v5`) conectado ao Neon PostgreSQL.
+  - **Produção**: [`https://gastosync-api.onrender.com`](https://gastosync-api.onrender.com/health)
 - **Agente IA (`gastosync_agent`)**: Serviço independente em Python (`FastAPI` + `Groq`) para categorização em linguagem natural, OCR de comprovantes e assistente conversacional com validação *Human-in-the-Loop*.
 
 ---
