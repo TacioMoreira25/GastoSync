@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from groq import AuthenticationError, Groq
+from groq import Groq, AuthenticationError, PermissionDeniedError, RateLimitError, APITimeoutError
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-from schemas import ChatbotRequest
+from schemas import ChatbotRequest, Verification
 
 load_dotenv()
 
@@ -18,20 +18,22 @@ client = Groq(
     api_key=api_key
 )
 
-models = [
+
+
+def classificator(prompt: str, model_index: int = 0) -> str:
+    models = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
         "meta-llama/llama-guard-4-12b",
         "meta-models/muse-spark-open",
         "openai/gpt-oss-safeguard-20b",
         "qwen/qwen3.8-27b"
-]
-
-def classificator(prompt: str) -> str:
-    models = models.reverse()
+    ]
+    
+    models.reverse()
     
     response_verificatorModel = client.chat.completions.create(
-        model=models[1],
+        model=models[model_index],
         messages=[
             {
                 "role": "system",
@@ -48,9 +50,18 @@ def classificator(prompt: str) -> str:
 
 
 
-def fibo(prompt: str):
+def fibo(prompt: str, model_index: int = 0):
+    models = [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "meta-llama/llama-guard-4-12b",
+        "meta-models/muse-spark-open",
+        "openai/gpt-oss-safeguard-20b",
+        "qwen/qwen3.8-27b"
+    ]
+    
     chatbot = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model=models[model_index],
         response_format={'type': 'json_object'},
         messages=[
             {
@@ -72,53 +83,79 @@ def fibo(prompt: str):
 
 
 
-def chatbot(request: ChatbotRequest):
+def chatbot(request: ChatbotRequest, model_index: int = 0):
     user_name = request.user
     prompt = request.prompt
 
     """
     Para a verificação de contexo:
-        Se o erro for 1, a mensagem está fora do contexto.
-        Se o resulatdo for 0, a mensagem está dentro do contexto.
+        Se o erro for 1, há erros.
+        Se o resulatdo for 0, NÃO há erros.
     """
 
-    verification = {
-        "message": "",
-        "erro": None,
-        "user_prompt": prompt,
-        "chabot_response": None   
-    }
+    verification = Verification()
+
+    verification.message = ""
+    verification.erro = 0
+    verification.user_prompt = prompt
+    verification.chabot_response = ""
 
     try:
         response_ClassificatorModel = classificator(prompt=prompt)
     
         if response_ClassificatorModel == "False":
-            verification["message"] = "❌ Mensagem fora do contexto!"
-            verification["erro"] = "PromptOutOfContextError"
+            verification.message = "❌ Mensagem fora do contexto!"
+            verification.erro = 1
     
-            return {"verification": verification}
+            return verification
         else:
-            verification["message"] = "✅ Mensagem dentro do contexto!"
-            verification["erro"] = "None"
+            verification.message = "✅ Mensagem dentro do contexto!"
+            verification.erro = 0
     
-            chatbot = fibo(prompt)
-    
-            verification["chabot_response"] = chatbot.choices[0].message.content
+            verification.chabot_response = fibo(prompt) 
     
             return verification
 
     except IndexError as e:
-        print(f'[ERRO] A lista de modelos está vazia.')
+        print('[ERRO] A lista de modelos está vazia.')
 
-        verification["message"] = f'[ERRO] A lista de modelos está vazia.'
-        verification['erro'] = e
+        verification.message = '[ERRO] A lista de modelos está vazia.'
+        verification.erro = str(e)
 
         return verification
 
     except AuthenticationError as e:
-        print(f'[ERRO] Sua chave da API expirou')
+        print('[ERRO] Sua chave da API expirou')
 
-        verification["message"] = f'[ERRO] Sua chave da API expirou'
-        verification['erro'] = e
+        verification.message = '[ERRO] Sua chave da API expirou'
+        verification.erro = str(e)
 
         return verification
+
+    except PermissionDeniedError as e:
+        print('[ERRO] Sem permissão para acessar o recurso')
+
+        verification.message = '[ERRO] Sem permissão para acessar o recurso'
+        verification.erro = str(e)
+
+        return verification
+
+    except RateLimitError as e:
+        print('[ERRO] Limite de tokens atingido')
+
+        verification.message = '[ERRO] Limite de tokens atingido'
+        verification.erro = str(e)
+
+        return verification
+
+    except APITimeoutError as e:
+        print('[ERRO] A requisição excedeu o tempo limite')
+
+        verification.message = '[ERRO] A requisição excedeu o tempo limite'
+        verification.erro = str(e)
+
+        return verification
+
+
+
+
