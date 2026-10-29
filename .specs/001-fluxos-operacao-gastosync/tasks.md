@@ -159,8 +159,8 @@
 
 - [x] T048 [P] Configurar containerização Docker multi-stage (`Dockerfile`, `.dockerignore`), template seguro de variáveis (`.env.example`) e documentação completa de deploy em `gastosync_api/README.md`
 - [x] T049 Inicializar módulo Go (`go.mod`), configuração de variáveis (`internal/config/config.go`), pool de conexão SSL com o Neon PostgreSQL (`pgx/v5`) e migração automática das tabelas (`users`, `transactions`, `budgets`) em `gastosync_api/internal/database/postgres.go`
-- [ ] T050 Implementar modelos (`internal/models/models.go`), middleware JWT (`internal/middleware/auth_middleware.go`) e handlers de autenticação com Bcrypt (`POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`) em `gastosync_api/internal/handlers/auth_handler.go`
-- [ ] T051 Implementar handlers de sincronização bidirecional (`POST /api/v1/sync/push` e `GET /api/v1/sync/pull`) e entrypoint HTTP Fiber (`cmd/api/main.go`) com CORS e rota `/health` em `gastosync_api/`
+- [x] T050 Implementar modelos (`internal/models/models.go`), middleware JWT (`internal/middleware/auth_middleware.go`) e handlers de autenticação com Bcrypt (`POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`) em `gastosync_api/internal/handlers/auth_handler.go`
+- [x] T051 Implementar handlers de sincronização bidirecional (`POST /api/v1/sync/push` e `GET /api/v1/sync/pull`) e entrypoint HTTP Fiber (`cmd/api/main.go`) com CORS e rota `/health` em `gastosync_api/`
 - [ ] T052 Criar serviço de autenticação (`AuthService`), provedor de sessão Riverpod com armazenamento seguro do JWT e telas de Login/Cadastro responsivas (Mobile e Web) em `gastosync_app/lib/features/auth/`
 - [ ] T053 Integrar guard de autenticação no `GoRouter` e sincronização com `gastosync_api` (rotina de push/pull das transações pendentes no Mobile e operação online autenticada na Web, incluindo limpeza segura no Logout) em `gastosync_app/`
 
