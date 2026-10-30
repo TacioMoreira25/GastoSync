@@ -7,6 +7,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../auth/domain/auth_provider.dart';
+import '../../../transactions/data/services/cloud_sync_service.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
 import '../../domain/models/user_profile.dart';
@@ -26,23 +27,30 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
     setState(() => _isSyncing = true);
 
     try {
+      final authState = ref.read(authProvider);
       final db = ref.read(appDatabaseProvider);
-      var syncedNow = 0;
-      for (final tx in pendingList) {
-        if (tx.id != null) {
-          final updated = await db.markAsSynced(tx.id!);
-          if (updated) syncedNow++;
-        }
+      final syncService = ref.read(cloudSyncServiceProvider);
+      final budgets = await db.watchAllBudgets().first;
+
+      final pushResult = await syncService.pushPendingTransactions(
+        pendingTransactions: pendingList,
+        jwtToken: authState.token,
+        budgets: budgets,
+      );
+
+      if (authState.token != null &&
+          authState.token!.isNotEmpty &&
+          authState.currentEmail != null) {
+        await syncService.pullFromCloud(
+          jwtToken: authState.token,
+          userEmail: authState.currentEmail!,
+        );
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            syncedNow > 0
-                ? 'Sincronização concluída: $syncedNow transação(ões) sincronizada(s).'
-                : 'Banco local já está 100% sincronizado.',
-          ),
+          content: Text(pushResult.message),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -466,7 +474,10 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 icon: Icons.logout_rounded,
                 title: 'Sair da conta',
                 subtitle: 'Encerrar sessão atual neste dispositivo',
-                onTap: () => ref.read(authProvider.notifier).logout(),
+                onTap: () {
+                  context.go('/dashboard');
+                  ref.read(authProvider.notifier).logout();
+                },
               ),
             ],
           ),

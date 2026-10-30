@@ -13,7 +13,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/bin/gastosync_api ./cmd/api
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/bin/gastosync_api ./cmd/api
 
 # ==============================================================================
 # Stage 2: Runtime Stage

@@ -82,7 +82,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     ref.read(authProvider.notifier).clearError();
 
@@ -93,7 +93,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authNotifier = ref.read(authProvider.notifier);
     if (_isRegisterMode) {
-      final created = authNotifier.register(
+      final created = await authNotifier.register(
         fullName: _nameController.text,
         email: _emailController.text,
         password: _passwordController.text,
@@ -108,7 +108,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         });
       }
     } else {
-      authNotifier.login(
+      await authNotifier.login(
         email: _emailController.text,
         password: _passwordController.text,
       );

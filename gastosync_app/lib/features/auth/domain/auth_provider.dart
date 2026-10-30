@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../settings/domain/models/user_profile.dart';
+import '../../transactions/data/services/cloud_sync_service.dart';
+import '../../transactions/presentation/controllers/transactions_controller.dart';
+import '../data/services/auth_service.dart';
 
 /// Resultado detalhado de avaliação de segurança da senha em tempo real (OWASP ASVS / NIST)
 @immutable
@@ -129,6 +132,7 @@ class AuthState {
   const AuthState({
     this.isAuthenticated = false,
     this.currentEmail,
+    this.token,
     this.failedAttempts = 0,
     this.lockedUntil,
     this.errorMessage,
@@ -137,6 +141,7 @@ class AuthState {
 
   final bool isAuthenticated;
   final String? currentEmail;
+  final String? token;
   final int failedAttempts;
   final DateTime? lockedUntil;
   final String? errorMessage;
@@ -148,6 +153,8 @@ class AuthState {
   AuthState copyWith({
     bool? isAuthenticated,
     String? currentEmail,
+    String? token,
+    bool clearToken = false,
     int? failedAttempts,
     DateTime? lockedUntil,
     bool clearLock = false,
@@ -159,6 +166,7 @@ class AuthState {
     return AuthState(
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
       currentEmail: currentEmail ?? this.currentEmail,
+      token: clearToken ? null : (token ?? this.token),
       failedAttempts: failedAttempts ?? this.failedAttempts,
       lockedUntil: clearLock ? null : (lockedUntil ?? this.lockedUntil),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -242,6 +250,7 @@ class AuthNotifier extends Notifier<AuthState> {
       if (session != null && session['is_authenticated'] == 1) {
         final currentEmail =
             (session['current_email'] as String? ?? '').trim().toLowerCase();
+        final jwtToken = session['jwt_token'] as String?;
         final account = _accounts[currentEmail];
         if (account != null) {
           ref.read(userProfileProvider.notifier).updateProfile(
@@ -251,6 +260,7 @@ class AuthNotifier extends Notifier<AuthState> {
           state = state.copyWith(
             isAuthenticated: true,
             currentEmail: account.email,
+            token: jwtToken,
             clearError: true,
             clearSuccess: true,
           );
@@ -395,11 +405,11 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Efetua apenas o login de uma conta já existente (não cria conta automaticamente)
-  bool login({
+  /// Efetua o login do usuário autenticando remotamente (ou via fallback seguro no SQLite local)
+  Future<bool> login({
     required String email,
     required String password,
-  }) {
+  }) async {
     if (state.isLocked) {
       final remaining =
           state.lockedUntil!.difference(DateTime.now()).inSeconds.clamp(1, 60);
@@ -423,59 +433,126 @@ class AuthNotifier extends Notifier<AuthState> {
 
     final normalizedEmail = email.trim().toLowerCase();
     final normalizedPassword = password.trim();
-    final account = _accounts[normalizedEmail];
+    final localAccount = _accounts[normalizedEmail];
 
-    if (account == null) {
-      state = state.copyWith(
-        errorMessage:
-            'Conta não encontrada para este e-mail. Acesse a aba "Criar conta" para se cadastrar.',
-        clearSuccess: true,
-      );
-      return false;
-    }
+    // 1. Tenta autenticação remota no backend Go (gastosync_api)
+    String? jwtToken;
+    String finalName = localAccount?.fullName ?? 'Usuário';
 
-    final candidateHash =
-        PasswordHasher.hashPassword(normalizedPassword, account.salt);
-    final matches = PasswordHasher.constantTimeEquals(
-      candidateHash,
-      account.passwordHash,
+    final authService = ref.read(authServiceProvider);
+    final remoteRes = await authService.login(
+      email: normalizedEmail,
+      password: normalizedPassword,
     );
 
-    if (!matches) {
-      return _registerFailedAttempt(
-        'Senha incorreta. Tente novamente ou clique em "Alterar senha".',
+    if (remoteRes.isSuccess) {
+      jwtToken = remoteRes.token;
+      if (remoteRes.name != null && remoteRes.name!.isNotEmpty) {
+        finalName = remoteRes.name!;
+      }
+
+      // Replica hash local para garantir acesso offline futuro
+      final salt = localAccount?.salt ?? PasswordHasher.generateSecureSalt();
+      final hash = PasswordHasher.hashPassword(normalizedPassword, salt);
+      _accounts[normalizedEmail] = AuthAccount(
+        fullName: finalName,
+        email: normalizedEmail,
+        salt: salt,
+        passwordHash: hash,
       );
+      try {
+        await ref.read(appDatabaseProvider).saveAuthAccount(
+              email: normalizedEmail,
+              fullName: finalName,
+              salt: salt,
+              passwordHash: hash,
+            );
+      } catch (_) {}
+    } else if (remoteRes.isOffline) {
+      // 2. Fallback offline: valida contra o hash no SQLite local
+      if (localAccount == null) {
+        state = state.copyWith(
+          errorMessage:
+              'Modo offline: Conta não encontrada neste dispositivo. Conecte-se à internet para sincronizar.',
+          clearSuccess: true,
+        );
+        return false;
+      }
+
+      final candidateHash =
+          PasswordHasher.hashPassword(normalizedPassword, localAccount.salt);
+      final matches = PasswordHasher.constantTimeEquals(
+        candidateHash,
+        localAccount.passwordHash,
+      );
+
+      if (!matches) {
+        return _registerFailedAttempt(
+          'Senha incorreta. Tente novamente ou clique em "Alterar senha".',
+        );
+      }
+      finalName = localAccount.fullName;
+    } else {
+      // 3. Servidor retornou erro específico (ex: credenciais inválidas)
+      if (localAccount != null) {
+        final candidateHash =
+            PasswordHasher.hashPassword(normalizedPassword, localAccount.salt);
+        if (PasswordHasher.constantTimeEquals(
+            candidateHash, localAccount.passwordHash)) {
+          finalName = localAccount.fullName;
+        } else {
+          return _registerFailedAttempt(
+            remoteRes.error ?? 'Senha incorreta.',
+          );
+        }
+      } else {
+        state = state.copyWith(
+          errorMessage: remoteRes.error ?? 'Credenciais inválidas.',
+          clearSuccess: true,
+        );
+        return false;
+      }
     }
 
     ref.read(userProfileProvider.notifier).updateProfile(
-          fullName: account.fullName,
-          email: account.email,
+          fullName: finalName,
+          email: normalizedEmail,
         );
 
     try {
-      ref.read(appDatabaseProvider).saveAuthSession(
-            currentEmail: account.email,
+      await ref.read(appDatabaseProvider).saveAuthSession(
+            currentEmail: normalizedEmail,
             isAuthenticated: true,
+            jwtToken: jwtToken,
           );
     } catch (_) {}
 
     state = state.copyWith(
       isAuthenticated: true,
-      currentEmail: account.email,
+      currentEmail: normalizedEmail,
+      token: jwtToken,
       failedAttempts: 0,
       clearLock: true,
       clearError: true,
       clearSuccess: true,
     );
+
+    if (jwtToken != null && jwtToken.isNotEmpty) {
+      ref.read(cloudSyncServiceProvider).pullFromCloud(
+            jwtToken: jwtToken,
+            userEmail: normalizedEmail,
+          );
+    }
+
     return true;
   }
 
-  /// Apenas cria a conta com validação forte de senha (o login é feito na aba Entrar)
-  bool register({
+  /// Cria conta com validação forte de senha gravando no SQLite local e replicando na nuvem
+  Future<bool> register({
     required String fullName,
     required String email,
     required String password,
-  }) {
+  }) async {
     final nameError = validateName(fullName);
     final emailError = validateEmail(email);
     final passwordError = validatePassword(password);
@@ -500,6 +577,7 @@ class AuthNotifier extends Notifier<AuthState> {
       return false;
     }
 
+    // 1. Persistência local imediata (Offline-First)
     final salt = PasswordHasher.generateSecureSalt();
     final hash = PasswordHasher.hashPassword(normalizedPassword, salt);
 
@@ -512,7 +590,7 @@ class AuthNotifier extends Notifier<AuthState> {
     _accounts[normalizedEmail] = newAccount;
 
     try {
-      ref.read(appDatabaseProvider).saveAuthAccount(
+      await ref.read(appDatabaseProvider).saveAuthAccount(
             email: normalizedEmail,
             fullName: normalizedName,
             salt: salt,
@@ -520,9 +598,23 @@ class AuthNotifier extends Notifier<AuthState> {
           );
     } catch (_) {}
 
+    // 2. Replicação remota na nuvem (Neon PostgreSQL) via AuthService
+    String? token;
+    final authService = ref.read(authServiceProvider);
+    final remoteRes = await authService.register(
+      name: normalizedName,
+      email: normalizedEmail,
+      password: normalizedPassword,
+    );
+
+    if (remoteRes.isSuccess) {
+      token = remoteRes.token;
+    }
+
     state = state.copyWith(
       isAuthenticated: false,
       currentEmail: newAccount.email,
+      token: token,
       failedAttempts: 0,
       clearLock: true,
       clearError: true,
@@ -577,13 +669,15 @@ class AuthNotifier extends Notifier<AuthState> {
     return null;
   }
 
-  void logout() {
+  Future<void> logout() async {
     try {
-      ref.read(appDatabaseProvider).saveAuthSession(
+      await ref.read(appDatabaseProvider).saveAuthSession(
             currentEmail: null,
             isAuthenticated: false,
+            jwtToken: null,
           );
     } catch (_) {}
+    ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
     state = const AuthState(isAuthenticated: false);
   }
 

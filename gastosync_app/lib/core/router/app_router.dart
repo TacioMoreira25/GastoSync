@@ -187,7 +187,10 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
               selectedIndex: currentIndex,
               onDestinationSelected: _onDestinationSelected,
               onNewTransactionTap: () => ManualTransactionFormModal.show(context),
-              onLogoutTap: () => ref.read(authProvider.notifier).logout(),
+              onLogoutTap: () {
+                navigationShell.goBranch(0);
+                ref.read(authProvider.notifier).logout();
+              },
               profile: profile,
               pendingCount: pendingCount,
             ),

@@ -369,9 +369,15 @@ class AppDatabase extends _$AppDatabase {
       CREATE TABLE IF NOT EXISTS local_auth_session (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         current_email TEXT,
-        is_authenticated INTEGER NOT NULL DEFAULT 0
+        is_authenticated INTEGER NOT NULL DEFAULT 0,
+        jwt_token TEXT
       );
     ''');
+    try {
+      await customStatement(
+        'ALTER TABLE local_auth_session ADD COLUMN jwt_token TEXT;',
+      );
+    } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> getPersistedAuthAccounts() async {
@@ -410,18 +416,19 @@ class AppDatabase extends _$AppDatabase {
   Future<void> saveAuthSession({
     required String? currentEmail,
     required bool isAuthenticated,
+    String? jwtToken,
   }) async {
     await initCustomAuthTables();
     await customStatement(
-      'INSERT OR REPLACE INTO local_auth_session (id, current_email, is_authenticated) VALUES (1, ?, ?);',
-      [currentEmail, isAuthenticated ? 1 : 0],
+      'INSERT OR REPLACE INTO local_auth_session (id, current_email, is_authenticated, jwt_token) VALUES (1, ?, ?, ?);',
+      [currentEmail, isAuthenticated ? 1 : 0, jwtToken],
     );
   }
 
   Future<Map<String, dynamic>?> getPersistedAuthSession() async {
     await initCustomAuthTables();
     final rows = await customSelect(
-      'SELECT current_email, is_authenticated FROM local_auth_session WHERE id = 1',
+      'SELECT current_email, is_authenticated, jwt_token FROM local_auth_session WHERE id = 1',
     ).get();
     if (rows.isEmpty) return null;
     return rows.first.data;
