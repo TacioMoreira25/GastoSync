@@ -4,7 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/api_constants.dart';
 import '../security/owasp_prompt_sanitizer.dart';
 
-/// Provedor Riverpod para a instância configurada do Dio
+/// Provedor Riverpod para a instância do Dio conectada à Core API em Go (Auth e Sync)
+final coreApiDioProvider = Provider<Dio>((ref) {
+  final baseOptions = BaseOptions(
+    baseUrl: ApiConstants.coreApiBaseUrl,
+    connectTimeout: ApiConstants.coreApiTimeout,
+    receiveTimeout: ApiConstants.coreApiTimeout,
+    sendTimeout: ApiConstants.coreApiTimeout,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    responseType: ResponseType.json,
+  );
+
+  return Dio(baseOptions);
+});
+
+/// Provedor Riverpod para a instância configurada do Dio (Serviço de IA)
 final dioProvider = Provider<Dio>((ref) {
   final baseOptions = BaseOptions(
     baseUrl: ApiConstants.defaultBaseUrl,

@@ -1,135 +1,77 @@
-// Package models defines domain entities, HTTP payload transfer objects,
-// and database serialization structures for the GastoSync API service.
+// Package models defines the domain entities and data transfer objects (DTOs)
+// used across authentication and synchronization endpoints.
 package models
 
-import (
-	"time"
-)
+import "time"
 
-// User represents a registered user account in the PostgreSQL database.
+// User represents a registered account in the system.
 type User struct {
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
 	Email              string    `json:"email"`
-	PasswordHash       string    `json:"-"`
 	MonthlyIncome      float64   `json:"monthly_income"`
 	SavingsGoalPercent float64   `json:"savings_goal_percent"`
 	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
 }
 
-// UserResponse represents safe public user data returned by API endpoints.
-type UserResponse struct {
-	ID                 string  `json:"id"`
-	Name               string  `json:"name"`
-	Email              string  `json:"email"`
-	MonthlyIncome      float64 `json:"monthly_income"`
-	SavingsGoalPercent float64 `json:"savings_goal_percent"`
-}
-
-// ToResponse maps a User entity to a sanitized UserResponse DTO.
-func (u *User) ToResponse() UserResponse {
-	return UserResponse{
-		ID:                 u.ID,
-		Name:               u.Name,
-		Email:              u.Email,
-		MonthlyIncome:      u.MonthlyIncome,
-		SavingsGoalPercent: u.SavingsGoalPercent,
-	}
-}
-
-// RegisterRequest holds user registration parameters.
+// RegisterRequest defines the payload required to create a new user account.
 type RegisterRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-// LoginRequest holds credentials for user authentication.
+// LoginRequest defines the credentials required to authenticate an existing user.
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-// AuthResponse returns an issued JWT and authenticated user metadata.
+// AuthResponse is returned upon successful registration or login.
 type AuthResponse struct {
-	Token string       `json:"token"`
-	User  UserResponse `json:"user"`
+	Token string `json:"token"`
+	User  User   `json:"user"`
 }
 
-// ErrorResponse represents standard structured API error responses.
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Details string `json:"details,omitempty"`
-}
-
-// Transaction represents a financial income or expense record in PostgreSQL.
-type Transaction struct {
-	ID            int64     `json:"id"`
-	UserID        string    `json:"user_id"`
+// TransactionDTO represents a financial transaction exchanged during synchronization.
+type TransactionDTO struct {
+	ID            int64     `json:"id,omitempty"`
 	LocalID       *int64    `json:"local_id,omitempty"`
 	Description   string    `json:"description"`
 	Amount        float64   `json:"amount"`
-	TxDate        time.Time `json:"tx_date"`
-	TxType        string    `json:"tx_type"`
+	Date          time.Time `json:"date"`
+	Type          string    `json:"type"`
 	Category      string    `json:"category"`
 	PaymentMethod string    `json:"payment_method"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
 
-// Budget represents a monthly category spending threshold in PostgreSQL.
-type Budget struct {
-	ID          int64     `json:"id"`
-	UserID      string    `json:"user_id"`
+// BudgetDTO represents a monthly category spending limit exchanged during synchronization.
+type BudgetDTO struct {
+	ID          int64     `json:"id,omitempty"`
 	Category    string    `json:"category"`
 	LimitAmount float64   `json:"limit_amount"`
 	Month       int       `json:"month"`
 	Year        int       `json:"year"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
 
-// SyncTransactionItem represents a local transaction sent from mobile/web during sync push.
-type SyncTransactionItem struct {
-	LocalID       int64     `json:"local_id"`
-	Description   string    `json:"description"`
-	Amount        float64   `json:"amount"`
-	TxDate        time.Time `json:"tx_date"`
-	TxType        string    `json:"tx_type"`
-	Category      string    `json:"category"`
-	PaymentMethod string    `json:"payment_method"`
-}
-
-// SyncBudgetItem represents a local budget category sent during sync push.
-type SyncBudgetItem struct {
-	Category    string  `json:"category"`
-	LimitAmount float64 `json:"limit_amount"`
-	Month       int     `json:"month"`
-	Year        int     `json:"year"`
-}
-
-// SyncPushRequest represents the payload sent by clients to upload pending offline changes.
+// SyncPushRequest contains local records to be persisted in the cloud database.
 type SyncPushRequest struct {
-	Transactions []SyncTransactionItem `json:"transactions"`
-	Budgets      []SyncBudgetItem      `json:"budgets"`
+	Transactions []TransactionDTO `json:"transactions"`
+	Budgets      []BudgetDTO      `json:"budgets"`
 }
 
-// SyncedTransactionMapping maps the local SQLite ID to the authoritative PostgreSQL ID.
-type SyncedTransactionMapping struct {
-	LocalID  int64 `json:"local_id"`
-	ServerID int64 `json:"server_id"`
-}
-
-// SyncPushResponse confirms successfully persisted entities.
+// SyncPushResponse summarizes the records processed during a push operation.
 type SyncPushResponse struct {
-	SyncedTransactions []SyncedTransactionMapping `json:"synced_transactions"`
-	SyncedBudgetsCount int                        `json:"synced_budgets_count"`
-	SyncedAt           time.Time                  `json:"synced_at"`
+	SyncedTransactions int       `json:"synced_transactions"`
+	SyncedBudgets      int       `json:"synced_budgets"`
+	SyncedAt           time.Time `json:"synced_at"`
 }
 
-// SyncPullResponse delivers cloud transactions and budgets down to the client.
+// SyncPullResponse contains all cloud records belonging to the authenticated user.
 type SyncPullResponse struct {
-	Transactions []Transaction `json:"transactions"`
-	Budgets      []Budget      `json:"budgets"`
-	PulledAt     time.Time     `json:"pulled_at"`
+	Transactions []TransactionDTO `json:"transactions"`
+	Budgets      []BudgetDTO      `json:"budgets"`
+	SyncedAt     time.Time        `json:"synced_at"`
 }

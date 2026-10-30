@@ -1,3 +1,5 @@
+// Package handlers implements the HTTP route controllers for authentication
+// and cloud data synchronization.
 package handlers
 
 import (
@@ -11,232 +13,201 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SyncHandler manages bidirectional data synchronization between client devices and cloud storage.
+// SyncHandler manages bidirectional synchronization of transactions and budgets
+// scoped strictly to the authenticated user_id.
 type SyncHandler struct {
-	db *pgxpool.Pool
+	pool *pgxpool.Pool
 }
 
-// NewSyncHandler creates an initialized SyncHandler instance.
-func NewSyncHandler(db *pgxpool.Pool) *SyncHandler {
-	return &SyncHandler{db: db}
-}
-
-// Push receives pending offline transactions and budgets from clients (POST /api/v1/sync/push).
-func (h *SyncHandler) Push(c *fiber.Ctx) error {
-	userID, err := middleware.GetUserID(c)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Error: "Unauthorized sync request",
-		})
+// NewSyncHandler constructs a new SyncHandler with a PostgreSQL connection pool.
+func NewSyncHandler(pool *pgxpool.Pool) *SyncHandler {
+	return &SyncHandler{
+		pool: pool,
 	}
+}
+
+// Push receives local transactions and budgets from the client and upserts them
+// into the PostgreSQL database within a transactional boundary.
+func (h *SyncHandler) Push(c *fiber.Ctx) error {
+	userID, _ := c.Locals(middleware.UserIDKey).(string)
 
 	var req models.SyncPushRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error:   "Invalid sync payload format",
-			Details: err.Error(),
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid synchronization payload",
 		})
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
 	defer cancel()
 
-	tx, err := h.db.Begin(ctx)
+	tx, err := h.pool.Begin(ctx)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Failed to initiate sync transaction",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to start database transaction",
 		})
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
-	const upsertTxSQL = `
-		INSERT INTO transactions (
-			user_id, local_id, description, amount, tx_date, tx_type, category, payment_method, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-		ON CONFLICT (user_id, local_id)
-		DO UPDATE SET
-			description = EXCLUDED.description,
-			amount = EXCLUDED.amount,
-			tx_date = EXCLUDED.tx_date,
-			tx_type = EXCLUDED.tx_type,
-			category = EXCLUDED.category,
-			payment_method = EXCLUDED.payment_method,
-			updated_at = NOW()
-		RETURNING id, local_id;
-	`
-
-	syncedMappings := make([]models.SyncedTransactionMapping, 0, len(req.Transactions))
-
+	syncedTxCount := 0
 	for _, item := range req.Transactions {
 		desc := strings.TrimSpace(item.Description)
-		cat := strings.TrimSpace(item.Category)
-		method := strings.TrimSpace(item.PaymentMethod)
-		if method == "" {
-			method = "PIX"
-		}
-		txType := strings.ToLower(strings.TrimSpace(item.TxType))
-		if txType != "income" && txType != "expense" {
-			txType = "expense"
-		}
-		if item.Amount <= 0 || desc == "" || cat == "" {
-			continue // Skip invalid offline transactions
+		txType := strings.ToLower(strings.TrimSpace(item.Type))
+		category := strings.TrimSpace(item.Category)
+		paymentMethod := strings.TrimSpace(item.PaymentMethod)
+		if paymentMethod == "" {
+			paymentMethod = "PIX"
 		}
 
-		var serverID int64
-		var returnedLocalID int64
-		err := tx.QueryRow(
-			ctx,
-			upsertTxSQL,
-			userID,
-			item.LocalID,
-			desc,
-			item.Amount,
-			item.TxDate,
-			txType,
-			cat,
-			method,
-		).Scan(&serverID, &returnedLocalID)
-
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Error:   "Failed to synchronize transaction batch",
-				Details: err.Error(),
-			})
-		}
-
-		syncedMappings = append(syncedMappings, models.SyncedTransactionMapping{
-			LocalID:  returnedLocalID,
-			ServerID: serverID,
-		})
-	}
-
-	const upsertBudgetSQL = `
-		INSERT INTO budgets (
-			user_id, category, limit_amount, month, year, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		ON CONFLICT (user_id, category, month, year)
-		DO UPDATE SET
-			limit_amount = EXCLUDED.limit_amount,
-			updated_at = NOW();
-	`
-
-	syncedBudgetsCount := 0
-	for _, item := range req.Budgets {
-		cat := strings.TrimSpace(item.Category)
-		if cat == "" || item.Month < 1 || item.Month > 12 || item.Year < 2020 {
+		if desc == "" || item.Amount <= 0 || (txType != "income" && txType != "expense") || category == "" {
 			continue
 		}
 
-		_, err := tx.Exec(ctx, upsertBudgetSQL, userID, cat, item.LimitAmount, item.Month, item.Year)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Error:   "Failed to synchronize budget limits",
-				Details: err.Error(),
+		txDate := item.Date
+		if txDate.IsZero() {
+			txDate = time.Now().UTC()
+		}
+
+		if item.LocalID != nil {
+			const upsertTxWithLocalID = `
+				INSERT INTO transactions (user_id, local_id, description, amount, tx_date, tx_type, category, payment_method, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+				ON CONFLICT (user_id, local_id)
+				DO UPDATE SET
+					description = EXCLUDED.description,
+					amount = EXCLUDED.amount,
+					tx_date = EXCLUDED.tx_date,
+					tx_type = EXCLUDED.tx_type,
+					category = EXCLUDED.category,
+					payment_method = EXCLUDED.payment_method,
+					updated_at = NOW()
+			`
+			if _, err := tx.Exec(ctx, upsertTxWithLocalID, userID, *item.LocalID, desc, item.Amount, txDate, txType, category, paymentMethod); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "failed to synchronize transaction",
+				})
+			}
+		} else {
+			const insertTx = `
+				INSERT INTO transactions (user_id, description, amount, tx_date, tx_type, category, payment_method, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+			`
+			if _, err := tx.Exec(ctx, insertTx, userID, desc, item.Amount, txDate, txType, category, paymentMethod); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "failed to insert transaction",
+				})
+			}
+		}
+		syncedTxCount++
+	}
+
+	syncedBudgetCount := 0
+	for _, b := range req.Budgets {
+		category := strings.TrimSpace(b.Category)
+		if category == "" || b.LimitAmount < 0 || b.Month < 1 || b.Month > 12 || b.Year < 2020 {
+			continue
+		}
+
+		const upsertBudget = `
+			INSERT INTO budgets (user_id, category, limit_amount, month, year, updated_at)
+			VALUES ($1, $2, $3, $4, $5, NOW())
+			ON CONFLICT (user_id, category, month, year)
+			DO UPDATE SET
+				limit_amount = EXCLUDED.limit_amount,
+				updated_at = NOW()
+		`
+		if _, err := tx.Exec(ctx, upsertBudget, userID, category, b.LimitAmount, b.Month, b.Year); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to synchronize budget",
 			})
 		}
-		syncedBudgetsCount++
+		syncedBudgetCount++
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Failed to commit synchronization transaction",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to commit synchronization batch",
 		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(models.SyncPushResponse{
-		SyncedTransactions: syncedMappings,
-		SyncedBudgetsCount: syncedBudgetsCount,
+		SyncedTransactions: syncedTxCount,
+		SyncedBudgets:      syncedBudgetCount,
 		SyncedAt:           time.Now().UTC(),
 	})
 }
 
-// Pull retrieves all cloud transactions and budgets belonging to the authenticated user (GET /api/v1/sync/pull).
+// Pull returns all transactions and budgets belonging to the authenticated user.
 func (h *SyncHandler) Pull(c *fiber.Ctx) error {
-	userID, err := middleware.GetUserID(c)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Error: "Unauthorized sync request",
-		})
-	}
+	userID, _ := c.Locals(middleware.UserIDKey).(string)
 
-	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
 	defer cancel()
 
-	const selectTxSQL = `
-		SELECT id, user_id, local_id, description, amount, tx_date, tx_type, category, payment_method, created_at, updated_at
+	const txQuery = `
+		SELECT id, local_id, description, amount, tx_date, tx_type, category, payment_method, updated_at
 		FROM transactions
 		WHERE user_id = $1
-		ORDER BY tx_date DESC;
+		ORDER BY tx_date DESC, id DESC
 	`
-
-	rows, err := h.db.Query(ctx, selectTxSQL, userID)
+	rows, err := h.pool.Query(ctx, txQuery, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Failed to query user transactions",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to query user transactions",
 		})
 	}
 	defer rows.Close()
 
-	transactions := make([]models.Transaction, 0)
+	transactions := make([]models.TransactionDTO, 0)
 	for rows.Next() {
-		var tx models.Transaction
+		var t models.TransactionDTO
 		if err := rows.Scan(
-			&tx.ID,
-			&tx.UserID,
-			&tx.LocalID,
-			&tx.Description,
-			&tx.Amount,
-			&tx.TxDate,
-			&tx.TxType,
-			&tx.Category,
-			&tx.PaymentMethod,
-			&tx.CreatedAt,
-			&tx.UpdatedAt,
+			&t.ID,
+			&t.LocalID,
+			&t.Description,
+			&t.Amount,
+			&t.Date,
+			&t.Type,
+			&t.Category,
+			&t.PaymentMethod,
+			&t.UpdatedAt,
 		); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Error:   "Failed to read transaction rows",
-				Details: err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to scan transaction record",
 			})
 		}
-		transactions = append(transactions, tx)
+		transactions = append(transactions, t)
 	}
 
-	const selectBudgetSQL = `
-		SELECT id, user_id, category, limit_amount, month, year, updated_at
+	const budgetQuery = `
+		SELECT id, category, limit_amount, month, year, updated_at
 		FROM budgets
 		WHERE user_id = $1
-		ORDER BY year DESC, month DESC, category ASC;
+		ORDER BY year DESC, month DESC, category ASC
 	`
-
-	budgetRows, err := h.db.Query(ctx, selectBudgetSQL, userID)
+	budgetRows, err := h.pool.Query(ctx, budgetQuery, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Failed to query user budgets",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to query user budgets",
 		})
 	}
 	defer budgetRows.Close()
 
-	budgets := make([]models.Budget, 0)
+	budgets := make([]models.BudgetDTO, 0)
 	for budgetRows.Next() {
-		var b models.Budget
+		var b models.BudgetDTO
 		if err := budgetRows.Scan(
 			&b.ID,
-			&b.UserID,
 			&b.Category,
 			&b.LimitAmount,
 			&b.Month,
 			&b.Year,
 			&b.UpdatedAt,
 		); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Error:   "Failed to read budget rows",
-				Details: err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to scan budget record",
 			})
 		}
 		budgets = append(budgets, b)
@@ -245,6 +216,6 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(models.SyncPullResponse{
 		Transactions: transactions,
 		Budgets:      budgets,
-		PulledAt:     time.Now().UTC(),
+		SyncedAt:     time.Now().UTC(),
 	})
 }

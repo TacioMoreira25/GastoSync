@@ -1,6 +1,8 @@
 # GastoSync Core API (`gastosync_api`)
 
 > Microsserviço em **Go (Golang)** responsável por **Autenticação (JWT + Bcrypt)**, **Gestão de Conta** e **Sincronização de Dados** com o **PostgreSQL (Neon)**.
+>
+> **URL de Produção**: `https://gastosync-api.onrender.com` ([Healthcheck `/health`](https://gastosync-api.onrender.com/health))
 
 ---
 

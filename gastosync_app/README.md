@@ -10,7 +10,7 @@
 - **Gerenciamento de Estado**: `flutter_riverpod` (`StreamProvider` e `Notifier`)
 - **Navegação**: `go_router` (`StatefulShellRoute` adaptativo para Mobile e Web)
 - **Persistência Local (Mobile)**: `drift` + `sqlite3_flutter_libs` (SQLite nativo)
-- **Comunicação HTTP**: `dio` (interceptors JWT, timeouts e tratamento de fallback)
+- **Comunicação HTTP**: `dio` conectado por padrão à API Core em produção (`https://gastosync-api.onrender.com`)
 - **Visualização de Dados**: `fl_chart` (9 Métricas de Saúde Financeira e curva de Burn Rate)
 
 ---

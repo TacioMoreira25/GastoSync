@@ -1,11 +1,10 @@
-// Package handlers provides HTTP request controllers for authentication,
-// synchronization, and health inspection endpoints.
+// Package handlers implements the HTTP route controllers for authentication
+// and cloud data synchronization.
 package handlers
 
 import (
 	"context"
 	"errors"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -15,253 +14,198 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// AuthHandler coordinates authentication endpoints including registration, login, and profile lookup.
+// AuthHandler manages user registration, login, and profile retrieval.
 type AuthHandler struct {
-	db  *pgxpool.Pool
-	cfg *config.Config
+	pool *pgxpool.Pool
+	cfg  *config.Config
 }
 
-// NewAuthHandler creates an initialized AuthHandler instance.
-func NewAuthHandler(db *pgxpool.Pool, cfg *config.Config) *AuthHandler {
+// NewAuthHandler constructs a new AuthHandler with database and configuration dependencies.
+func NewAuthHandler(pool *pgxpool.Pool, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
-		db:  db,
-		cfg: cfg,
+		pool: pool,
+		cfg:  cfg,
 	}
 }
 
-// HashPassword derives a secure salted Bcrypt hash from a plaintext password.
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
-// CheckPassword verifies whether a plaintext candidate password matches an existing Bcrypt hash.
-func CheckPassword(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
-}
-
-// GenerateToken generates and signs a new JWT token containing user identity claims.
-func (h *AuthHandler) GenerateToken(user *models.User) (string, error) {
-	expTime := time.Now().Add(time.Duration(h.cfg.JWTExpirationHours) * time.Hour)
-	claims := middleware.AuthClaims{
-		UserID: user.ID,
-		Email:  user.Email,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   user.ID,
-			ExpiresAt: jwt.NewNumericDate(expTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(h.cfg.JWTSecret))
-}
-
-// Register handles user account creation (POST /api/v1/auth/register).
+// Register creates a new user account with a Bcrypt password hash and returns a signed JWT.
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req models.RegisterRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error:   "Invalid JSON payload",
-			Details: err.Error(),
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request payload",
 		})
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	req.Password = strings.TrimSpace(req.Password)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	if req.Name == "" || len(req.Name) > 120 {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error: "Name is required and cannot exceed 120 characters",
+	if req.Name == "" || req.Email == "" || len(req.Password) < 6 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "name, valid email, and password (min 6 chars) are required",
 		})
 	}
 
-	if _, err := mail.ParseAddress(req.Email); err != nil || len(req.Email) > 255 {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error: "A valid email address is required",
-		})
-	}
-
-	if len(req.Password) < 8 || len(req.Password) > 128 {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error: "Password must be between 8 and 128 characters long",
-		})
-	}
-
-	hash, err := HashPassword(req.Password)
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error: "Failed to securely hash password",
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to hash password",
 		})
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
-	const insertSQL = `
+	var user models.User
+	const insertQuery = `
 		INSERT INTO users (name, email, password_hash)
 		VALUES ($1, $2, $3)
-		RETURNING id, name, email, monthly_income, savings_goal_percent, created_at, updated_at;
+		RETURNING id, name, email, monthly_income, savings_goal_percent, created_at
 	`
-
-	var user models.User
-	err = h.db.QueryRow(ctx, insertSQL, req.Name, req.Email, hash).Scan(
+	err = h.pool.QueryRow(ctx, insertQuery, req.Name, req.Email, string(hashedBytes)).Scan(
 		&user.ID,
 		&user.Name,
 		&user.Email,
 		&user.MonthlyIncome,
 		&user.SavingsGoalPercent,
 		&user.CreatedAt,
-		&user.UpdatedAt,
 	)
-
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return c.Status(fiber.StatusConflict).JSON(models.ErrorResponse{
-				Error: "An account with this email address already exists",
+		if strings.Contains(err.Error(), "23505") || strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "an account with this email already exists",
 			})
 		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Database error during user registration",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to create user account",
 		})
 	}
 
-	token, err := h.GenerateToken(&user)
+	token, err := h.generateJWT(user.ID, user.Email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error: "Failed to generate authentication token",
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to generate authentication token",
 		})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(models.AuthResponse{
 		Token: token,
-		User:  user.ToResponse(),
+		User:  user,
 	})
 }
 
-// Login handles user authentication (POST /api/v1/auth/login).
+// Login verifies user credentials against the stored Bcrypt hash and returns a signed JWT.
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req models.LoginRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error:   "Invalid JSON payload",
-			Details: err.Error(),
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request payload",
 		})
 	}
 
-	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	req.Password = strings.TrimSpace(req.Password)
-
-	if req.Email == "" || req.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Error: "Email and password are both required",
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" || req.Password == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "email and password are required",
 		})
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
-	const selectSQL = `
-		SELECT id, name, email, password_hash, monthly_income, savings_goal_percent, created_at, updated_at
-		FROM users
-		WHERE email = $1;
-	`
-
 	var user models.User
-	err := h.db.QueryRow(ctx, selectSQL, req.Email).Scan(
+	var passwordHash string
+	const selectQuery = `
+		SELECT id, name, email, password_hash, monthly_income, savings_goal_percent, created_at
+		FROM users
+		WHERE email = $1
+	`
+	err := h.pool.QueryRow(ctx, selectQuery, email).Scan(
 		&user.ID,
 		&user.Name,
 		&user.Email,
-		&user.PasswordHash,
+		&passwordHash,
 		&user.MonthlyIncome,
 		&user.SavingsGoalPercent,
 		&user.CreatedAt,
-		&user.UpdatedAt,
 	)
-
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-				Error: "Invalid email or password",
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "invalid email or password",
 			})
 		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Database error during user lookup",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to query user credentials",
 		})
 	}
 
-	if !CheckPassword(user.PasswordHash, req.Password) {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Error: "Invalid email or password",
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid email or password",
 		})
 	}
 
-	token, err := h.GenerateToken(&user)
+	token, err := h.generateJWT(user.ID, user.Email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error: "Failed to generate authentication token",
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to generate authentication token",
 		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(models.AuthResponse{
 		Token: token,
-		User:  user.ToResponse(),
+		User:  user,
 	})
 }
 
-// Me retrieves the authenticated user's profile metadata (GET /api/v1/auth/me).
+// Me returns the profile of the currently authenticated user.
 func (h *AuthHandler) Me(c *fiber.Ctx) error {
-	userID, err := middleware.GetUserID(c)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Error: "Unauthorized request",
-		})
-	}
+	userID, _ := c.Locals(middleware.UserIDKey).(string)
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
-	const selectSQL = `
-		SELECT id, name, email, monthly_income, savings_goal_percent
+	var user models.User
+	const query = `
+		SELECT id, name, email, monthly_income, savings_goal_percent, created_at
 		FROM users
-		WHERE id = $1;
+		WHERE id = $1
 	`
-
-	var user models.UserResponse
-	err = h.db.QueryRow(ctx, selectSQL, userID).Scan(
+	err := h.pool.QueryRow(ctx, query, userID).Scan(
 		&user.ID,
 		&user.Name,
 		&user.Email,
 		&user.MonthlyIncome,
 		&user.SavingsGoalPercent,
+		&user.CreatedAt,
 	)
-
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
-				Error: "User not found",
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "user not found",
 			})
 		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Error:   "Database error retrieving profile",
-			Details: err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to fetch user profile",
 		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(user)
+}
+
+func (h *AuthHandler) generateJWT(userID, email string) (string, error) {
+	now := time.Now().UTC()
+	claims := jwt.MapClaims{
+		"sub":   userID,
+		"email": email,
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Duration(h.cfg.JWTExpirationHours) * time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(h.cfg.JWTSecret))
 }
