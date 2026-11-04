@@ -906,12 +906,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(6),
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: AppTheme.navyDark,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const GastoSyncAiLogo(size: 20),
+                  child: const GastoSyncAiLogo(size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

@@ -576,7 +576,9 @@ class _ManualTransactionFormModalState
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  'Human-in-the-Loop (Llama 3.3 70B): $_selectedCategory • $_selectedPaymentMethod • ${_formatSelectedDate(_selectedDate)}',
+                                  _lastAiPrediction!.isOfflineFallback
+                                      ? 'Preenchimento Local (Offline): $_selectedCategory • $_selectedPaymentMethod • ${_formatSelectedDate(_selectedDate)}'
+                                      : 'Revisão Inteligente: $_selectedCategory • $_selectedPaymentMethod • ${_formatSelectedDate(_selectedDate)}',
                                   style: const TextStyle(
                                     color: AppTheme.emeraldDeep,
                                     fontSize: 11,

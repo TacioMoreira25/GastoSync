@@ -31,8 +31,8 @@ class CloudSyncService {
             Dio(
               BaseOptions(
                 baseUrl: ApiConstants.coreApiBaseUrl,
-                connectTimeout: const Duration(milliseconds: 3500),
-                receiveTimeout: const Duration(milliseconds: 5000),
+                connectTimeout: ApiConstants.coreApiTimeout,
+                receiveTimeout: ApiConstants.coreApiTimeout,
                 headers: const {
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
@@ -51,6 +51,7 @@ class CloudSyncService {
     List<LocalBudget> budgets = const <LocalBudget>[],
   }) async {
     var cloudSuccess = false;
+    String? serverError;
 
     if (jwtToken != null &&
         jwtToken.isNotEmpty &&
@@ -99,6 +100,12 @@ class CloudSyncService {
 
         cloudSuccess =
             response.statusCode != null && response.statusCode! < 300;
+      } on DioException catch (e) {
+        cloudSuccess = false;
+        final data = e.response?.data;
+        if (data is Map<String, dynamic>) {
+          serverError = (data['message'] ?? data['error'])?.toString();
+        }
       } catch (_) {
         cloudSuccess = false;
       }
@@ -116,15 +123,18 @@ class CloudSyncService {
       return CloudSyncResult(
         syncedCount: 0,
         isCloudSynced: cloudSuccess,
-        message: 'Banco local já está 100% sincronizado.',
+        message: cloudSuccess
+            ? 'Sincronização com a nuvem concluída! Todos os dados estão atualizados.'
+            : (serverError ?? 'Banco local já está 100% sincronizado.'),
       );
     }
 
     return CloudSyncResult(
       syncedCount: markedLocally,
       isCloudSynced: cloudSuccess,
-      message:
-          'Sincronização concluída: $markedLocally transação(ões) sincronizada(s).',
+      message: cloudSuccess
+          ? 'Sincronização em nuvem concluída: $markedLocally transação(ões) enviada(s).'
+          : 'Salvo no banco local ($markedLocally transação(ões)). Nuvem indisponível no momento.',
     );
   }
 

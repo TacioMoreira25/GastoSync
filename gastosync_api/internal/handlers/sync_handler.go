@@ -9,6 +9,7 @@ import (
 
 	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/middleware"
 	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/models"
+	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/response"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,9 +34,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 
 	var req models.SyncPushRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid synchronization payload",
-		})
+		return response.BadRequest(
+			c,
+			"INVALID_SYNC_PAYLOAD",
+			"Formato de dados de sincronização inválido.",
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
@@ -43,9 +46,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to start database transaction",
-		})
+		return response.InternalError(
+			c,
+			"DB_TRANSACTION_START_FAILED",
+			"Não foi possível iniciar a sincronização com o banco na nuvem.",
+		)
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
@@ -54,7 +59,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 	syncedTxCount := 0
 	for _, item := range req.Transactions {
 		desc := strings.TrimSpace(item.Description)
-		txType := strings.ToLower(strings.TrimSpace(item.Type))
+		rawType := item.Type
+		if strings.TrimSpace(rawType) == "" {
+			rawType = item.TxTypeAlias
+		}
+		txType := strings.ToLower(strings.TrimSpace(rawType))
 		category := strings.TrimSpace(item.Category)
 		paymentMethod := strings.TrimSpace(item.PaymentMethod)
 		if paymentMethod == "" {
@@ -66,6 +75,9 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 		}
 
 		txDate := item.Date
+		if txDate.IsZero() && !item.TxDateAlias.IsZero() {
+			txDate = item.TxDateAlias
+		}
 		if txDate.IsZero() {
 			txDate = time.Now().UTC()
 		}
@@ -85,9 +97,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 					updated_at = NOW()
 			`
 			if _, err := tx.Exec(ctx, upsertTxWithLocalID, userID, *item.LocalID, desc, item.Amount, txDate, txType, category, paymentMethod); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"error": "failed to synchronize transaction",
-				})
+				return response.InternalError(
+					c,
+					"TX_UPSERT_FAILED",
+					"Erro ao salvar uma de suas transações na nuvem. Nenhuma alteração foi perdida localmente.",
+				)
 			}
 		} else {
 			const insertTx = `
@@ -95,9 +109,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 			`
 			if _, err := tx.Exec(ctx, insertTx, userID, desc, item.Amount, txDate, txType, category, paymentMethod); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"error": "failed to insert transaction",
-				})
+				return response.InternalError(
+					c,
+					"TX_INSERT_FAILED",
+					"Erro ao registrar transação na nuvem. Seus dados continuam salvos localmente.",
+				)
 			}
 		}
 		syncedTxCount++
@@ -119,17 +135,21 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 				updated_at = NOW()
 		`
 		if _, err := tx.Exec(ctx, upsertBudget, userID, category, b.LimitAmount, b.Month, b.Year); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "failed to synchronize budget",
-			})
+			return response.InternalError(
+				c,
+				"BUDGET_UPSERT_FAILED",
+				"Erro ao sincronizar suas metas de orçamento na nuvem.",
+			)
 		}
 		syncedBudgetCount++
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to commit synchronization batch",
-		})
+		return response.InternalError(
+			c,
+			"SYNC_COMMIT_FAILED",
+			"Não foi possível finalizar a sincronização com o servidor. Tente novamente.",
+		)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(models.SyncPushResponse{
@@ -154,9 +174,11 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 	`
 	rows, err := h.pool.Query(ctx, txQuery, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to query user transactions",
-		})
+		return response.InternalError(
+			c,
+			"TX_PULL_QUERY_FAILED",
+			"Não foi possível buscar suas transações na nuvem no momento.",
+		)
 	}
 	defer rows.Close()
 
@@ -174,9 +196,11 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 			&t.PaymentMethod,
 			&t.UpdatedAt,
 		); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "failed to scan transaction record",
-			})
+			return response.InternalError(
+				c,
+				"TX_SCAN_FAILED",
+				"Erro ao processar o histórico de transações recebido da nuvem.",
+			)
 		}
 		transactions = append(transactions, t)
 	}
@@ -189,9 +213,11 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 	`
 	budgetRows, err := h.pool.Query(ctx, budgetQuery, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to query user budgets",
-		})
+		return response.InternalError(
+			c,
+			"BUDGET_PULL_QUERY_FAILED",
+			"Não foi possível buscar suas metas orçamentárias na nuvem no momento.",
+		)
 	}
 	defer budgetRows.Close()
 
@@ -206,9 +232,11 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 			&b.Year,
 			&b.UpdatedAt,
 		); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "failed to scan budget record",
-			})
+			return response.InternalError(
+				c,
+				"BUDGET_SCAN_FAILED",
+				"Erro ao processar suas metas orçamentárias recebidas da nuvem.",
+			)
 		}
 		budgets = append(budgets, b)
 	}

@@ -211,6 +211,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
   @override
   AuthState build() {
+    _accounts.clear();
     _seedDefaultAccount();
     _loadPersistedAccountsAndSession();
     return const AuthState(isAuthenticated: false);
@@ -230,6 +231,10 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> _loadPersistedAccountsAndSession() async {
     try {
       final db = ref.read(appDatabaseProvider);
+      // Limpa imediatamente qualquer sessão persistida em cache no SQLite para nunca
+      // pular a tela de Login na inicialização.
+      await db.clearAuthSession();
+
       final rows = await db.getPersistedAuthAccounts();
       for (final r in rows) {
         final email = (r['email'] as String? ?? '').trim().toLowerCase();
@@ -242,27 +247,6 @@ class AuthNotifier extends Notifier<AuthState> {
             email: email,
             salt: salt,
             passwordHash: hash,
-          );
-        }
-      }
-
-      final session = await db.getPersistedAuthSession();
-      if (session != null && session['is_authenticated'] == 1) {
-        final currentEmail =
-            (session['current_email'] as String? ?? '').trim().toLowerCase();
-        final jwtToken = session['jwt_token'] as String?;
-        final account = _accounts[currentEmail];
-        if (account != null) {
-          ref.read(userProfileProvider.notifier).updateProfile(
-                fullName: account.fullName,
-                email: account.email,
-              );
-          state = state.copyWith(
-            isAuthenticated: true,
-            currentEmail: account.email,
-            token: jwtToken,
-            clearError: true,
-            clearSuccess: true,
           );
         }
       }
@@ -520,12 +504,16 @@ class AuthNotifier extends Notifier<AuthState> {
         );
 
     try {
-      await ref.read(appDatabaseProvider).saveAuthSession(
-            currentEmail: normalizedEmail,
-            isAuthenticated: true,
-            jwtToken: jwtToken,
-          );
+      // Nunca persiste isAuthenticated = true em disco para evitar auto-login em cold start
+      await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
+
+    if (jwtToken != null && jwtToken.isNotEmpty) {
+      await ref.read(cloudSyncServiceProvider).pullFromCloud(
+            jwtToken: jwtToken,
+            userEmail: normalizedEmail,
+          );
+    }
 
     state = state.copyWith(
       isAuthenticated: true,
@@ -536,13 +524,6 @@ class AuthNotifier extends Notifier<AuthState> {
       clearError: true,
       clearSuccess: true,
     );
-
-    if (jwtToken != null && jwtToken.isNotEmpty) {
-      ref.read(cloudSyncServiceProvider).pullFromCloud(
-            jwtToken: jwtToken,
-            userEmail: normalizedEmail,
-          );
-    }
 
     return true;
   }
@@ -671,11 +652,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<void> logout() async {
     try {
-      await ref.read(appDatabaseProvider).saveAuthSession(
-            currentEmail: null,
-            isAuthenticated: false,
-            jwtToken: null,
-          );
+      await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
     state = const AuthState(isAuthenticated: false);

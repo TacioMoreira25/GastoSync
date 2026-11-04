@@ -413,6 +413,11 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<void> clearAuthSession() async {
+    await initCustomAuthTables();
+    await customStatement('DELETE FROM local_auth_session;');
+  }
+
   Future<void> saveAuthSession({
     required String? currentEmail,
     required bool isAuthenticated,
@@ -421,17 +426,12 @@ class AppDatabase extends _$AppDatabase {
     await initCustomAuthTables();
     await customStatement(
       'INSERT OR REPLACE INTO local_auth_session (id, current_email, is_authenticated, jwt_token) VALUES (1, ?, ?, ?);',
-      [currentEmail, isAuthenticated ? 1 : 0, jwtToken],
+      [currentEmail, 0, null],
     );
   }
 
   Future<Map<String, dynamic>?> getPersistedAuthSession() async {
-    await initCustomAuthTables();
-    final rows = await customSelect(
-      'SELECT current_email, is_authenticated, jwt_token FROM local_auth_session WHERE id = 1',
-    ).get();
-    if (rows.isEmpty) return null;
-    return rows.first.data;
+    return null;
   }
 }
 

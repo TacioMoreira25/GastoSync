@@ -414,14 +414,20 @@ class GastoSyncAiLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final targetCachePx = (size * dpr * 2).round().clamp(64, 512);
+
     return Image.asset(
       'assets/images/ai_logo.png',
       width: size,
       height: size,
+      cacheWidth: targetCachePx,
+      cacheHeight: targetCachePx,
+      isAntiAlias: true,
       color: Colors.white,
       colorBlendMode: BlendMode.srcIn,
       fit: BoxFit.contain,
-      filterQuality: FilterQuality.high,
+      filterQuality: FilterQuality.medium,
       errorBuilder: (_, _, _) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -588,6 +594,18 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
   final _inputFocusNode = FocusNode();
   final List<_ChatMessage> _messages = [];
   bool _isSending = false;
+  bool _isAgentOnline = false;
+
+  static String _fmtBrl(double value) {
+    final abs = value.abs();
+    final parts = abs.toStringAsFixed(2).split('.');
+    final intPart = parts[0].replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]}.',
+    );
+    final prefix = value < 0 ? '-R\$ ' : 'R\$ ';
+    return '$prefix$intPart,${parts[1]}';
+  }
 
   static const List<_QuickPrompt> _quickPrompts = [
     _QuickPrompt(
@@ -613,7 +631,8 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
     _messages.add(
       _ChatMessage(
         text:
-            'Olá! Sou o assistente financeiro GastoSync (Llama 3.3). Posso analisar seu ritmo de gastos (Burn Rate), sugerir cortes orçamentários ou tirar dúvidas sobre suas 9 métricas de saúde financeira.',
+            'Olá! Sou o assistente financeiro do GastoSync.\n\n'
+            'Posso ajudar você a acompanhar seus gastos do mês, planejar sua meta de poupança e avaliar sua reserva de emergência.',
         isUser: false,
         timestamp: DateTime.now(),
       ),
@@ -697,12 +716,17 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
         ),
       );
       final data = response.data;
-      replyText = (data?['reply'] ??
-              data?['response'] ??
-              data?['recommendation'] ??
-              _buildLocalContextualReply(sanitizedText))
-          .toString();
+      final remoteReply =
+          data?['reply'] ?? data?['response'] ?? data?['recommendation'];
+      if (remoteReply != null && remoteReply.toString().trim().isNotEmpty) {
+        _isAgentOnline = true;
+        replyText = remoteReply.toString().trim();
+      } else {
+        _isAgentOnline = false;
+        replyText = _buildLocalContextualReply(sanitizedText);
+      }
     } catch (_) {
+      _isAgentOnline = false;
       replyText = _buildLocalContextualReply(sanitizedText);
     }
 
@@ -723,19 +747,61 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
   String _buildLocalContextualReply(String prompt) {
     final metrics = ref.read(financialMetricsStreamProvider).value;
     final profile = ref.read(userProfileProvider);
+    final lower = prompt.trim().toLowerCase();
 
     if (metrics == null) {
-      return '${profile.firstName}, operando em modo local Offline-First: mantenha os lançamentos atualizados para calcular seu Burn Rate diário e sua meta de ${profile.savingsRateTarget.toStringAsFixed(0)}% de poupança.';
+      return 'Olá, ${profile.firstName}! No momento o servidor de IA conversacional está fora do ar (operando em modo Offline).\n\n'
+          'Assim que você registrar suas receitas e despesas, posso calcular localmente seu saldo, ritmo de gastos e meta de poupança.';
     }
 
-    final lower = prompt.toLowerCase();
+    // 1. Pergunta sobre Burn Rate / Ritmo de gastos
     if (lower.contains('burn') || lower.contains('ritmo')) {
-      return 'Seu Burn Rate diário atual é de R\$ ${metrics.dailyBurnRate.toStringAsFixed(2)}/dia, com projeção de fim de mês em R\$ ${metrics.monthEndProjection.toStringAsFixed(2)}.';
+      final effectiveIncome = metrics.totalIncome > 0
+          ? metrics.totalIncome
+          : profile.monthlyBaseIncome;
+      final ceiling =
+          effectiveIncome * (1.0 - (profile.savingsRateTarget / 100.0));
+      final withinCeiling = metrics.monthEndProjection <= ceiling;
+      return '📊 Ritmo de Gastos (Cálculo Local):\n'
+          '• Gasto médio diário: ${_fmtBrl(metrics.dailyBurnRate)}/dia\n'
+          '• Despesas acumuladas no mês: ${_fmtBrl(metrics.totalExpense)}\n'
+          '• Projeção até o fim do mês: ${_fmtBrl(metrics.monthEndProjection)}\n\n'
+          '${withinCeiling ? '✅ Seu ritmo atual está dentro do seu teto mensal de ${_fmtBrl(ceiling)}.' : '⚠️ Atenção: mantendo esse ritmo, os gastos podem superar seu teto de ${_fmtBrl(ceiling)}.'}';
     }
+
+    // 2. Pergunta sobre Poupança / Economia
     if (lower.contains('poupan') || lower.contains('economia')) {
-      return 'Sua Taxa de Poupança atual está em ${metrics.savingsRate.toStringAsFixed(1)}% (meta configurada: ${profile.savingsRateTarget.toStringAsFixed(0)}%).';
+      final targetPct = profile.savingsRateTarget;
+      final targetValue = metrics.totalIncome * (targetPct / 100.0);
+      final currentSaved =
+          math.max(0.0, metrics.totalIncome - metrics.totalExpense);
+      return '💰 Taxa de Poupança (Cálculo Local):\n'
+          '• Taxa atual: ${metrics.savingsRate.toStringAsFixed(1)}% da renda (meta: ${targetPct.toStringAsFixed(0)}%)\n'
+          '• Valor poupado no mês: ${_fmtBrl(currentSaved)}\n'
+          '• Meta ideal no mês: ${_fmtBrl(targetValue)}\n\n'
+          '${metrics.savingsRate >= targetPct ? '✅ Parabéns! Você já atingiu sua meta de poupança deste mês.' : '💡 Dica: reduza pequenos gastos variáveis para se aproximar da meta de ${targetPct.toStringAsFixed(0)}%.'}';
     }
-    return 'Resumo local (${profile.firstName}): Score Financeiro ${metrics.healthScore.toStringAsFixed(0)}/100 • Reserva de ${metrics.emergencyMonths.toStringAsFixed(1)} meses • Comprometimento da renda em ${metrics.incomeCommitment.toStringAsFixed(1)}%.';
+
+    // 3. Pergunta sobre Reserva de Emergência
+    if (lower.contains('reserva') || lower.contains('emerg')) {
+      final months = metrics.emergencyMonths;
+      final monthsText = months >= 24
+          ? 'mais de 24 meses (despesas atuais muito baixas em relação ao saldo)'
+          : '${months.toStringAsFixed(1)} meses do seu custo mensal';
+      return '🛡️ Reserva de Emergência (Cálculo Local):\n'
+          '• Saldo disponível atual: ${_fmtBrl(metrics.currentBalance)}\n'
+          '• Cobertura estimada: $monthsText\n\n'
+          '💡 O recomendado para segurança financeira é manter entre 6 e 12 meses do seu custo mensal guardado.';
+    }
+
+    // 4. Mensagem livre (ex: "oi", dúvidas abertas) quando o agente de IA está fora do ar
+    return 'Olá, ${profile.firstName}! No momento o servidor de IA conversacional está fora do ar, por isso não consigo responder conversas livres agora.\n\n'
+        'Mesmo offline, seu painel local está atualizado:\n'
+        '• Saldo disponível: ${_fmtBrl(metrics.currentBalance)}\n'
+        '• Receitas do mês: ${_fmtBrl(metrics.totalIncome)}\n'
+        '• Despesas do mês: ${_fmtBrl(metrics.totalExpense)}\n'
+        '• Ritmo diário: ${_fmtBrl(metrics.dailyBurnRate)}/dia\n\n'
+        'Você pode tocar nas sugestões rápidas ou perguntar sobre seu "Burn Rate", "Poupança" ou "Reserva" para consultar seus dados locais!';
   }
 
   @override
@@ -771,6 +837,7 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
         children: [
           _ChatHeader(
             showDragHandle: widget.isBottomSheet,
+            isOnline: _isAgentOnline,
             onClose: () => Navigator.of(context).pop(),
           ),
           Expanded(
@@ -917,18 +984,24 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
   }
 }
 
-/// Cabeçalho escuro do chat com avatar da IA, status online e botão fechar
+/// Cabeçalho escuro do chat com avatar da IA, status Online/Offline e botão fechar
 class _ChatHeader extends StatelessWidget {
   const _ChatHeader({
     required this.showDragHandle,
+    required this.isOnline,
     required this.onClose,
   });
 
   final bool showDragHandle;
+  final bool isOnline;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
+    final statusColor =
+        isOnline ? _ChatColors.onlineGreen : AppTheme.warningAmber;
+    final statusLabel = isOnline ? 'Online' : 'Offline';
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(20, showDragHandle ? 10 : 18, 12, 18),
@@ -987,7 +1060,7 @@ class _ChatHeader extends StatelessWidget {
                       width: 13,
                       height: 13,
                       decoration: BoxDecoration(
-                        color: _ChatColors.onlineGreen,
+                        color: statusColor,
                         shape: BoxShape.circle,
                         border: Border.all(color: AppTheme.navyDark, width: 2),
                       ),
@@ -996,12 +1069,12 @@ class _ChatHeader extends StatelessWidget {
                 ],
               ),
               const SizedBox(width: 14),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
+                    const Text(
                       'Assistente GastoSync IA',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1012,20 +1085,20 @@ class _ChatHeader extends StatelessWidget {
                         letterSpacing: -0.2,
                       ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 3),
                     Row(
                       children: [
                         Text(
-                          'Online',
+                          statusLabel,
                           style: TextStyle(
-                            color: _ChatColors.onlineGreen,
+                            color: statusColor,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        Flexible(
+                        const Flexible(
                           child: Text(
-                            '  •  Análises financeiras • Llama 3.3',
+                            '  •  Análise Financeira • Llama 3.3',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

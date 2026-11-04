@@ -5,18 +5,22 @@ package handlers
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/config"
 	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/middleware"
 	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/models"
+	"github.com/TacioMoreira25/GastoSync/gastosync_api/internal/response"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
+
+var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // AuthHandler manages user registration, login, and profile retrieval.
 type AuthHandler struct {
@@ -36,25 +40,47 @@ func NewAuthHandler(pool *pgxpool.Pool, cfg *config.Config) *AuthHandler {
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req models.RegisterRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid request payload",
-		})
+		return response.BadRequest(
+			c,
+			"INVALID_JSON_PAYLOAD",
+			"Não foi possível ler os dados enviados. Verifique o preenchimento do formulário.",
+		)
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	if req.Name == "" || req.Email == "" || len(req.Password) < 6 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "name, valid email, and password (min 6 chars) are required",
-		})
+	if len(req.Name) < 3 {
+		return response.BadRequest(
+			c,
+			"INVALID_NAME",
+			"Informe seu nome completo (mínimo de 3 caracteres).",
+		)
+	}
+
+	if req.Email == "" || !emailPattern.MatchString(req.Email) {
+		return response.BadRequest(
+			c,
+			"INVALID_EMAIL",
+			"Informe um endereço de e-mail válido.",
+		)
+	}
+
+	if len(req.Password) < 6 {
+		return response.BadRequest(
+			c,
+			"WEAK_PASSWORD",
+			"A senha deve conter pelo menos 6 caracteres.",
+		)
 	}
 
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to hash password",
-		})
+		return response.InternalError(
+			c,
+			"PASSWORD_HASH_ERROR",
+			"Não foi possível processar sua senha com segurança. Tente novamente.",
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
@@ -76,20 +102,26 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "23505") || strings.Contains(strings.ToLower(err.Error()), "unique") {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"error": "an account with this email already exists",
-			})
+			return response.Conflict(
+				c,
+				"EMAIL_ALREADY_EXISTS",
+				"Este e-mail já está cadastrado. Acesse a aba Entrar para fazer login.",
+			)
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to create user account",
-		})
+		return response.InternalError(
+			c,
+			"USER_CREATION_FAILED",
+			"Não foi possível concluir o cadastro no momento. Tente novamente em instantes.",
+		)
 	}
 
 	token, err := h.generateJWT(user.ID, user.Email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to generate authentication token",
-		})
+		return response.InternalError(
+			c,
+			"TOKEN_GENERATION_FAILED",
+			"Sua conta foi criada, mas houve um erro ao iniciar a sessão. Faça login na aba Entrar.",
+		)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(models.AuthResponse{
@@ -102,16 +134,20 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req models.LoginRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid request payload",
-		})
+		return response.BadRequest(
+			c,
+			"INVALID_JSON_PAYLOAD",
+			"Não foi possível ler os dados de login enviados.",
+		)
 	}
 
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if email == "" || req.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "email and password are required",
-		})
+		return response.BadRequest(
+			c,
+			"MISSING_CREDENTIALS",
+			"Por favor, informe seu e-mail e sua senha para entrar.",
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
@@ -135,26 +171,34 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "invalid email or password",
-			})
+			return response.Unauthorized(
+				c,
+				"INVALID_CREDENTIALS",
+				"E-mail ou senha incorretos. Verifique seus dados e tente novamente.",
+			)
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to query user credentials",
-		})
+		return response.InternalError(
+			c,
+			"AUTH_QUERY_FAILED",
+			"Serviço de autenticação temporariamente indisponível. Tente novamente em instantes.",
+		)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "invalid email or password",
-		})
+		return response.Unauthorized(
+			c,
+			"INVALID_CREDENTIALS",
+			"E-mail ou senha incorretos. Verifique seus dados e tente novamente.",
+		)
 	}
 
 	token, err := h.generateJWT(user.ID, user.Email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to generate authentication token",
-		})
+		return response.InternalError(
+			c,
+			"TOKEN_GENERATION_FAILED",
+			"Não foi possível gerar seu token de acesso. Tente novamente.",
+		)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(models.AuthResponse{
@@ -186,13 +230,17 @@ func (h *AuthHandler) Me(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "user not found",
-			})
+			return response.NotFound(
+				c,
+				"USER_NOT_FOUND",
+				"Perfil de usuário não encontrado no servidor.",
+			)
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to fetch user profile",
-		})
+		return response.InternalError(
+			c,
+			"PROFILE_FETCH_FAILED",
+			"Não foi possível carregar os dados do seu perfil no momento.",
+		)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(user)

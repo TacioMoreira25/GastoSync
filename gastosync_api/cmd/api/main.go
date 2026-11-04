@@ -17,6 +17,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 )
 
 func main() {
@@ -41,13 +42,17 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
+		BodyLimit:    2 * 1024 * 1024, // 2 MB limit
+		ErrorHandler: middleware.ErrorHandler,
 	})
 
 	app.Use(recover.New())
+	app.Use(requestid.New())
+	app.Use(middleware.SecurityHeaders())
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: cfg.CORSAllowedOrigins,
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Request-ID",
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
@@ -65,13 +70,16 @@ func main() {
 	apiV1 := app.Group("/api/v1")
 
 	authGroup := apiV1.Group("/auth")
-	authGroup.Post("/register", authHandler.Register)
-	authGroup.Post("/login", authHandler.Login)
+	authGroup.Post("/register", middleware.AuthRateLimiter(), authHandler.Register)
+	authGroup.Post("/login", middleware.AuthRateLimiter(), authHandler.Login)
 	authGroup.Get("/me", middleware.RequireAuth(cfg.JWTSecret), authHandler.Me)
 
 	syncGroup := apiV1.Group("/sync", middleware.RequireAuth(cfg.JWTSecret))
 	syncGroup.Post("/push", syncHandler.Push)
 	syncGroup.Get("/pull", syncHandler.Pull)
+
+	// Fallback padronizado em JSON para qualquer rota não encontrada (404)
+	app.Use(middleware.NotFoundHandler)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)

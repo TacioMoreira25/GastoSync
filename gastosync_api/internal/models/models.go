@@ -34,13 +34,16 @@ type AuthResponse struct {
 }
 
 // TransactionDTO represents a financial transaction exchanged during synchronization.
+// Supports both canonical (`date`, `type`) and legacy/alias (`tx_date`, `tx_type`) JSON keys.
 type TransactionDTO struct {
 	ID            int64     `json:"id,omitempty"`
 	LocalID       *int64    `json:"local_id,omitempty"`
 	Description   string    `json:"description"`
 	Amount        float64   `json:"amount"`
 	Date          time.Time `json:"date"`
+	TxDateAlias   time.Time `json:"tx_date,omitempty"`
 	Type          string    `json:"type"`
+	TxTypeAlias   string    `json:"tx_type,omitempty"`
 	Category      string    `json:"category"`
 	PaymentMethod string    `json:"payment_method"`
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
