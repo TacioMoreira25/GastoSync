@@ -398,9 +398,9 @@ final gastoSyncNotificationsProvider =
     items.add(
       GastoSyncNotificationItem(
         id: aiReadyId,
-        title: 'Assistente GastoSync IA (Llama 3.3)',
+        title: 'Assistente Financeiro GastoSync',
         message:
-            'Analise seu Burn Rate diário, tire dúvidas sobre metas ou simule economia mensal no chat inteligente.',
+            'Acompanhe seu ritmo de gastos diário, tire dúvidas sobre metas ou consulte seu resumo financeiro no chat.',
         timestamp: now.subtract(const Duration(hours: 4)),
         severity: NotificationSeverity.ai,
         categoryLabel: 'Assistente IA',

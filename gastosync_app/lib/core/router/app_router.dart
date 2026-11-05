@@ -19,18 +19,43 @@ final _transactionsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'transac
 final _planningNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'planningNav');
 final _moreNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'moreNav');
 
+class _AuthRouterRefreshListenable extends ChangeNotifier {
+  _AuthRouterRefreshListenable(Ref ref) {
+    ref.listen<bool>(
+      authProvider.select((s) => s.isAuthenticated),
+      (_, _) => notifyListeners(),
+    );
+  }
+}
+
 /// Provedor Riverpod do GoRouter (goRouterProvider) com guarda de autenticação e as 4 abas do protótipo Figma v2
 final goRouterProvider = Provider<GoRouter>((ref) {
+  final refreshListenable = _AuthRouterRefreshListenable(ref);
+  ref.onDispose(refreshListenable.dispose);
+
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
-    initialLocation: '/dashboard',
+    initialLocation: '/login',
+    refreshListenable: refreshListenable,
     debugLogDiagnostics: true,
     errorBuilder: (context, state) => const LoginScreen(),
+    redirect: (context, state) {
+      final isAuthenticated = ref.read(authProvider).isAuthenticated;
+      final isAtLogin = state.matchedLocation == '/login';
+
+      if (!isAuthenticated && !isAtLogin) {
+        return '/login';
+      }
+      if (isAuthenticated && isAtLogin) {
+        return '/dashboard';
+      }
+      return null;
+    },
     routes: [
       GoRoute(
         path: '/login',
         name: 'login',
-        redirect: (context, state) => '/dashboard',
+        builder: (context, state) => const LoginScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {

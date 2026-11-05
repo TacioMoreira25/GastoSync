@@ -49,9 +49,9 @@ class AuthService {
             Dio(
               BaseOptions(
                 baseUrl: ApiConstants.coreApiBaseUrl,
-                connectTimeout: ApiConstants.connectTimeout,
-                receiveTimeout: ApiConstants.receiveTimeout,
-                sendTimeout: ApiConstants.sendTimeout,
+                connectTimeout: ApiConstants.coreApiTimeout,
+                receiveTimeout: ApiConstants.coreApiTimeout,
+                sendTimeout: ApiConstants.coreApiTimeout,
                 headers: {
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
@@ -282,14 +282,53 @@ class AuthService {
   }
 
   String? _extractErrorMessage(DioException e) {
-    final data = e.response?.data;
-    if (data is Map<String, dynamic>) {
-      final err = data['error'] ?? data['message'];
-      if (err is String && err.isNotEmpty) {
-        return err;
+    final statusCode = e.response?.statusCode;
+    final responseData = e.response?.data;
+
+    if (responseData is Map<String, dynamic>) {
+      final rawMsg =
+          (responseData['message'] ?? responseData['error'])?.toString().trim();
+      if (rawMsg != null && rawMsg.isNotEmpty) {
+        return _localizeServerError(rawMsg);
       }
     }
+
+    if (statusCode == 401) {
+      return 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+    }
+    if (statusCode == 409) {
+      return 'Este e-mail já está cadastrado. Acesse a aba Entrar para fazer login.';
+    }
+    if (statusCode == 429) {
+      return 'Muitas tentativas seguidas. Aguarde 1 minuto antes de tentar novamente.';
+    }
+    if (statusCode != null && statusCode >= 500) {
+      return 'O servidor está temporariamente indisponível. Tente novamente em instantes.';
+    }
+
     return null;
+  }
+
+  String _localizeServerError(String message) {
+    final lower = message.toLowerCase();
+    if (lower.contains('invalid email or password')) {
+      return 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+    }
+    if (lower.contains('already exists') || lower.contains('unique')) {
+      return 'Este e-mail já está cadastrado. Acesse a aba Entrar para fazer login.';
+    }
+    if (lower.contains('invalid or expired token') ||
+        lower.contains('missing or malformed authorization')) {
+      return 'Sua sessão expirou. Por favor, faça login novamente.';
+    }
+    if (lower.contains('invalid request payload')) {
+      return 'Não foi possível ler os dados enviados. Verifique os campos preenchidos.';
+    }
+    if (lower.contains('email and password are required') ||
+        lower.contains('password (min 6 chars) are required')) {
+      return 'Preencha todos os campos obrigatórios corretamente.';
+    }
+    return message;
   }
 }
 

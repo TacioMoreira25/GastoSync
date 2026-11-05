@@ -17,6 +17,10 @@ class UserProfile {
   final double monthlyBaseIncome;
   final double savingsRateTarget;
 
+  /// Teto mensal recomendado de despesas considerando a meta de poupança
+  double get monthlyExpenseCeiling =>
+      monthlyBaseIncome * (1.0 - (savingsRateTarget.clamp(0.0, 100.0) / 100.0));
+
   /// Retorna o primeiro nome para saudação dinâmica ("Olá, {nome}") com fallback seguro
   String get firstName {
     final trimmed = fullName.trim();

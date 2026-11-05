@@ -266,9 +266,11 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                               ),
                             ),
                             Text(
-                              widget.prediction.isFromOcr
-                                  ? 'Extraído via OCR de Comprovante • Llama 3.3 70B'
-                                  : 'Sugestão preditiva Llama 3.3 70B (Groq LPU) • Confiança: $confidencePercent%',
+                              isOfflineFallback
+                                  ? 'Preenchimento inteligente local • Revise os dados abaixo'
+                                  : widget.prediction.isFromOcr
+                                      ? 'Extraído via leitura óptica de comprovante'
+                                      : 'Sugestão preditiva da IA • Confiança: $confidencePercent%',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: AppTheme.textSecondary,
                               ),

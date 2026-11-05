@@ -40,6 +40,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _submittedOnce = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -74,7 +75,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   void _toggleMode(bool registerMode) {
-    if (_isRegisterMode == registerMode) return;
+    if (_isLoading || _isRegisterMode == registerMode) return;
     ref.read(authProvider.notifier).clearError();
     _formKey.currentState?.reset();
     setState(() {
@@ -86,6 +87,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_isLoading) return;
     FocusScope.of(context).unfocus();
     ref.read(authProvider.notifier).clearError();
 
@@ -94,27 +96,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
-    final authNotifier = ref.read(authProvider.notifier);
-    if (_isRegisterMode) {
-      final created = await authNotifier.register(
-        fullName: _nameController.text,
-        email: _emailController.text,
-        password: _passwordController.text,
-      );
-      if (created && mounted) {
-        _formKey.currentState?.reset();
-        setState(() {
-          _isRegisterMode = false;
-          _submittedOnce = false;
-          _passwordController.clear();
-          _confirmPasswordController.clear();
-        });
+    setState(() => _isLoading = true);
+
+    try {
+      final authNotifier = ref.read(authProvider.notifier);
+      if (_isRegisterMode) {
+        final created = await authNotifier.register(
+          fullName: _nameController.text,
+          email: _emailController.text,
+          password: _passwordController.text,
+        );
+        if (created && mounted) {
+          _formKey.currentState?.reset();
+          setState(() {
+            _isRegisterMode = false;
+            _submittedOnce = false;
+            _passwordController.clear();
+            _confirmPasswordController.clear();
+          });
+        }
+      } else {
+        await authNotifier.login(
+          email: _emailController.text,
+          password: _passwordController.text,
+        );
       }
-    } else {
-      await authNotifier.login(
-        email: _emailController.text,
-        password: _passwordController.text,
-      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -219,7 +229,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const _BrandHeader(),
+                        _BrandHeader(isLoading: _isLoading),
                         const SizedBox(height: 28),
                         _buildCard(),
                         const SizedBox(height: 22),
@@ -309,6 +319,74 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
             const SizedBox(height: 20),
+
+            // Banner de carregamento ao conectar com o servidor na nuvem
+            if (_isLoading) ...[
+              Container(
+                key: const Key('login_loading_banner'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.emeraldSoftBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.emeraldBadgeBg),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppTheme.emeraldPrimary, AppTheme.emeraldDeep],
+                        ),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _isRegisterMode
+                                ? 'Criando sua conta segura...'
+                                : 'Conectando ao servidor GastoSync...',
+                            style: const TextStyle(
+                              color: AppTheme.emeraldDeep,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _isRegisterMode
+                                ? 'Registrando credenciais na nuvem e no SQLite local'
+                                : 'Autenticando e sincronizando suas transações',
+                            style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Banner verde de sucesso (conta criada ou senha alterada)
             if (authState.successMessage != null) ...[
@@ -556,29 +634,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               height: 50,
               child: FilledButton(
                 key: const Key('login_submit_button'),
-                onPressed: _submit,
+                onPressed: _isLoading ? null : _submit,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppTheme.emeraldPrimary,
+                  disabledBackgroundColor:
+                      AppTheme.emeraldPrimary.withValues(alpha: 0.75),
                   foregroundColor: Colors.white,
+                  disabledForegroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      _isRegisterMode ? 'Criar conta' : 'Entrar',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                child: _isLoading
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.3,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            _isRegisterMode
+                                ? 'Criando conta...'
+                                : 'Conectando...',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _isRegisterMode ? 'Criar conta' : 'Entrar',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded, size: 18),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.arrow_forward_rounded, size: 18),
-                  ],
-                ),
               ),
             ),
           ],
@@ -1752,40 +1858,58 @@ class _Glow extends StatelessWidget {
 
 /// Logo + nome + slogan exibidos acima do card, sobre o fundo escuro
 class _BrandHeader extends StatelessWidget {
-  const _BrandHeader();
+  const _BrandHeader({this.isLoading = false});
+
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Container(
-          width: 56,
-          height: 56,
+        Stack(
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppTheme.emeraldPrimary, AppTheme.emeraldDeep],
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.emeraldPrimary.withValues(alpha: 0.45),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 72,
+                height: 72,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppTheme.emeraldPrimary,
+                  ),
+                ),
               ),
-            ],
-          ),
-          child: const Text(
-            'G',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              height: 1,
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppTheme.emeraldPrimary, AppTheme.emeraldDeep],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.emeraldPrimary.withValues(alpha: 0.45),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Text(
+                'G',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
         const SizedBox(height: 16),
         const Text(
@@ -1798,10 +1922,12 @@ class _BrandHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        const Text(
-          'Seu dinheiro sob controle, mesmo offline.',
+        Text(
+          isLoading
+              ? 'Sincronizando com a nuvem segura...'
+              : 'Seu dinheiro sob controle, mesmo offline.',
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             color: _LoginColors.mutedOnDark,
             fontSize: 14,
           ),
