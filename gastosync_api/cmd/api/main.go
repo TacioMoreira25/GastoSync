@@ -51,6 +51,19 @@ func main() {
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"service": "GastoSync Core API",
+			"status":  "online",
+			"env":     cfg.AppEnv,
+			"endpoints": fiber.Map{
+				"health": "/health",
+				"auth":   "/api/v1/auth/{register,login,forgot-password,verify-reset-code,reset-password,me}",
+				"sync":   "/api/v1/sync/{push,pull}",
+			},
+		})
+	})
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status":  "ok",
@@ -67,6 +80,9 @@ func main() {
 	authGroup := apiV1.Group("/auth")
 	authGroup.Post("/register", authHandler.Register)
 	authGroup.Post("/login", authHandler.Login)
+	authGroup.Post("/forgot-password", authHandler.ForgotPassword)
+	authGroup.Post("/verify-reset-code", authHandler.VerifyResetCode)
+	authGroup.Post("/reset-password", authHandler.ResetPassword)
 	authGroup.Get("/me", middleware.RequireAuth(cfg.JWTSecret), authHandler.Me)
 
 	syncGroup := apiV1.Group("/sync", middleware.RequireAuth(cfg.JWTSecret))

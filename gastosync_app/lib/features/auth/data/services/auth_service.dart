@@ -23,6 +23,25 @@ class AuthResult {
   bool get isSuccess => error == null && !isOffline;
 }
 
+/// Resultado do disparo de código de recuperação de senha por e-mail
+class PasswordResetDispatchResult {
+  const PasswordResetDispatchResult({
+    this.message,
+    this.deliveryMode,
+    this.devPreviewCode,
+    this.error,
+    this.isOffline = false,
+  });
+
+  final String? message;
+  final String? deliveryMode;
+  final String? devPreviewCode;
+  final String? error;
+  final bool isOffline;
+
+  bool get isSuccess => error == null && !isOffline;
+}
+
 /// Serviço de integração com os endpoints de autenticação em Go (`gastosync_api`)
 class AuthService {
   AuthService([Dio? dio])
@@ -42,25 +61,56 @@ class AuthService {
             );
 
   final Dio _dio;
+  final Dio _localFallbackDio = Dio(
+    BaseOptions(
+      baseUrl: 'http://localhost:8080',
+      connectTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 6),
+      sendTimeout: const Duration(seconds: 4),
+      headers: const {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      responseType: ResponseType.json,
+    ),
+  );
 
-  /// Registra novo usuário no backend PostgreSQL remoto
+  Future<Response<Map<String, dynamic>>> _postWithLocalFallback(
+    String path,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      return await _dio.post<Map<String, dynamic>>(path, data: data);
+    } on DioException catch (e) {
+      if ((_isNetworkError(e) || e.response?.statusCode == 404) &&
+          _dio.options.baseUrl != 'http://localhost:8080') {
+        return await _localFallbackDio.post<Map<String, dynamic>>(
+          path,
+          data: data,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// Registra um novo usuário remotamente (`POST /api/v1/auth/register`)
   Future<AuthResult> register({
     required String name,
     required String email,
     required String password,
   }) async {
     try {
-      final response = await _dio.post(
+      final response = await _dio.post<Map<String, dynamic>>(
         ApiConstants.authRegisterEndpoint,
         data: {
           'name': name.trim(),
           'email': email.trim().toLowerCase(),
-          'password': password.trim(),
+          'password': password,
         },
       );
 
-      final data = response.data as Map<String, dynamic>;
-      final user = data['user'] as Map<String, dynamic>;
+      final data = response.data ?? const <String, dynamic>{};
+      final user = data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
 
       return AuthResult(
         token: data['token'] as String?,
@@ -69,32 +119,32 @@ class AuthService {
         email: user['email'] as String?,
       );
     } on DioException catch (e) {
-      if (_isNetworkFailure(e)) {
+      if (_isNetworkError(e)) {
         return const AuthResult(isOffline: true);
       }
-      final serverMsg = _extractErrorMessage(e);
-      return AuthResult(error: serverMsg);
-    } catch (e) {
-      return AuthResult(error: e.toString());
+      final msg = _extractErrorMessage(e) ?? 'Falha ao registrar conta na nuvem.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
     }
   }
 
-  /// Autentica usuário no backend PostgreSQL remoto e adquire token JWT
+  /// Autentica um usuário remotamente (`POST /api/v1/auth/login`)
   Future<AuthResult> login({
     required String email,
     required String password,
   }) async {
     try {
-      final response = await _dio.post(
+      final response = await _dio.post<Map<String, dynamic>>(
         ApiConstants.authLoginEndpoint,
         data: {
           'email': email.trim().toLowerCase(),
-          'password': password.trim(),
+          'password': password,
         },
       );
 
-      final data = response.data as Map<String, dynamic>;
-      final user = data['user'] as Map<String, dynamic>;
+      final data = response.data ?? const <String, dynamic>{};
+      final user = data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
 
       return AuthResult(
         token: data['token'] as String?,
@@ -103,50 +153,146 @@ class AuthService {
         email: user['email'] as String?,
       );
     } on DioException catch (e) {
-      if (_isNetworkFailure(e)) {
+      if (_isNetworkError(e)) {
         return const AuthResult(isOffline: true);
       }
-      final serverMsg = _extractErrorMessage(e);
-      return AuthResult(error: serverMsg);
-    } catch (e) {
-      return AuthResult(error: e.toString());
+      final msg = _extractErrorMessage(e) ?? 'Credenciais inválidas.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
     }
   }
 
-  /// Consulta dados cadastrais do perfil autenticado
-  Future<Map<String, dynamic>?> fetchMe(String token) async {
+  /// Solicita o envio do código OTP de 6 dígitos por e-mail (`POST /api/v1/auth/forgot-password`)
+  Future<PasswordResetDispatchResult> requestPasswordReset({
+    required String email,
+  }) async {
     try {
-      final response = await _dio.get(
+      final response = await _postWithLocalFallback(
+        ApiConstants.authForgotPasswordEndpoint,
+        {
+          'email': email.trim().toLowerCase(),
+        },
+      );
+
+      final data = response.data ?? const <String, dynamic>{};
+      return PasswordResetDispatchResult(
+        message: data['message'] as String?,
+        deliveryMode: data['delivery_mode'] as String?,
+        devPreviewCode: data['dev_preview_code'] as String?,
+      );
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+        return const PasswordResetDispatchResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ??
+          'Não foi possível enviar o código de verificação.';
+      return PasswordResetDispatchResult(error: msg);
+    } catch (_) {
+      return const PasswordResetDispatchResult(isOffline: true);
+    }
+  }
+
+  /// Verifica se o código OTP de 6 dígitos enviado por e-mail é válido (`POST /api/v1/auth/verify-reset-code`)
+  Future<AuthResult> verifyResetCode({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      await _postWithLocalFallback(
+        ApiConstants.authVerifyResetCodeEndpoint,
+        {
+          'email': email.trim().toLowerCase(),
+          'code': code.trim(),
+        },
+      );
+      return const AuthResult();
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ?? 'Código de verificação inválido.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
+    }
+  }
+
+  /// Conclui a redefinição de senha na nuvem (`POST /api/v1/auth/reset-password`)
+  Future<AuthResult> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    try {
+      await _postWithLocalFallback(
+        ApiConstants.authResetPasswordEndpoint,
+        {
+          'email': email.trim().toLowerCase(),
+          'code': code.trim(),
+          'new_password': newPassword.trim(),
+        },
+      );
+      return const AuthResult();
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ?? 'Falha ao redefinir a senha.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
+    }
+  }
+
+  /// Valida o token JWT atual e retorna os dados do perfil (`GET /api/v1/auth/me`)
+  Future<AuthResult> getProfile(String token) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
         ApiConstants.authMeEndpoint,
         options: Options(
           headers: {'Authorization': 'Bearer $token'},
         ),
       );
-      return response.data as Map<String, dynamic>?;
+
+      final user = response.data ?? const <String, dynamic>{};
+      return AuthResult(
+        token: token,
+        userId: user['id'] as String?,
+        name: user['name'] as String?,
+        email: user['email'] as String?,
+      );
+    } on DioException catch (e) {
+      if (_isNetworkError(e)) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ?? 'Sessão expirada.';
+      return AuthResult(error: msg);
     } catch (_) {
-      return null;
+      return const AuthResult(isOffline: true);
     }
   }
 
-  bool _isNetworkFailure(DioException e) {
+  bool _isNetworkError(DioException e) {
     return e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.sendTimeout ||
         e.type == DioExceptionType.receiveTimeout ||
         e.type == DioExceptionType.connectionError ||
-        e.error is FormatException;
+        e.type == DioExceptionType.unknown;
   }
 
-  String _extractErrorMessage(DioException e) {
-    final responseData = e.response?.data;
-    if (responseData is Map<String, dynamic>) {
-      final err = responseData['error'] as String?;
-      if (err != null && err.isNotEmpty) return err;
+  String? _extractErrorMessage(DioException e) {
+    final data = e.response?.data;
+    if (data is Map<String, dynamic>) {
+      final err = data['error'] ?? data['message'];
+      if (err is String && err.isNotEmpty) {
+        return err;
+      }
     }
-    return e.message ?? 'Falha na comunicação com o servidor de autenticação.';
+    return null;
   }
 }
 
-/// Provedor Riverpod para a instância do AuthService
 final authServiceProvider = Provider<AuthService>((ref) {
   return AuthService();
 });

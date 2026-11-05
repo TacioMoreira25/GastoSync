@@ -127,6 +127,62 @@ class AuthAccount {
   final String passwordHash;
 }
 
+/// Ticket temporário de recuperação de senha (OTP de 6 dígitos com expiração de 10 min e limite de tentativas)
+@immutable
+class PasswordResetTicket {
+  const PasswordResetTicket({
+    required this.email,
+    required this.codeSalt,
+    required this.codeHash,
+    required this.expiresAt,
+    this.attempts = 0,
+    this.isVerified = false,
+  });
+
+  final String email;
+  final String codeSalt;
+  final String codeHash;
+  final DateTime expiresAt;
+  final int attempts;
+  final bool isVerified;
+
+  bool get isExpired => DateTime.now().isAfter(expiresAt);
+
+  PasswordResetTicket copyWith({
+    int? attempts,
+    bool? isVerified,
+  }) {
+    return PasswordResetTicket(
+      email: email,
+      codeSalt: codeSalt,
+      codeHash: codeHash,
+      expiresAt: expiresAt,
+      attempts: attempts ?? this.attempts,
+      isVerified: isVerified ?? this.isVerified,
+    );
+  }
+}
+
+/// Resultado do envio do código de verificação por e-mail (Passo 1)
+@immutable
+class PasswordResetRequestOutcome {
+  const PasswordResetRequestOutcome({
+    required this.isSuccess,
+    required this.maskedEmail,
+    this.recipientName,
+    this.previewCode,
+    this.deliveryMode = 'smtp',
+    this.errorMessage,
+  });
+
+  final bool isSuccess;
+  final String maskedEmail;
+  final String? recipientName;
+  final String? previewCode;
+  final String deliveryMode;
+  final String? errorMessage;
+}
+
 @immutable
 class AuthState {
   const AuthState({
@@ -208,6 +264,8 @@ class AuthNotifier extends Notifier<AuthState> {
   };
 
   final Map<String, AuthAccount> _accounts = <String, AuthAccount>{};
+  final Map<String, PasswordResetTicket> _resetTickets =
+      <String, PasswordResetTicket>{};
 
   @override
   AuthState build() {
@@ -665,6 +723,242 @@ class AuthNotifier extends Notifier<AuthState> {
       clearError: true,
       successMessage:
           'Senha alterada com sucesso! Faça login com a nova senha.',
+    );
+    return null;
+  }
+
+  /// Mascara o endereço de e-mail para exibição segura (ex: `ma***@gastosync.local`)
+  static String maskEmail(String rawEmail) {
+    final trimmed = rawEmail.trim().toLowerCase();
+    final parts = trimmed.split('@');
+    if (parts.length != 2) return trimmed;
+    final local = parts[0];
+    final domain = parts[1];
+    if (local.length <= 2) {
+      return '${local.isNotEmpty ? local[0] : '*'}***@$domain';
+    }
+    final prefix = local.substring(0, 2);
+    final suffix = local.length > 4 ? local.substring(local.length - 1) : '';
+    return '$prefix***$suffix@$domain';
+  }
+
+  static String _generateSecureOtp6Digits() {
+    try {
+      final csprng = Random.secure();
+      return List<int>.generate(6, (_) => csprng.nextInt(10)).join();
+    } catch (_) {
+      final fallback = Random(DateTime.now().microsecondsSinceEpoch);
+      return List<int>.generate(6, (_) => fallback.nextInt(10)).join();
+    }
+  }
+
+  /// Passo 1: Solicita o envio do código OTP de 6 dígitos por e-mail (válido por 10 min)
+  Future<PasswordResetRequestOutcome> requestPasswordReset({
+    required String email,
+  }) async {
+    final emailError = validateEmail(email);
+    if (emailError != null) {
+      return PasswordResetRequestOutcome(
+        isSuccess: false,
+        maskedEmail: email.trim(),
+        errorMessage: emailError,
+      );
+    }
+
+    final normalizedEmail = email.trim().toLowerCase();
+    final existingLocal = _accounts[normalizedEmail];
+
+    // Tenta disparo via API Go (SMTP / Nuvem)
+    final authService = ref.read(authServiceProvider);
+    final remoteDispatch = await authService.requestPasswordReset(
+      email: normalizedEmail,
+    );
+
+    if (!remoteDispatch.isOffline && remoteDispatch.error != null && existingLocal == null) {
+      return PasswordResetRequestOutcome(
+        isSuccess: false,
+        maskedEmail: maskEmail(normalizedEmail),
+        errorMessage: remoteDispatch.error,
+      );
+    }
+
+    if (remoteDispatch.isOffline && existingLocal == null) {
+      return PasswordResetRequestOutcome(
+        isSuccess: false,
+        maskedEmail: maskEmail(normalizedEmail),
+        errorMessage:
+            'Nenhuma conta encontrada com este endereço de e-mail.',
+      );
+    }
+
+    // Usa o código gerado pela API (se retornado em dev_inbox_preview) ou gera CSPRNG de 6 dígitos localmente
+    final otpCode = (remoteDispatch.devPreviewCode != null &&
+            remoteDispatch.devPreviewCode!.length == 6)
+        ? remoteDispatch.devPreviewCode!
+        : _generateSecureOtp6Digits();
+
+    final codeSalt = PasswordHasher.generateSecureSalt();
+    final codeHash = PasswordHasher.hashPassword(otpCode, codeSalt);
+
+    _resetTickets[normalizedEmail] = PasswordResetTicket(
+      email: normalizedEmail,
+      codeSalt: codeSalt,
+      codeHash: codeHash,
+      expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+      attempts: 0,
+      isVerified: false,
+    );
+
+    final deliveryMode =
+        (remoteDispatch.isSuccess && remoteDispatch.deliveryMode == 'smtp')
+            ? 'smtp'
+            : 'inbox_preview';
+
+    return PasswordResetRequestOutcome(
+      isSuccess: true,
+      maskedEmail: maskEmail(normalizedEmail),
+      recipientName: existingLocal?.fullName ?? 'Usuário GastoSync',
+      previewCode: deliveryMode == 'smtp' ? null : otpCode,
+      deliveryMode: deliveryMode,
+    );
+  }
+
+  /// Passo 2: Verifica o código OTP de 6 dígitos enviado por e-mail em tempo constante
+  Future<String?> verifyPasswordResetCode({
+    required String email,
+    required String code,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedCode = code.trim();
+
+    if (normalizedCode.length != 6 || int.tryParse(normalizedCode) == null) {
+      return 'Digite o código numérico de 6 dígitos enviado para seu e-mail.';
+    }
+
+    // Tenta validar na API caso esteja online com SMTP real
+    final ticket = _resetTickets[normalizedEmail];
+    if (ticket == null) {
+      return 'Nenhum código ativo para este e-mail. Solicite um novo código.';
+    }
+
+    if (ticket.isExpired) {
+      _resetTickets.remove(normalizedEmail);
+      return 'O código expirou (validade de 10 minutos). Solicite um novo código.';
+    }
+
+    if (ticket.attempts >= maxFailedAttempts) {
+      _resetTickets.remove(normalizedEmail);
+      return 'Código invalidado por excesso de tentativas. Solicite um novo código.';
+    }
+
+    final candidateHash =
+        PasswordHasher.hashPassword(normalizedCode, ticket.codeSalt);
+    final matchesLocal = PasswordHasher.constantTimeEquals(
+      candidateHash,
+      ticket.codeHash,
+    );
+
+    if (!matchesLocal) {
+      // Caso o código tenha sido enviado por SMTP real pelo backend, valida remotamente
+      final remoteVerify = await ref.read(authServiceProvider).verifyResetCode(
+            email: normalizedEmail,
+            code: normalizedCode,
+          );
+      if (remoteVerify.isSuccess) {
+        _resetTickets[normalizedEmail] = ticket.copyWith(isVerified: true);
+        return null;
+      }
+
+      final nextAttempts = ticket.attempts + 1;
+      if (nextAttempts >= maxFailedAttempts) {
+        _resetTickets.remove(normalizedEmail);
+        return 'Código bloqueado após $maxFailedAttempts tentativas incorretas. Solicite um novo código.';
+      }
+      _resetTickets[normalizedEmail] = ticket.copyWith(attempts: nextAttempts);
+      final remaining = maxFailedAttempts - nextAttempts;
+      return 'Código incorreto ($remaining tentativa(s) restante(s)). Verifique seu e-mail.';
+    }
+
+    _resetTickets[normalizedEmail] = ticket.copyWith(isVerified: true);
+    return null;
+  }
+
+  /// Passo 3: Define a nova senha forte após validação do código por e-mail e invalida o token de uso único
+  Future<String?> completePasswordReset({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final emailError = validateEmail(email);
+    if (emailError != null) return emailError;
+
+    final passwordError = validatePassword(newPassword);
+    if (passwordError != null) return passwordError;
+
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedCode = code.trim();
+    final normalizedPassword = newPassword.trim();
+
+    final ticket = _resetTickets[normalizedEmail];
+    if (ticket == null || !ticket.isVerified || ticket.isExpired) {
+      return 'Sua sessão de verificação expirou. Solicite um novo código por e-mail.';
+    }
+
+    final existing = _accounts[normalizedEmail];
+    if (existing != null) {
+      final previousCheck = PasswordHasher.hashPassword(
+        normalizedPassword,
+        existing.salt,
+      );
+      if (PasswordHasher.constantTimeEquals(
+        previousCheck,
+        existing.passwordHash,
+      )) {
+        return 'Por segurança, a nova senha deve ser diferente da senha atual.';
+      }
+    }
+
+    // Replica na API Go caso esteja online
+    await ref.read(authServiceProvider).resetPassword(
+          email: normalizedEmail,
+          code: normalizedCode,
+          newPassword: normalizedPassword,
+        );
+
+    final newSalt = PasswordHasher.generateSecureSalt();
+    final newHash = PasswordHasher.hashPassword(normalizedPassword, newSalt);
+    final fullName = existing?.fullName ?? 'Usuário';
+
+    _accounts[normalizedEmail] = AuthAccount(
+      fullName: fullName,
+      email: normalizedEmail,
+      salt: newSalt,
+      passwordHash: newHash,
+    );
+
+    try {
+      await ref.read(appDatabaseProvider).saveAuthAccount(
+            email: normalizedEmail,
+            fullName: fullName,
+            salt: newSalt,
+            passwordHash: newHash,
+          );
+      await ref.read(appDatabaseProvider).updateAuthPassword(
+            email: normalizedEmail,
+            salt: newSalt,
+            passwordHash: newHash,
+          );
+    } catch (_) {}
+
+    // Invalida imediatamente o token de uso único (Single-Use OTP)
+    _resetTickets.remove(normalizedEmail);
+
+    state = state.copyWith(
+      failedAttempts: 0,
+      clearLock: true,
+      clearError: true,
+      successMessage:
+          'Senha redefinida com sucesso! Faça login com sua nova senha.',
     );
     return null;
   }

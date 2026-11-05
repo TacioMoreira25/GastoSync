@@ -11,7 +11,7 @@ import (
 )
 
 // Config holds the runtime configuration parameters for the HTTP server,
-// database connection pool, and JWT authentication layer.
+// database connection pool, JWT authentication layer, and SMTP email dispatch.
 type Config struct {
 	Port               string
 	AppEnv             string
@@ -19,6 +19,15 @@ type Config struct {
 	JWTSecret          string
 	JWTExpirationHours int
 	CORSAllowedOrigins string
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUser           string
+	SMTPPass           string
+	SMTPFrom           string
+	ResendAPIKey       string
+	BrevoAPIKey        string
+	SenderEmail        string
+	SenderName         string
 }
 
 // Load reads configuration values from the process environment, optionally
@@ -31,6 +40,18 @@ func Load() (*Config, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	jwtSecret := os.Getenv("JWT_SECRET")
 	corsOrigins := getEnv("CORS_ALLOWED_ORIGINS", "*")
+	smtpHost := getEnv("SMTP_HOST", "")
+	smtpPort := getEnv("SMTP_PORT", "587")
+	smtpUser := getEnv("SMTP_USER", "")
+	smtpPass := getEnv("SMTP_PASS", "")
+	smtpFrom := getEnv("SMTP_FROM", "GastoSync Seguranca <no-reply@gastosync.com>")
+	resendAPIKey := getEnv("RESEND_API_KEY", "")
+	brevoAPIKey := getEnv("BREVO_API_KEY", "")
+	senderEmail := getEnv("SENDER_EMAIL", smtpUser)
+	if senderEmail == "" {
+		senderEmail = "no-reply@gastosync.com"
+	}
+	senderName := getEnv("SENDER_NAME", "GastoSync Segurança")
 
 	expHoursStr := getEnv("JWT_EXPIRATION_HOURS", "168")
 	expHours, err := strconv.Atoi(expHoursStr)
@@ -53,6 +74,15 @@ func Load() (*Config, error) {
 		JWTSecret:          jwtSecret,
 		JWTExpirationHours: expHours,
 		CORSAllowedOrigins: corsOrigins,
+		SMTPHost:           smtpHost,
+		SMTPPort:           smtpPort,
+		SMTPUser:           smtpUser,
+		SMTPPass:           smtpPass,
+		SMTPFrom:           smtpFrom,
+		ResendAPIKey:       resendAPIKey,
+		BrevoAPIKey:        brevoAPIKey,
+		SenderEmail:        senderEmail,
+		SenderName:         senderName,
 	}, nil
 }
 

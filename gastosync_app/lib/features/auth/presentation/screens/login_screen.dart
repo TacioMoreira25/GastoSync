@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
@@ -449,7 +452,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           padding:
                               EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                           child: Text(
-                            'Esqueceu / Alterar senha?',
+                            'Esqueceu sua senha?',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -585,7 +588,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 }
 
-/// Modal para redefinir/alterar senha de uma conta cadastrada
+enum _ResetPasswordStep {
+  requestEmail,
+  verifyOtp,
+  setNewPassword,
+}
+
+/// Modal profissional de Recuperação de Senha em 3 etapas com verificação por e-mail (OWASP ASVS V2.5)
 class _ResetPasswordDialog extends ConsumerStatefulWidget {
   const _ResetPasswordDialog({
     required this.initialEmail,
@@ -603,16 +612,25 @@ class _ResetPasswordDialog extends ConsumerStatefulWidget {
 class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _emailController;
+  final _otpController = TextEditingController();
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
   final _emailFocusNode = FocusNode();
+  final _otpFocusNode = FocusNode();
   final _newPasswordFocusNode = FocusNode();
   final _confirmFocusNode = FocusNode();
 
+  _ResetPasswordStep _currentStep = _ResetPasswordStep.requestEmail;
+  bool _isLoading = false;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
   String? _dialogError;
+  String? _maskedEmail;
+  String? _recipientName;
+  String? _devPreviewCode;
+  int _resendCooldownSeconds = 0;
+  Timer? _resendTimer;
 
   @override
   void initState() {
@@ -622,31 +640,138 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _emailFocusNode.dispose();
+    _otpFocusNode.dispose();
     _newPasswordFocusNode.dispose();
     _confirmFocusNode.dispose();
 
     _emailController.dispose();
+    _otpController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  void _handleSaveNewPassword() {
-    setState(() => _dialogError = null);
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    setState(() => _resendCooldownSeconds = 60);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_resendCooldownSeconds <= 1) {
+        timer.cancel();
+        setState(() => _resendCooldownSeconds = 0);
+      } else {
+        setState(() => _resendCooldownSeconds--);
+      }
+    });
+  }
 
-    final err = ref.read(authProvider.notifier).changePassword(
-          email: _emailController.text,
-          newPassword: _newPasswordController.text,
-        );
-    if (err != null) {
-      setState(() => _dialogError = err);
+  Future<void> _handleSendEmailCode({bool isResend = false}) async {
+    setState(() => _dialogError = null);
+    if (!isResend && !(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final outcome = await ref
+          .read(authProvider.notifier)
+          .requestPasswordReset(email: _emailController.text);
+
+      if (!mounted) return;
+      if (!outcome.isSuccess) {
+        setState(() {
+          _dialogError = outcome.errorMessage ??
+              'Não foi possível enviar o código de verificação.';
+        });
+        return;
+      }
+
+      _otpController.clear();
+      _startResendCooldown();
+      setState(() {
+        _maskedEmail = outcome.maskedEmail;
+        _recipientName = outcome.recipientName;
+        _devPreviewCode = outcome.previewCode;
+        _currentStep = _ResetPasswordStep.verifyOtp;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_otpFocusNode.canRequestFocus) {
+          _otpFocusNode.requestFocus();
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleVerifyCode() async {
+    setState(() => _dialogError = null);
+    final rawCode = _otpController.text.trim();
+    if (rawCode.length != 6) {
+      setState(() {
+        _dialogError =
+            'Digite os 6 dígitos do código enviado para seu e-mail.';
+      });
       return;
     }
 
-    widget.onEmailUpdated(_emailController.text.trim());
-    Navigator.of(context).pop();
+    setState(() => _isLoading = true);
+    try {
+      final err = await ref.read(authProvider.notifier).verifyPasswordResetCode(
+            email: _emailController.text,
+            code: rawCode,
+          );
+      if (!mounted) return;
+      if (err != null) {
+        setState(() => _dialogError = err);
+        return;
+      }
+
+      setState(() {
+        _currentStep = _ResetPasswordStep.setNewPassword;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_newPasswordFocusNode.canRequestFocus) {
+          _newPasswordFocusNode.requestFocus();
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleSaveNewPassword() async {
+    setState(() => _dialogError = null);
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final err = await ref.read(authProvider.notifier).completePasswordReset(
+            email: _emailController.text,
+            code: _otpController.text,
+            newPassword: _newPasswordController.text,
+          );
+      if (!mounted) return;
+      if (err != null) {
+        setState(() => _dialogError = err);
+        return;
+      }
+
+      widget.onEmailUpdated(_emailController.text.trim());
+      Navigator.of(context).pop();
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   void _toggleNewPasswordVisibility() {
@@ -667,13 +792,37 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
     });
   }
 
+  String _stepTitle() {
+    switch (_currentStep) {
+      case _ResetPasswordStep.requestEmail:
+        return 'Recuperar senha';
+      case _ResetPasswordStep.verifyOtp:
+        return 'Verifique seu e-mail';
+      case _ResetPasswordStep.setNewPassword:
+        return 'Criar nova senha';
+    }
+  }
+
+  String _stepSubtitle() {
+    switch (_currentStep) {
+      case _ResetPasswordStep.requestEmail:
+        return 'Enviaremos um código criptográfico de 6 dígitos para confirmar sua identidade.';
+      case _ResetPasswordStep.verifyOtp:
+        return 'Digite o código de 6 dígitos enviado para ${_maskedEmail ?? _emailController.text.trim()} (válido por 10 min).';
+      case _ResetPasswordStep.setNewPassword:
+        return 'Identidade confirmada. Defina uma nova senha forte diferente da anterior.';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final stepIndex = _currentStep.index;
+
     return Dialog(
       backgroundColor: AppTheme.cardSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
+        constraints: const BoxConstraints(maxWidth: 430),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Form(
@@ -682,20 +831,43 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Cabeçalho com ícone de escudo + título + botão fechar
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Alterar senha',
-                      style: TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppTheme.emeraldSoftBg,
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: AppTheme.emeraldBadgeBg),
+                      ),
+                      child: Icon(
+                        _currentStep == _ResetPasswordStep.requestEmail
+                            ? Icons.mark_email_unread_outlined
+                            : _currentStep == _ResetPasswordStep.verifyOtp
+                                ? Icons.verified_outlined
+                                : Icons.lock_reset_rounded,
+                        color: AppTheme.emeraldDeep,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _stepTitle(),
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
                       ),
                     ),
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed:
+                          _isLoading ? null : () => Navigator.of(context).pop(),
                       icon: const Icon(
                         Icons.close_rounded,
                         color: AppTheme.textMuted,
@@ -703,146 +875,667 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Informe o e-mail da sua conta e defina uma nova senha forte.',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                const SizedBox(height: 14),
+
+                // Indicador visual de progresso das 3 etapas
+                Row(
+                  children: [
+                    _StepProgressChip(
+                      stepNumber: 1,
+                      label: 'E-mail',
+                      isActive: stepIndex == 0,
+                      isCompleted: stepIndex > 0,
+                    ),
+                    Expanded(
+                      child: Container(
+                        height: 2,
+                        margin: const EdgeInsets.symmetric(horizontal: 6),
+                        color: stepIndex >= 1
+                            ? AppTheme.emeraldPrimary
+                            : AppTheme.cardBorder,
+                      ),
+                    ),
+                    _StepProgressChip(
+                      stepNumber: 2,
+                      label: 'Código',
+                      isActive: stepIndex == 1,
+                      isCompleted: stepIndex > 1,
+                    ),
+                    Expanded(
+                      child: Container(
+                        height: 2,
+                        margin: const EdgeInsets.symmetric(horizontal: 6),
+                        color: stepIndex >= 2
+                            ? AppTheme.emeraldPrimary
+                            : AppTheme.cardBorder,
+                      ),
+                    ),
+                    _StepProgressChip(
+                      stepNumber: 3,
+                      label: 'Nova senha',
+                      isActive: stepIndex == 2,
+                      isCompleted: false,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                Text(
+                  _stepSubtitle(),
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 16),
+
                 if (_dialogError != null) ...[
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(11),
                     decoration: BoxDecoration(
                       color: _LoginColors.errorBg,
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(11),
                       border: Border.all(
                         color: AppTheme.errorColor.withValues(alpha: 0.3),
                       ),
                     ),
-                    child: Text(
-                      _dialogError!,
-                      style: const TextStyle(
-                        color: AppTheme.errorColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          color: AppTheme.errorColor,
+                          size: 17,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _dialogError!,
+                            style: const TextStyle(
+                              color: AppTheme.errorColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                 ],
-                TextFormField(
-                  controller: _emailController,
-                  focusNode: _emailFocusNode,
-                  keyboardType: TextInputType.emailAddress,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: 'E-mail da conta',
-                    prefixIcon: Icon(Icons.mail_outline_rounded, size: 18),
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  validator: AuthNotifier.validateEmail,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _newPasswordController,
-                  focusNode: _newPasswordFocusNode,
-                  obscureText: _obscureNew,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'Nova senha',
-                    prefixIcon: const Icon(Icons.lock_reset_rounded, size: 18),
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      onPressed: _toggleNewPasswordVisibility,
-                      icon: Icon(
-                        _obscureNew
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                        size: 18,
-                      ),
-                    ),
-                  ),
-                  validator: AuthNotifier.validatePassword,
-                ),
-                const SizedBox(height: 10),
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _newPasswordController,
-                  builder: (context, value, _) {
-                    final analysis = AuthNotifier.analyzePassword(value.text);
-                    return _PasswordSecurityMeter(
-                      analysis: analysis,
-                      hasInput: value.text.trim().isNotEmpty,
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _confirmPasswordController,
-                  focusNode: _confirmFocusNode,
-                  obscureText: _obscureConfirm,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'Confirmar nova senha',
-                    prefixIcon:
-                        const Icon(Icons.verified_user_outlined, size: 18),
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      onPressed: _toggleConfirmNewPasswordVisibility,
-                      icon: Icon(
-                        _obscureConfirm
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                        size: 18,
-                      ),
-                    ),
-                  ),
-                  validator: (val) {
-                    if ((val ?? '').trim() !=
-                        _newPasswordController.text.trim()) {
-                      return 'As senhas não coincidem.';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Cancelar'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppTheme.emeraldPrimary,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _handleSaveNewPassword,
-                      child: const Text('Salvar nova senha'),
-                    ),
-                  ],
-                ),
+
+                if (_currentStep == _ResetPasswordStep.requestEmail)
+                  _buildRequestEmailStep(),
+                if (_currentStep == _ResetPasswordStep.verifyOtp)
+                  _buildVerifyOtpStep(),
+                if (_currentStep == _ResetPasswordStep.setNewPassword)
+                  _buildSetNewPasswordStep(),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildRequestEmailStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextFormField(
+          key: const Key('reset_email_input'),
+          controller: _emailController,
+          focusNode: _emailFocusNode,
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.done,
+          onFieldSubmitted: (_) => _handleSendEmailCode(),
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            labelText: 'E-mail cadastrado',
+            hintText: 'seu.email@exemplo.com',
+            prefixIcon: const Icon(Icons.mail_outline_rounded, size: 19),
+            filled: true,
+            fillColor: AppTheme.backgroundLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            isDense: true,
+          ),
+          validator: AuthNotifier.validateEmail,
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+            color: AppTheme.subtleSurface,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: AppTheme.cardBorder),
+          ),
+          child: const Row(
+            children: [
+              Icon(
+                Icons.shield_outlined,
+                size: 16,
+                color: AppTheme.textSecondary,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Proteção anti-fraude: o código tem uso único, expira em 10 minutos e bloqueia após 5 tentativas.',
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed:
+                  _isLoading ? null : () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              key: const Key('reset_send_code_button'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+              onPressed: _isLoading ? null : _handleSendEmailCode,
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.send_rounded, size: 16),
+              label: Text(
+                _isLoading ? 'Enviando...' : 'Enviar código por e-mail',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVerifyOtpStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Card simulador de e-mail recebido quando em modo local/dev sem servidor SMTP externo
+        if (_devPreviewCode != null) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppTheme.emeraldPrimary.withValues(alpha: 0.45),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.mark_email_read_rounded,
+                      size: 16,
+                      color: AppTheme.emeraldDeep,
+                    ),
+                    const SizedBox(width: 6),
+                    const Expanded(
+                      child: Text(
+                        'E-mail de Segurança Disparado',
+                        style: TextStyle(
+                          color: AppTheme.emeraldDeep,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.emeraldBadgeBg,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Caixa Local/Dev',
+                        style: TextStyle(
+                          color: AppTheme.emeraldDeep,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Para: ${_emailController.text.trim()} (${_recipientName ?? "Usuário"})\n'
+                  'Assunto: GastoSync — Seu código de recuperação é $_devPreviewCode',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    key: const Key('reset_autofill_otp_button'),
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () {
+                      _otpController.text = _devPreviewCode!;
+                      setState(() => _dialogError = null);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.emeraldPrimary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Preencher código ($_devPreviewCode)',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+
+        // Caixas visuais dos 6 dígitos sincronizadas com o campo de texto
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _otpController,
+          builder: (context, value, _) {
+            final text = value.text.trim();
+            return GestureDetector(
+              onTap: () => _otpFocusNode.requestFocus(),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: List.generate(6, (index) {
+                  final char = index < text.length ? text[index] : '';
+                  final isCurrent = index == text.length && _otpFocusNode.hasFocus;
+                  return Container(
+                    width: 48,
+                    height: 54,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: char.isNotEmpty
+                          ? AppTheme.emeraldSoftBg
+                          : AppTheme.backgroundLight,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isCurrent || char.isNotEmpty
+                            ? AppTheme.emeraldPrimary
+                            : AppTheme.cardBorder,
+                        width: isCurrent || char.isNotEmpty ? 1.6 : 1.0,
+                      ),
+                    ),
+                    child: Text(
+                      char,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+
+        TextFormField(
+          key: const Key('reset_otp_input'),
+          controller: _otpController,
+          focusNode: _otpFocusNode,
+          keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.done,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(6),
+          ],
+          onChanged: (val) {
+            if (_dialogError != null) {
+              setState(() => _dialogError = null);
+            }
+          },
+          onFieldSubmitted: (_) => _handleVerifyCode(),
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 6,
+          ),
+          decoration: InputDecoration(
+            labelText: 'Código de 6 dígitos',
+            hintText: '000000',
+            prefixIcon: const Icon(Icons.pin_outlined, size: 19),
+            filled: true,
+            fillColor: AppTheme.backgroundLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Linha de reenvio com timer e troca de e-mail
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton.icon(
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                      setState(() {
+                        _dialogError = null;
+                        _currentStep = _ResetPasswordStep.requestEmail;
+                      });
+                    },
+              icon: const Icon(Icons.arrow_back_rounded, size: 15),
+              label: const Text(
+                'Alterar e-mail',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+            TextButton(
+              onPressed: (_isLoading || _resendCooldownSeconds > 0)
+                  ? null
+                  : () => _handleSendEmailCode(isResend: true),
+              child: Text(
+                _resendCooldownSeconds > 0
+                    ? 'Reenviar em ${_resendCooldownSeconds}s'
+                    : 'Reenviar código',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed:
+                  _isLoading ? null : () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              key: const Key('reset_verify_code_button'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+              onPressed: _isLoading ? null : _handleVerifyCode,
+              icon: const Icon(Icons.verified_user_outlined, size: 16),
+              label: const Text(
+                'Verificar código',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSetNewPasswordStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: AppTheme.emeraldSoftBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.emeraldBadgeBg),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.check_circle_rounded,
+                size: 16,
+                color: AppTheme.emeraldDeep,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'E-mail verificado (${_maskedEmail ?? _emailController.text.trim()})',
+                  style: const TextStyle(
+                    color: AppTheme.emeraldDeep,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextFormField(
+          key: const Key('reset_new_password_input'),
+          controller: _newPasswordController,
+          focusNode: _newPasswordFocusNode,
+          obscureText: _obscureNew,
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            labelText: 'Nova senha forte',
+            prefixIcon: const Icon(Icons.lock_reset_rounded, size: 19),
+            filled: true,
+            fillColor: AppTheme.backgroundLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            isDense: true,
+            suffixIcon: IconButton(
+              onPressed: _toggleNewPasswordVisibility,
+              icon: Icon(
+                _obscureNew
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                size: 18,
+              ),
+            ),
+          ),
+          validator: AuthNotifier.validatePassword,
+        ),
+        const SizedBox(height: 10),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _newPasswordController,
+          builder: (context, value, _) {
+            final analysis = AuthNotifier.analyzePassword(value.text);
+            return _PasswordSecurityMeter(
+              analysis: analysis,
+              hasInput: value.text.trim().isNotEmpty,
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          key: const Key('reset_confirm_password_input'),
+          controller: _confirmPasswordController,
+          focusNode: _confirmFocusNode,
+          obscureText: _obscureConfirm,
+          onFieldSubmitted: (_) => _handleSaveNewPassword(),
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            labelText: 'Confirmar nova senha',
+            prefixIcon: const Icon(Icons.verified_user_outlined, size: 19),
+            filled: true,
+            fillColor: AppTheme.backgroundLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            isDense: true,
+            suffixIcon: IconButton(
+              onPressed: _toggleConfirmNewPasswordVisibility,
+              icon: Icon(
+                _obscureConfirm
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                size: 18,
+              ),
+            ),
+          ),
+          validator: (val) {
+            if ((val ?? '').trim() != _newPasswordController.text.trim()) {
+              return 'As senhas não coincidem.';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed:
+                  _isLoading ? null : () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              key: const Key('reset_save_password_button'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+              onPressed: _isLoading ? null : _handleSaveNewPassword,
+              icon: const Icon(Icons.lock_outline_rounded, size: 16),
+              label: const Text(
+                'Salvar nova senha',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _StepProgressChip extends StatelessWidget {
+  const _StepProgressChip({
+    required this.stepNumber,
+    required this.label,
+    required this.isActive,
+    required this.isCompleted,
+  });
+
+  final int stepNumber;
+  final String label;
+  final bool isActive;
+  final bool isCompleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final bgColor = isCompleted || isActive
+        ? AppTheme.emeraldPrimary
+        : AppTheme.subtleSurface;
+    final textColor = isCompleted || isActive
+        ? AppTheme.emeraldDeep
+        : AppTheme.textMuted;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: bgColor,
+            shape: BoxShape.circle,
+          ),
+          child: isCompleted
+              ? const Icon(Icons.check_rounded, size: 13, color: Colors.white)
+              : Text(
+                  '$stepNumber',
+                  style: TextStyle(
+                    color: isActive ? Colors.white : AppTheme.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 11.5,
+            fontWeight: isActive || isCompleted
+                ? FontWeight.w700
+                : FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -33,6 +33,24 @@ type AuthResponse struct {
 	User  User   `json:"user"`
 }
 
+// ForgotPasswordRequest defines the payload to request a 6-digit password reset code via email.
+type ForgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+// VerifyResetCodeRequest defines the payload to validate a 6-digit password reset code.
+type VerifyResetCodeRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+// ResetPasswordRequest defines the payload to complete a password reset with a verified 6-digit code.
+type ResetPasswordRequest struct {
+	Email       string `json:"email"`
+	Code        string `json:"code"`
+	NewPassword string `json:"new_password"`
+}
+
 // TransactionDTO represents a financial transaction exchanged during synchronization.
 type TransactionDTO struct {
 	ID            int64     `json:"id,omitempty"`

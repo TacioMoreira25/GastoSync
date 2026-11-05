@@ -905,14 +905,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: AppTheme.navyDark,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const GastoSyncAiLogo(size: 20),
-                ),
+                const GastoSyncAiBadge(size: 34),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(

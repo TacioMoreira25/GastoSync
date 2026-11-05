@@ -39,8 +39,8 @@ func ConnectPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error)
 	return pool, nil
 }
 
-// RunMigrations applies the core relational schema (users, transactions, and
-// budgets) idempotently, ensuring all tables and indexes exist before serving traffic.
+// RunMigrations applies the core relational schema (users, transactions,
+// budgets, and password_reset_tokens) idempotently, ensuring all tables and indexes exist before serving traffic.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	const schemaDDL = `
 CREATE TABLE IF NOT EXISTS users (
@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS budgets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_budgets_user_period ON budgets(user_id, year, month);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    email VARCHAR(255) PRIMARY KEY REFERENCES users(email) ON DELETE CASCADE,
+    code_hash VARCHAR(128) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `
 	migCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

@@ -25,6 +25,9 @@ class ApiConstants {
   static const String healthEndpoint = '/health';
   static const String authRegisterEndpoint = '/api/v1/auth/register';
   static const String authLoginEndpoint = '/api/v1/auth/login';
+  static const String authForgotPasswordEndpoint = '/api/v1/auth/forgot-password';
+  static const String authVerifyResetCodeEndpoint = '/api/v1/auth/verify-reset-code';
+  static const String authResetPasswordEndpoint = '/api/v1/auth/reset-password';
   static const String authMeEndpoint = '/api/v1/auth/me';
   static const String syncPushEndpoint = '/api/v1/sync/push';
   static const String syncPullEndpoint = '/api/v1/sync/pull';

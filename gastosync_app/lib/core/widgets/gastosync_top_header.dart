@@ -403,43 +403,181 @@ class _NotificationBellButton extends ConsumerWidget {
   }
 }
 
-/// Widget reutilizável com a logo oficial da IA GastoSync (`assets/images/ai_logo.png`)
+/// Logo vetorial oficial da IA GastoSync: "G" estilizado em anel + faísca de IA.
+///
+/// Desenhada via [CustomPainter] para ficar nítida em qualquer tamanho/DPI
+/// (Mobile, Web e Desktop), sem depender de assets rasterizados.
+/// - [glyphColor]: cor do "G" (branco por padrão, para fundos escuros).
+/// - [monochrome]: quando `true`, a faísca usa a mesma cor do "G"
+///   (útil sobre fundos esmeralda, onde o gradiente verde perderia contraste).
 class GastoSyncAiLogo extends StatelessWidget {
   const GastoSyncAiLogo({
     this.size = 28,
+    this.glyphColor = Colors.white,
+    this.monochrome = false,
     super.key,
   });
 
   final double size;
+  final Color glyphColor;
+  final bool monochrome;
 
   @override
   Widget build(BuildContext context) {
-    return Image.asset(
-      'assets/images/ai_logo.png',
+    return Semantics(
+      label: 'Assistente de IA GastoSync',
+      image: true,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(
+          painter: _GastoSyncAiLogoPainter(
+            glyphColor: glyphColor,
+            monochrome: monochrome,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GastoSyncAiLogoPainter extends CustomPainter {
+  const _GastoSyncAiLogoPainter({
+    required this.glyphColor,
+    required this.monochrome,
+  });
+
+  final Color glyphColor;
+  final bool monochrome;
+
+  static const Color _sparkStart = Color(0xFF6EE7B7); // Emerald 300
+  static const Color _sparkEnd = Color(0xFF10B981); // Emerald 500
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = math.min(size.width, size.height);
+
+    // 1. Anel do "G" (arco aberto no quadrante superior direito)
+    final ringCenter = Offset(s * 0.44, s * 0.56);
+    final ringRadius = s * 0.31;
+    final strokeWidth = s * 0.125;
+
+    final glyphPaint = Paint()
+      ..color = glyphColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    const startAngle = 0.0; // ponto à direita, na linha central
+    const sweepAngle = 2 * math.pi * (310 / 360); // deixa a abertura para a faísca
+    canvas.drawArc(
+      Rect.fromCircle(center: ringCenter, radius: ringRadius),
+      startAngle,
+      sweepAngle,
+      false,
+      glyphPaint,
+    );
+
+    // 2. Barra horizontal interna do "G"
+    canvas.drawLine(
+      Offset(ringCenter.dx + s * 0.04, ringCenter.dy),
+      Offset(ringCenter.dx + ringRadius, ringCenter.dy),
+      glyphPaint,
+    );
+
+    // 3. Faísca principal de IA (estrela de 4 pontas côncava)
+    final sparkCenter = Offset(s * 0.80, s * 0.21);
+    final sparkRadius = s * 0.19;
+    final sparkPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+
+    if (monochrome) {
+      sparkPaint.color = glyphColor;
+    } else {
+      sparkPaint.shader = const LinearGradient(
+        colors: [_sparkStart, _sparkEnd],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ).createShader(
+        Rect.fromCircle(center: sparkCenter, radius: sparkRadius),
+      );
+    }
+    canvas.drawPath(_sparkPath(sparkCenter, sparkRadius), sparkPaint);
+
+    // 4. Micro-faísca secundária (dá sensação de "inteligência" em movimento)
+    final miniPaint = Paint()
+      ..color = (monochrome ? glyphColor : _sparkStart).withValues(alpha: 0.85)
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+    canvas.drawPath(
+      _sparkPath(Offset(s * 0.95, s * 0.47), s * 0.065),
+      miniPaint,
+    );
+  }
+
+  Path _sparkPath(Offset c, double r) {
+    final k = r * 0.16;
+    return Path()
+      ..moveTo(c.dx, c.dy - r)
+      ..quadraticBezierTo(c.dx + k, c.dy - k, c.dx + r, c.dy)
+      ..quadraticBezierTo(c.dx + k, c.dy + k, c.dx, c.dy + r)
+      ..quadraticBezierTo(c.dx - k, c.dy + k, c.dx - r, c.dy)
+      ..quadraticBezierTo(c.dx - k, c.dy - k, c.dx, c.dy - r)
+      ..close();
+  }
+
+  @override
+  bool shouldRepaint(covariant _GastoSyncAiLogoPainter oldDelegate) =>
+      oldDelegate.glyphColor != glyphColor ||
+      oldDelegate.monochrome != monochrome;
+}
+
+/// Selo da IA: fundo navy em gradiente com borda esmeralda sutil + logo vetorial.
+/// Use [circular] para avatar redondo ou deixe `false` para cantos arredondados.
+class GastoSyncAiBadge extends StatelessWidget {
+  const GastoSyncAiBadge({
+    this.size = 32,
+    this.circular = false,
+    this.showGlow = false,
+    super.key,
+  });
+
+  final double size;
+  final bool circular;
+  final bool showGlow;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
       width: size,
       height: size,
-      color: Colors.white,
-      colorBlendMode: BlendMode.srcIn,
-      fit: BoxFit.contain,
-      filterQuality: FilterQuality.high,
-      errorBuilder: (_, _, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'G',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: size * 0.58,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          Icon(
-            Icons.auto_awesome_rounded,
-            size: size * 0.5,
-            color: Colors.white,
-          ),
-        ],
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: circular ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: circular ? null : BorderRadius.circular(size * 0.3),
+        gradient: const LinearGradient(
+          colors: [AppTheme.navySurface, AppTheme.navyDark],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: AppTheme.emeraldPrimary.withValues(alpha: 0.35),
+          width: 1,
+        ),
+        boxShadow: showGlow
+            ? [
+                BoxShadow(
+                  color: AppTheme.emeraldPrimary.withValues(alpha: 0.22),
+                  blurRadius: size * 0.4,
+                  spreadRadius: -size * 0.04,
+                  offset: Offset(0, size * 0.04),
+                ),
+              ]
+            : null,
       ),
+      child: GastoSyncAiLogo(size: size * 0.6),
     );
   }
 }
@@ -455,20 +593,21 @@ class GastoSyncAiFloatingButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.navyDark,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.25),
-      shape: const CircleBorder(),
-      child: InkWell(
-        key: const Key('gastosync_ai_fab_button'),
-        customBorder: const CircleBorder(),
-        onTap: onPressed ?? () => GastoSyncAiChatModal.show(context),
-        child: const SizedBox(
-          width: 52,
-          height: 52,
-          child: Center(
-            child: GastoSyncAiLogo(size: 30),
+    return Tooltip(
+      message: 'Falar com o assistente de IA',
+      child: Material(
+        color: Colors.transparent,
+        elevation: 6,
+        shadowColor: AppTheme.emeraldPrimary.withValues(alpha: 0.35),
+        shape: const CircleBorder(),
+        child: InkWell(
+          key: const Key('gastosync_ai_fab_button'),
+          customBorder: const CircleBorder(),
+          onTap: onPressed ?? () => GastoSyncAiChatModal.show(context),
+          child: const GastoSyncAiBadge(
+            size: 54,
+            circular: true,
+            showGlow: true,
           ),
         ),
       ),
@@ -978,7 +1117,7 @@ class _ChatHeader extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const GastoSyncAiLogo(size: 24),
+                    child: const GastoSyncAiLogo(size: 26, monochrome: true),
                   ),
                   Positioned(
                     right: -1,
@@ -1066,16 +1205,7 @@ class _AiAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 28,
-      height: 28,
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        color: AppTheme.navyDark,
-        shape: BoxShape.circle,
-      ),
-      child: const GastoSyncAiLogo(size: 16),
-    );
+    return const GastoSyncAiBadge(size: 28, circular: true);
   }
 }
 

@@ -17,6 +17,14 @@ services:
       timeout: 3s
       retries: 10
 
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: gastosync_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   gastosync_api:
     build:
       context: .
@@ -30,6 +38,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
 volumes:
   gastosync_pgdata:
