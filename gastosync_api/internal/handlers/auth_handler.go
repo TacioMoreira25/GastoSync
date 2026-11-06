@@ -242,13 +242,15 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 	err := h.pool.QueryRow(ctx, `SELECT name FROM users WHERE email = $1`, email).Scan(&userName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Nenhuma conta encontrada com este endereço de e-mail.",
+			// Suporte Offline-First: mesmo que a conta tenha sido criada localmente
+			// no dispositivo antes de sincronizar com a nuvem, permite o envio do OTP.
+			parts := strings.Split(email, "@")
+			userName = parts[0]
+		} else {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Falha ao consultar conta de usuário.",
 			})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Falha ao consultar conta de usuário.",
-		})
 	}
 
 	otpCode, err := generateNumericOTP(6)
@@ -354,13 +356,14 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	}
 
 	var currentHash string
-	if err := h.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE email = $1`, email).Scan(&currentHash); err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Conta não encontrada.",
+	err := h.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE email = $1`, email).Scan(&currentHash)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Falha ao consultar conta de usuário.",
 		})
 	}
 
-	if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(newPassword)) == nil {
+	if currentHash != "" && bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(newPassword)) == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "A nova senha deve ser diferente da sua senha atual.",
 		})
@@ -381,7 +384,15 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE email = $2`, string(newHashedBytes), email); err != nil {
+	defaultName := strings.Split(email, "@")[0]
+	const upsertUserPasswordQuery = `
+		INSERT INTO users (name, email, password_hash, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (email) DO UPDATE
+		SET password_hash = EXCLUDED.password_hash,
+		    updated_at = NOW()
+	`
+	if _, err := tx.Exec(ctx, upsertUserPasswordQuery, defaultName, email, string(newHashedBytes)); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Falha ao atualizar senha.",
 		})

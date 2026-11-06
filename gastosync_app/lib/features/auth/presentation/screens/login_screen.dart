@@ -733,20 +733,24 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
   bool _obscureConfirm = true;
   String? _dialogError;
   String? _maskedEmail;
-  String? _recipientName;
-  String? _devPreviewCode;
   int _resendCooldownSeconds = 0;
   Timer? _resendTimer;
+
+  void _onOtpFocusChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
     _emailController = TextEditingController(text: widget.initialEmail);
+    _otpFocusNode.addListener(_onOtpFocusChanged);
   }
 
   @override
   void dispose() {
     _resendTimer?.cancel();
+    _otpFocusNode.removeListener(_onOtpFocusChanged);
     _emailFocusNode.dispose();
     _otpFocusNode.dispose();
     _newPasswordFocusNode.dispose();
@@ -799,8 +803,6 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
       _startResendCooldown();
       setState(() {
         _maskedEmail = outcome.maskedEmail;
-        _recipientName = outcome.recipientName;
-        _devPreviewCode = outcome.previewCode;
         _currentStep = _ResetPasswordStep.verifyOtp;
       });
 
@@ -926,11 +928,12 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
 
     return Dialog(
       backgroundColor: AppTheme.cardSurface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 430),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(20),
           child: Form(
             key: _formKey,
             child: Column(
@@ -1145,7 +1148,6 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
         ),
         const SizedBox(height: 20),
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
           children: [
             TextButton(
               onPressed:
@@ -1153,31 +1155,35 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
               child: const Text('Cancelar'),
             ),
             const SizedBox(width: 8),
-            FilledButton.icon(
-              key: const Key('reset_send_code_button'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.emeraldPrimary,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
+            Expanded(
+              child: FilledButton.icon(
+                key: const Key('reset_send_code_button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.emeraldPrimary,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
                 ),
-              ),
-              onPressed: _isLoading ? null : _handleSendEmailCode,
-              icon: _isLoading
-                  ? const SizedBox(
-                      width: 15,
-                      height: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.send_rounded, size: 16),
-              label: Text(
-                _isLoading ? 'Enviando...' : 'Enviar código por e-mail',
-                style: const TextStyle(fontWeight: FontWeight.w700),
+                onPressed: _isLoading ? null : _handleSendEmailCode,
+                icon: _isLoading
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.send_rounded, size: 16),
+                label: Text(
+                  _isLoading ? 'Enviando...' : 'Enviar código',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ],
@@ -1190,214 +1196,193 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Card simulador de e-mail recebido quando em modo local/dev sem servidor SMTP externo
-        if (_devPreviewCode != null) ...[
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0FDF4),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppTheme.emeraldPrimary.withValues(alpha: 0.45),
-              ),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppTheme.emeraldSoftBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppTheme.emeraldPrimary.withValues(alpha: 0.35),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.mark_email_read_outlined,
+                size: 18,
+                color: AppTheme.emeraldDeep,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
-                      Icons.mark_email_read_rounded,
-                      size: 16,
-                      color: AppTheme.emeraldDeep,
-                    ),
-                    const SizedBox(width: 6),
-                    const Expanded(
-                      child: Text(
-                        'E-mail de Segurança Disparado',
-                        style: TextStyle(
-                          color: AppTheme.emeraldDeep,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
+                    const Text(
+                      'Código enviado para seu e-mail',
+                      style: TextStyle(
+                        color: AppTheme.emeraldDeep,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.emeraldBadgeBg,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'Caixa Local/Dev',
-                        style: TextStyle(
-                          color: AppTheme.emeraldDeep,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Enviamos um código de 6 dígitos para ${_emailController.text.trim()}. Confira sua Caixa de Entrada e também a pasta de Spam / Lixo Eletrônico.',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11.5,
+                        height: 1.35,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Para: ${_emailController.text.trim()} (${_recipientName ?? "Usuário"})\n'
-                  'Assunto: GastoSync — Seu código de recuperação é $_devPreviewCode',
-                  style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 11.5,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: InkWell(
-                    key: const Key('reset_autofill_otp_button'),
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () {
-                      _otpController.text = _devPreviewCode!;
-                      setState(() => _dialogError = null);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.emeraldPrimary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Preencher código ($_devPreviewCode)',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
-
-        // Caixas visuais dos 6 dígitos sincronizadas com o campo de texto
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: _otpController,
-          builder: (context, value, _) {
-            final text = value.text.trim();
-            return GestureDetector(
-              onTap: () => _otpFocusNode.requestFocus(),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, (index) {
-                  final char = index < text.length ? text[index] : '';
-                  final isCurrent = index == text.length && _otpFocusNode.hasFocus;
-                  return Container(
-                    width: 48,
-                    height: 54,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: char.isNotEmpty
-                          ? AppTheme.emeraldSoftBg
-                          : AppTheme.backgroundLight,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: isCurrent || char.isNotEmpty
-                            ? AppTheme.emeraldPrimary
-                            : AppTheme.cardBorder,
-                        width: isCurrent || char.isNotEmpty ? 1.6 : 1.0,
-                      ),
-                    ),
-                    child: Text(
-                      char,
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  );
-                }),
               ),
-            );
-          },
+            ],
+          ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 18),
 
-        TextFormField(
-          key: const Key('reset_otp_input'),
-          controller: _otpController,
-          focusNode: _otpFocusNode,
-          keyboardType: TextInputType.number,
-          textInputAction: TextInputAction.done,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(6),
-          ],
-          onChanged: (val) {
-            if (_dialogError != null) {
-              setState(() => _dialogError = null);
-            }
-          },
-          onFieldSubmitted: (_) => _handleVerifyCode(),
-          style: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 6,
-          ),
-          decoration: InputDecoration(
-            labelText: 'Código de 6 dígitos',
-            hintText: '000000',
-            prefixIcon: const Icon(Icons.pin_outlined, size: 19),
-            filled: true,
-            fillColor: AppTheme.backgroundLight,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+        // Caixas interativas dos 6 dígitos (sem campo duplicado abaixo)
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _otpController,
+              builder: (context, value, _) {
+                final text = value.text.trim();
+                final activeIndex = text.length.clamp(0, 5);
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _otpFocusNode.requestFocus(),
+                  child: Row(
+                    children: List.generate(6, (index) {
+                      final char = index < text.length ? text[index] : '';
+                      final isCurrent =
+                          _otpFocusNode.hasFocus && index == activeIndex && char.isEmpty;
+                      return Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: index == 0 ? 0 : 3,
+                            right: index == 5 ? 0 : 3,
+                          ),
+                          child: Container(
+                            height: 52,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: char.isNotEmpty
+                                  ? AppTheme.emeraldSoftBg
+                                  : AppTheme.backgroundLight,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isCurrent || char.isNotEmpty
+                                    ? AppTheme.emeraldPrimary
+                                    : AppTheme.cardBorder,
+                                width: isCurrent || char.isNotEmpty ? 1.8 : 1.0,
+                              ),
+                            ),
+                            child: char.isNotEmpty
+                                ? Text(
+                                    char,
+                                    style: const TextStyle(
+                                      color: AppTheme.textPrimary,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  )
+                                : isCurrent
+                                    ? Container(
+                                        width: 2,
+                                        height: 22,
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.emeraldPrimary,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              },
             ),
-            isDense: true,
-          ),
+            Opacity(
+              opacity: 0.01,
+              child: SizedBox(
+                height: 54,
+                width: double.infinity,
+                child: TextFormField(
+                  key: const Key('reset_otp_input'),
+                  controller: _otpController,
+                  focusNode: _otpFocusNode,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  autofocus: true,
+                  enableInteractiveSelection: true,
+                  showCursor: false,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (val) {
+                    if (_dialogError != null) {
+                      setState(() => _dialogError = null);
+                    }
+                  },
+                  onFieldSubmitted: (_) => _handleVerifyCode(),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    counterText: '',
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
 
         // Linha de reenvio com timer e troca de e-mail
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            TextButton.icon(
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      setState(() {
-                        _dialogError = null;
-                        _currentStep = _ResetPasswordStep.requestEmail;
-                      });
-                    },
-              icon: const Icon(Icons.arrow_back_rounded, size: 15),
-              label: const Text(
-                'Alterar e-mail',
-                style: TextStyle(fontSize: 12),
+            Flexible(
+              child: TextButton.icon(
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          _dialogError = null;
+                          _currentStep = _ResetPasswordStep.requestEmail;
+                        });
+                      },
+                icon: const Icon(Icons.arrow_back_rounded, size: 15),
+                label: const Text(
+                  'Alterar e-mail',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12),
+                ),
               ),
             ),
-            TextButton(
-              onPressed: (_isLoading || _resendCooldownSeconds > 0)
-                  ? null
-                  : () => _handleSendEmailCode(isResend: true),
-              child: Text(
-                _resendCooldownSeconds > 0
-                    ? 'Reenviar em ${_resendCooldownSeconds}s'
-                    : 'Reenviar código',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+            Flexible(
+              child: TextButton(
+                onPressed: (_isLoading || _resendCooldownSeconds > 0)
+                    ? null
+                    : () => _handleSendEmailCode(isResend: true),
+                child: Text(
+                  _resendCooldownSeconds > 0
+                      ? 'Reenviar em ${_resendCooldownSeconds}s'
+                      : 'Reenviar código',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -1406,7 +1391,6 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
         const SizedBox(height: 10),
 
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
           children: [
             TextButton(
               onPressed:
@@ -1414,22 +1398,26 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
               child: const Text('Cancelar'),
             ),
             const SizedBox(width: 8),
-            FilledButton.icon(
-              key: const Key('reset_verify_code_button'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.emeraldPrimary,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
+            Expanded(
+              child: FilledButton.icon(
+                key: const Key('reset_verify_code_button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.emeraldPrimary,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
                 ),
-              ),
-              onPressed: _isLoading ? null : _handleVerifyCode,
-              icon: const Icon(Icons.verified_user_outlined, size: 16),
-              label: const Text(
-                'Verificar código',
-                style: TextStyle(fontWeight: FontWeight.w700),
+                onPressed: _isLoading ? null : _handleVerifyCode,
+                icon: const Icon(Icons.verified_user_outlined, size: 16),
+                label: const Text(
+                  'Verificar código',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ],
@@ -1553,7 +1541,6 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
         ),
         const SizedBox(height: 20),
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
           children: [
             TextButton(
               onPressed:
@@ -1561,22 +1548,26 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
               child: const Text('Cancelar'),
             ),
             const SizedBox(width: 8),
-            FilledButton.icon(
-              key: const Key('reset_save_password_button'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.emeraldPrimary,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
+            Expanded(
+              child: FilledButton.icon(
+                key: const Key('reset_save_password_button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.emeraldPrimary,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
                 ),
-              ),
-              onPressed: _isLoading ? null : _handleSaveNewPassword,
-              icon: const Icon(Icons.lock_outline_rounded, size: 16),
-              label: const Text(
-                'Salvar nova senha',
-                style: TextStyle(fontWeight: FontWeight.w700),
+                onPressed: _isLoading ? null : _handleSaveNewPassword,
+                icon: const Icon(Icons.lock_outline_rounded, size: 16),
+                label: const Text(
+                  'Salvar nova senha',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ],

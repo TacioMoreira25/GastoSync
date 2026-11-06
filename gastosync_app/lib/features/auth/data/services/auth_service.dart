@@ -75,6 +75,12 @@ class AuthService {
     ),
   );
 
+  bool _isRouteMissingOnServer(DioException e) {
+    if (e.response?.statusCode != 404) return false;
+    final data = e.response?.data;
+    return data is Map<String, dynamic> && data['code'] == 'ROUTE_NOT_FOUND';
+  }
+
   Future<Response<Map<String, dynamic>>> _postWithLocalFallback(
     String path,
     Map<String, dynamic> data,
@@ -82,7 +88,7 @@ class AuthService {
     try {
       return await _dio.post<Map<String, dynamic>>(path, data: data);
     } on DioException catch (e) {
-      if ((_isNetworkError(e) || e.response?.statusCode == 404) &&
+      if ((_isNetworkError(e) || _isRouteMissingOnServer(e)) &&
           _dio.options.baseUrl != 'http://localhost:8080') {
         return await _localFallbackDio.post<Map<String, dynamic>>(
           path,
@@ -182,7 +188,7 @@ class AuthService {
         devPreviewCode: data['dev_preview_code'] as String?,
       );
     } on DioException catch (e) {
-      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
         return const PasswordResetDispatchResult(isOffline: true);
       }
       final msg = _extractErrorMessage(e) ??
@@ -208,7 +214,7 @@ class AuthService {
       );
       return const AuthResult();
     } on DioException catch (e) {
-      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
         return const AuthResult(isOffline: true);
       }
       final msg = _extractErrorMessage(e) ?? 'Código de verificação inválido.';
@@ -235,7 +241,7 @@ class AuthService {
       );
       return const AuthResult();
     } on DioException catch (e) {
-      if (_isNetworkError(e) || e.response?.statusCode == 404) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
         return const AuthResult(isOffline: true);
       }
       final msg = _extractErrorMessage(e) ?? 'Falha ao redefinir a senha.';

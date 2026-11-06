@@ -751,9 +751,20 @@ class AuthNotifier extends Notifier<AuthState> {
 
     // Tenta disparo via API Go (SMTP / Nuvem)
     final authService = ref.read(authServiceProvider);
-    final remoteDispatch = await authService.requestPasswordReset(
+    var remoteDispatch = await authService.requestPasswordReset(
       email: normalizedEmail,
     );
+
+    if (!remoteDispatch.isOffline && remoteDispatch.error != null && existingLocal != null) {
+      await authService.register(
+        name: existingLocal.fullName,
+        email: normalizedEmail,
+        password: 'GsSync#${existingLocal.salt.substring(0, 8)}9!',
+      );
+      remoteDispatch = await authService.requestPasswordReset(
+        email: normalizedEmail,
+      );
+    }
 
     if (!remoteDispatch.isOffline && remoteDispatch.error != null && existingLocal == null) {
       return PasswordResetRequestOutcome(
