@@ -1,6 +1,0 @@
-fastapi
-pydantic
-groq
-fastapi[standard]
-uvicorn
-python-dotenv
