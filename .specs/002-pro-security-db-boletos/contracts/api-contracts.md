@@ -168,6 +168,7 @@ Faz *upsert* transacional de `transactions`, `bills` e `budgets` pertencentes ao
         "category": "Moradia",
         "barcode": "83640000001894000000000000000000000000000000",
         "is_recurring": true,
+        "is_credit_card_charge": false,
         "status": "pending",
         "paid_at": null,
         "linked_tx_uuid": null,
@@ -182,6 +183,17 @@ Faz *upsert* transacional de `transactions`, `bills` e `budgets` pertencentes ao
         "month": 11,
         "year": 2026
       }
+    ],
+    "credit_cards": [
+      {
+        "client_uuid": "990e8400-e29b-41d4-a716-446655440999",
+        "name": "Nubank Principal",
+        "limit_amount": 1500.00,
+        "target_min_percent": 50.0,
+        "target_max_percent": 80.0,
+        "due_day": 10,
+        "is_primary": true
+      }
     ]
   }
   ```
@@ -191,6 +203,7 @@ Faz *upsert* transacional de `transactions`, `bills` e `budgets` pertencentes ao
     "synced_transactions": 1,
     "synced_bills": 1,
     "synced_budgets": 1,
+    "synced_credit_cards": 1,
     "synced_at": "2026-11-06T20:05:00Z"
   }
   ```
@@ -198,7 +211,7 @@ Faz *upsert* transacional de `transactions`, `bills` e `budgets` pertencentes ao
 ---
 
 ### 2.2 `GET /api/v1/sync/pull`
-Retorna todas as transações ativas (`deleted_at IS NULL`), boletos ativos (`deleted_at IS NULL`) e metas de orçamento do usuário autenticado.
+Retorna todas as transações ativas (`deleted_at IS NULL`), boletos ativos (`deleted_at IS NULL`), cartões de crédito ativos (`deleted_at IS NULL`) e metas de orçamento do usuário autenticado.
 
 - **Auth**: `Bearer <JWT>`
 - **Response `200 OK`**:
@@ -206,6 +219,7 @@ Retorna todas as transações ativas (`deleted_at IS NULL`), boletos ativos (`de
   {
     "transactions": [...],
     "bills": [...],
+    "credit_cards": [...],
     "budgets": [...],
     "synced_at": "2026-11-06T20:05:00Z"
   }

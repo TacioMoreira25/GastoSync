@@ -65,6 +65,7 @@
 | `tx_type` | `VARCHAR(20)` | `NOT NULL CHECK (tx_type IN ('income', 'expense'))` | Tipo (`income` ou `expense`) |
 | `category` | `VARCHAR(100)` | `NOT NULL` | Categoria (Despesa nunca pode ser `'Renda'`) |
 | `payment_method` | `VARCHAR(50)` | `NOT NULL DEFAULT 'PIX'` | `PIX`, `Débito`, `Crédito`, `Dinheiro`, `Transferência`, `Boleto` |
+| `credit_card_uuid` | `UUID` | `NULL` | `client_uuid` do cartão utilizado quando `payment_method = 'Crédito'` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Timestamp de criação |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Timestamp da última edição |
 | `deleted_at` | `TIMESTAMPTZ` | `NULL` | Timestamp de exclusão lógica (Soft Delete) |
@@ -90,6 +91,8 @@
 | `category` | `VARCHAR(100)` | `NOT NULL` | Categoria orçamentária associada |
 | `barcode` | `VARCHAR(255)` | `NOT NULL DEFAULT ''` | Linha digitável ou código PIX Copia e Cola |
 | `is_recurring` | `BOOLEAN` | `NOT NULL DEFAULT FALSE` | Indica se o boleto repete mensalmente |
+| `is_credit_card_charge` | `BOOLEAN` | `NOT NULL DEFAULT FALSE` | Se `TRUE`, desconta no cartão (incluso na fatura): notifica 2x/dia e aloca na categoria, mas não soma duplicado no total de boletos a pagar nem no saldo líquido |
+| `credit_card_uuid` | `UUID` | `NULL` | `client_uuid` do cartão ao qual a assinatura/fatura está vinculada |
 | `status` | `VARCHAR(20)` | `NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'overdue'))` | Estado atual do boleto |
 | `paid_at` | `TIMESTAMPTZ` | `NULL` | Data/hora em que foi dada baixa |
 | `linked_tx_uuid` | `UUID` | `NULL` | `client_uuid` da transação gerada ao pagar o boleto |
@@ -115,6 +118,29 @@
 | `month` | `INT` | `NOT NULL CHECK (month BETWEEN 1 AND 12)` | Mês de referência (`1..12`) |
 | `year` | `INT` | `NOT NULL CHECK (year >= 2020)` | Ano de referência (`>= 2020`) |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Última atualização |
+
+---
+
+### 1.7 Tabela `credit_cards` (Gestão de Limite e Relacionamento Bancário)
+
+| Coluna | Tipo | Constraints | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGSERIAL` | `PRIMARY KEY` | ID interno no servidor |
+| `user_id` | `UUID` | `NOT NULL REFERENCES users(id) ON DELETE CASCADE` | Proprietário do cartão |
+| `client_uuid` | `UUID` | `NOT NULL DEFAULT gen_random_uuid()` | Identificador único universal gerado pelo cliente |
+| `name` | `VARCHAR(100)` | `NOT NULL` | Apelido do cartão (ex: `Cartão Principal`, `Cartão Secundário`) |
+| `limit_amount` | `NUMERIC(14, 2)` | `NOT NULL CHECK (limit_amount > 0)` | Limite total do cartão (ex: `1500.00`) |
+| `target_min_percent` | `NUMERIC(5, 2)` | `NOT NULL DEFAULT 50.00` | Piso da faixa ideal de uso (ex: `50%` = R$ 750) |
+| `target_max_percent` | `NUMERIC(5, 2)` | `NOT NULL DEFAULT 80.00` | Teto saudável de uso para bom relacionamento (ex: `80%` = R$ 1.200) |
+| `due_day` | `INT` | `NOT NULL DEFAULT 10 CHECK (due_day BETWEEN 1 AND 31)` | Dia de vencimento da fatura |
+| `is_primary` | `BOOLEAN` | `NOT NULL DEFAULT FALSE` | Define se é o cartão principal do usuário |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Data de criação |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Data da última atualização |
+| `deleted_at` | `TIMESTAMPTZ` | `NULL` | Exclusão lógica (Soft Delete) |
+
+- **Constraints & Índices**:
+  - `UNIQUE (user_id, client_uuid)`
+  - `CREATE INDEX idx_credit_cards_user ON credit_cards(user_id, is_primary DESC) WHERE deleted_at IS NULL;`
 
 ---
 
@@ -144,6 +170,7 @@
 - `category`: `TextColumn`
 - `barcode`: `TextColumn` (default `''`)
 - `isRecurring`: `BoolColumn` (default `false`)
+- `isCreditCardCharge`: `BoolColumn` (default `false` — cobrança no cartão já inclusa na fatura mensal)
 - `status`: `TextColumn` (`'pending'` | `'paid'` | `'overdue'`, default `'pending'`)
 - `paidAt`: `DateTimeColumn` (`nullable`)
 - `linkedTransactionId`: `IntColumn` (`nullable`)
@@ -152,7 +179,22 @@
 - `updatedAt`: `DateTimeColumn` (`nullable`)
 - `deletedAt`: `DateTimeColumn` (`nullable`)
 
-### 2.3 Isolamento Multi-Conta em `LocalBudgets`, `LocalMetrics` e `LocalAgentInsights`
+### 2.3 `LocalCreditCards`
+- `id`: `IntColumn` (`autoIncrement`)
+- `clientUuid`: `TextColumn` (UUID v4 único)
+- `userEmail`: `TextColumn` (e-mail da conta proprietária em minúsculas)
+- `name`: `TextColumn` (`min: 1, max: 100` — ex: `'Cartão Principal'`, `'Cartão Secundário'`)
+- `limitAmount`: `RealColumn` (`> 0` — ex: `1500.0`)
+- `targetMinPercent`: `RealColumn` (default `50.0` — piso ideal de uso, ex: 50%)
+- `targetMaxPercent`: `RealColumn` (default `80.0` — teto saudável de uso, ex: 80%)
+- `dueDay`: `IntColumn` (default `10`, `1..31`)
+- `isPrimary`: `BoolColumn` (default `false`)
+- `isSynced`: `BoolColumn` (default `false`)
+- `updatedAt`: `DateTimeColumn` (`nullable`)
+- `deletedAt`: `DateTimeColumn` (`nullable`)
+*(Nota: `LocalTransactions` e `LocalBills` também incluem `creditCardUuid` nullable para vincular compras no crédito e assinaturas recorrentes ao respectivo cartão).*
+
+### 2.4 Isolamento Multi-Conta em `LocalBudgets`, `LocalMetrics` e `LocalAgentInsights`
 - Adição da coluna `userEmail` (`TextColumn` com default `'marcos.pereira@gastosync.local'`) nas três tabelas para que toda consulta e stream filtre pela conta autenticada atual.
 
 ---

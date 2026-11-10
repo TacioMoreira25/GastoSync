@@ -36,9 +36,9 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 **⚠️ CRITICAL**: Nenhuma User Story deve ser iniciada antes da conclusão desta fase
 
-- [ ] T003 Update PostgreSQL schema migrations in `gastosync_api/internal/database/postgres.go` to migrate monetary columns to `NUMERIC(14, 2)` (`monthly_income`, `amount`, `limit_amount`), add `email_verified BOOLEAN NOT NULL DEFAULT TRUE`, `email_verified_at TIMESTAMPTZ`, `reminder_time_1 VARCHAR(5) NOT NULL DEFAULT '09:00'`, `reminder_time_2 VARCHAR(5) NOT NULL DEFAULT '18:00'`, `email_bill_notifications BOOLEAN NOT NULL DEFAULT TRUE` to `users`, add `client_uuid UUID` and `deleted_at TIMESTAMPTZ` with `UNIQUE (user_id, client_uuid)` to `transactions`, create table `email_verification_tokens (email VARCHAR(255) PRIMARY KEY, code_hash VARCHAR(128) NOT NULL, expires_at TIMESTAMPTZ NOT NULL, attempts INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`, remove hard FK on `password_reset_tokens.email`, and create table `bills` with `status IN ('pending', 'paid', 'overdue')`, `amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0)`, `UNIQUE (user_id, client_uuid)`, and composite index `idx_bills_user_due ON bills(user_id, status, due_date ASC)`
-- [ ] T004 [P] Update Go domain structs and DTOs in `gastosync_api/internal/models/models.go` adding `EmailVerified`, `ReminderTime1`, `ReminderTime2`, `EmailBillNotifications` to `User`, adding `VerifyEmailRequest`, `ResendVerificationRequest`, `UpdateProfileRequest`, `RegisterResponse`, adding `ClientUUID` and `DeletedAt` to `TransactionDTO`, creating `BillDTO`, and adding `Bills []BillDTO` / `SyncedBills int` to `SyncPushRequest`, `SyncPushResponse`, and `SyncPullResponse`
-- [ ] T005 Upgrade Drift database to `schemaVersion = 3` in `gastosync_app/lib/core/database/app_database.dart` and `gastosync_app/lib/core/database/app_database.g.dart` adding `clientUuid`, `paymentMethod` (`default 'PIX'`), `updatedAt`, and `deletedAt` to `LocalTransactions`, adding `userEmail` isolation column to `LocalBudgets`, `LocalMetrics`, and `LocalAgentInsights`, and creating table `LocalBills` (`id`, `clientUuid`, `userEmail`, `description` max 255 chars, `amount > 0`, `dueDate`, `category`, `barcode`, `isRecurring`, `status` in `['pending', 'paid', 'overdue']`, `paidAt`, `linkedTransactionId`, `linkedTxUuid`, `isSynced`, `updatedAt`, `deletedAt`)
+- [ ] T003 Update PostgreSQL schema migrations in `gastosync_api/internal/database/postgres.go` to migrate monetary columns to `NUMERIC(14, 2)` (`monthly_income`, `amount`, `limit_amount`), add `email_verified BOOLEAN NOT NULL DEFAULT TRUE`, `email_verified_at TIMESTAMPTZ`, `reminder_time_1 VARCHAR(5) NOT NULL DEFAULT '09:00'`, `reminder_time_2 VARCHAR(5) NOT NULL DEFAULT '18:00'`, `email_bill_notifications BOOLEAN NOT NULL DEFAULT TRUE` to `users`, add `client_uuid UUID`, `credit_card_uuid UUID`, and `deleted_at TIMESTAMPTZ` with `UNIQUE (user_id, client_uuid)` to `transactions`, create table `email_verification_tokens (email VARCHAR(255) PRIMARY KEY, code_hash VARCHAR(128) NOT NULL, expires_at TIMESTAMPTZ NOT NULL, attempts INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`, remove hard FK on `password_reset_tokens.email`, create table `bills` with `is_credit_card_charge BOOLEAN NOT NULL DEFAULT FALSE`, `credit_card_uuid UUID`, `status IN ('pending', 'paid', 'overdue')`, `amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0)`, `UNIQUE (user_id, client_uuid)`, and composite index `idx_bills_user_due ON bills(user_id, status, due_date ASC)`, and create table `credit_cards` (`name`, `limit_amount NUMERIC(14,2)`, `target_min_percent NUMERIC(5,2) DEFAULT 50`, `target_max_percent NUMERIC(5,2) DEFAULT 80`, `due_day INT`, `is_primary BOOLEAN`)
+- [ ] T004 [P] Update Go domain structs and DTOs in `gastosync_api/internal/models/models.go` adding `EmailVerified`, `ReminderTime1`, `ReminderTime2`, `EmailBillNotifications` to `User`, adding `VerifyEmailRequest`, `ResendVerificationRequest`, `UpdateProfileRequest`, `RegisterResponse`, adding `ClientUUID`, `CreditCardUUID`, and `DeletedAt` to `TransactionDTO`, creating `BillDTO` (including `IsCreditCardCharge bool` and `CreditCardUUID *string`), creating `CreditCardDTO`, and adding `Bills []BillDTO` + `CreditCards []CreditCardDTO` to `SyncPushRequest`, `SyncPushResponse`, and `SyncPullResponse`
+- [ ] T005 Upgrade Drift database to `schemaVersion = 3` in `gastosync_app/lib/core/database/app_database.dart` and `gastosync_app/lib/core/database/app_database.g.dart` adding `clientUuid`, `paymentMethod` (`default 'PIX'`), `creditCardUuid`, `updatedAt`, and `deletedAt` to `LocalTransactions`, adding `userEmail` isolation column to `LocalBudgets`, `LocalMetrics`, and `LocalAgentInsights`, creating table `LocalBills` (`id`, `clientUuid`, `userEmail`, `description` max 255 chars, `amount > 0`, `dueDate`, `category`, `barcode`, `isRecurring`, `isCreditCardCharge`, `creditCardUuid`, `status` in `['pending', 'paid', 'overdue']`, `paidAt`, `linkedTransactionId`, `linkedTxUuid`, `isSynced`, `updatedAt`, `deletedAt`), and creating table `LocalCreditCards` (`id`, `clientUuid`, `userEmail`, `name`, `limitAmount`, `targetMinPercent` default 50.0, `targetMaxPercent` default 80.0, `dueDay` default 10, `isPrimary`, `isSynced`, `updatedAt`, `deletedAt`)
 
 **Checkpoint**: Schemas PostgreSQL e SQLite v3 prontos — implementação das User Stories liberada.
 
@@ -71,11 +71,11 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ### Implementation for User Story 2
 
-- [ ] T012 [P] [US2] Create `Bill` domain model and `BillStatus` enum (`pending`, `paid`, `overdue`) with validation rules (`amount > 0`, `description` 1..255 chars), due-date helpers (`daysUntilDue`, `isDueToday`, `isOverdue`, `isDueSoon`), and next-month recurrence calculation (handling day 28/29/30/31 clamping) in `gastosync_app/lib/features/transactions/domain/models/bill.dart`
-- [ ] T013 [US2] Implement `LocalBills` DAO operations (`watchAllBills`, `insertBill`, `updateBill`, `deleteBillById`, and transactional `payBillAndCreateTransaction` that marks bill as `'paid'`, inserts linked `LocalTransactions` with `paymentMethod = 'Boleto'`, and schedules next month's bill if `isRecurring == true`) in `gastosync_app/lib/core/database/app_database.dart`
-- [ ] T014 [US2] Extend `TransactionsController` and Riverpod stream providers (`watchBillsProvider`, `pendingBillsCountProvider`) in `gastosync_app/lib/features/transactions/presentation/controllers/transactions_controller.dart` to support creating, editing, paying, and deleting bills
-- [ ] T015 [US2] Update `ManualTransactionFormModal` in `gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart` to include the 3rd tab `Boleto / Conta` with fields for Data de Vencimento (`dueDate`), Linha Digitável / PIX Copia e Cola (`barcode`), and switch `Repetir mensalmente (Recorrente)` (`isRecurring`)
-- [ ] T016 [US2] Update `TransactionsScreen` in `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart` with a segmented view toggle (`Lançamentos` | `Boletos a Pagar`), summary cards for pending/overdue bills, copy-barcode action (`Clipboard.setData`), and 1-tap `Dar Baixa / Pagar` button
+- [ ] T012 [P] [US2] Create `Bill` domain model and `BillStatus` enum (`pending`, `paid`, `overdue`) with `isCreditCardCharge` flag, validation rules (`amount > 0`, `description` 1..255 chars), due-date helpers (`daysUntilDue`, `isDueToday`, `isOverdue`, `isDueSoon`), and next-month recurrence calculation (handling day 28/29/30/31 clamping) in `gastosync_app/lib/features/transactions/domain/models/bill.dart`
+- [ ] T013 [US2] Implement `LocalBills` DAO operations (`watchAllBills`, `insertBill`, `updateBill`, `deleteBillById`, and transactional `payBillAndCreateTransaction` that marks bill as `'paid'`, only inserts a cash-outflow `LocalTransactions` when `isCreditCardCharge == false` so credit-card-embedded charges do not double-subtract from net balance, and schedules next month's bill if `isRecurring == true`) in `gastosync_app/lib/core/database/app_database.dart`
+- [ ] T014 [US2] Extend `TransactionsController` and Riverpod stream providers (`watchBillsProvider`, `pendingBillsCountProvider`, and category spending aggregation in `PlanningScreen` / `GastoSyncNotificationsModal` so `isCreditCardCharge` items allocate their amount to their target `category` while deducting from generic credit card invoice totals) in `gastosync_app/lib/features/transactions/presentation/controllers/transactions_controller.dart`
+- [ ] T015 [US2] Update `ManualTransactionFormModal` in `gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart` to include the 3rd tab `Boleto / Conta` with fields for Data de Vencimento (`dueDate`), Linha Digitável / PIX Copia e Cola (`barcode`), switch `Repetir mensalmente (Recorrente)` (`isRecurring`), and switch `Desconta no Cartão (Incluso na Fatura)` (`isCreditCardCharge`)
+- [ ] T016 [US2] Update `TransactionsScreen` in `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart` with a segmented view toggle (`Lançamentos` | `Boletos a Pagar`), summary cards separating `Total Real a Pagar` (`!isCreditCardCharge`) from `Lembretes no Cartão (Inclusos na Fatura)` (`isCreditCardCharge`), copy-barcode action (`Clipboard.setData`), and 1-tap `Dar Baixa / Pagar` (`Confirmar no Cartão`) button
 - [ ] T017 [P] [US2] Add a compact `Próximos Boletos & Vencimentos` summary card on `DashboardScreen` in `gastosync_app/lib/features/dashboard/presentation/screens/dashboard_screen.dart` with quick navigation to the bills view
 
 **Checkpoint**: User Stories 1 e 2 concluídas e testáveis de forma independente.
@@ -118,26 +118,41 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ---
 
-## Phase 7: User Story 5 - Exportação de Relatório Financeiro em CSV (Priority: P2)
+## Phase 7: User Story 5 - Gestão de Cartões de Crédito (Principal e Secundário) e Teto Saudável de Relacionamento Bancário (Priority: P1)
 
-**Goal**: Permitir exportar transações e boletos da conta ativa em formato CSV padronizado diretamente pela tela de Transações ou pela aba `Mais`.
+**Goal**: Permitir cadastrar Cartão Principal e Cartões Secundários (nome, limite ex: R$ 1.500, faixa saudável de relacionamento bancário ex: 50% a 80% / R$ 750 a R$ 1.200, dia de vencimento), vincular compras no Crédito (ex: Mercado) e cobranças fixas no cartão (ex: Academia) ao cartão escolhido, e visualizar o termômetro de uso do limite em `Planejamento > Cartões & Limite` e no `Dashboard`.
 
-**Independent Test**: Clicar em "Exportar CSV" na tela de Transações ou na aba `Mais` e verificar a geração e exibição/cópia/download do relatório CSV contendo todas as movimentações e boletos do usuário.
+**Independent Test**: Cadastrar "Cartão Principal" (limite R$ 1.500, faixa ideal 50%–80%) e "Cartão Secundário", vincular uma assinatura fixa (Academia R$ 120) e uma compra de Mercado no crédito (R$ 680) ao Cartão Principal, e verificar em `Planejamento > Cartões & Limite` a separação Fixas (R$ 120) + Compras/Mercado (R$ 680) = R$ 800 (53,3%) e a margem saudável restante de R$ 400 até atingir 80% (R$ 1.200).
 
 ### Implementation for User Story 5
 
-- [ ] T028 [P] [US5] Create `CsvExportService` in `gastosync_app/lib/core/services/csv_export_service.dart` formatting `Transaction` and `Bill` records into RFC-4180 CSV with UTF-8 BOM and columns (`ID`, `Tipo`, `Descrição`, `Categoria`, `Forma de Pagamento`, `Status`, `Data / Vencimento`, `Valor (R$)`)
-- [ ] T029 [US5] Wire the CSV export modal/download action in `TransactionsScreen` (`gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`) and `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`)
+- [ ] T028 [P] [US5] Create `CreditCard` and `CreditCardUsageSummary` domain models in `gastosync_app/lib/features/planning/domain/models/credit_card_model.dart` calculating `fixedSubscriptionsAmount`, `variablePurchasesAmount`, `totalUsedAmount`, `utilizationPercent`, `healthyMinAmount` (e.g. 50%), `healthyMaxAmount` (e.g. 80%), `remainingHealthyMargin`, and `isAboveHealthyCeiling`
+- [ ] T029 [US5] Implement `LocalCreditCards` DAO methods (`watchAllCreditCards`, `upsertCreditCard`, `deleteCreditCard`, and default seed for `Cartão Principal` with R$ 1.500 limit and 50%–80% target range) in `gastosync_app/lib/core/database/app_database.dart`
+- [ ] T030 [US5] Add credit card selector chip/dropdown in `ManualTransactionFormModal` (`gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart`) whenever `paymentMethod == 'Crédito'` or `isCreditCardCharge == true`
+- [ ] T031 [US5] Add `Cartões & Limite` view/section in `PlanningScreen` (`gastosync_app/lib/features/planning/presentation/screens/planning_screen.dart`), summary indicator on `DashboardScreen`, and alert in `GastoSyncNotificationsModal` when a card exceeds its healthy utilization ceiling (`targetMaxPercent`)
 
 ---
 
-## Phase 8: Polish, Regression Testing & Cloudflare Security Audit
+## Phase 8: User Story 6 - Exportação de Relatório Financeiro em CSV (Priority: P2)
+
+**Goal**: Permitir exportar transações, boletos e resumo de cartões da conta ativa em formato CSV padronizado diretamente pela tela de Transações ou pela aba `Mais`.
+
+**Independent Test**: Clicar em "Exportar CSV" na tela de Transações ou na aba `Mais` e verificar a geração e exibição/cópia/download do relatório CSV contendo todas as movimentações e boletos do usuário.
+
+### Implementation for User Story 6
+
+- [ ] T032 [P] [US6] Create `CsvExportService` in `gastosync_app/lib/core/services/csv_export_service.dart` formatting `Transaction`, `Bill`, and `CreditCard` records into RFC-4180 CSV with UTF-8 BOM
+- [ ] T033 [US6] Wire the CSV export modal/download action in `TransactionsScreen` (`gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`) and `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`)
+
+---
+
+## Phase 9: Polish, Regression Testing & Cloudflare Security Audit
 
 **Purpose**: Testes automatizados de ponta a ponta e execução da auditoria de segurança em 6 fases com a skill `cloudflare/security-audit-skill`
 
-- [ ] T030 [P] Write comprehensive Flutter unit and widget tests for `LocalBills`, recurrence, 2x/day notifications, `paymentMethod` persistence, and CSV export in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
-- [ ] T031 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/` and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
-- [ ] T032 Execute the 6-phase security audit workflow using `.agents/skills/security-audit/SKILL.md` across `gastosync_api`, `gastosync_app`, and `gastosync_agent`, remediate any verified findings, and generate `.specs/002-pro-security-db-boletos/security-audit-report.md`
+- [ ] T034 [P] Write comprehensive Flutter unit and widget tests for `LocalBills`, `LocalCreditCards` (healthy 50%–80% utilization math, Fixed vs Variable breakdown), recurrence, 2x/day notifications, `paymentMethod` persistence, and CSV export in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
+- [ ] T035 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/` and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
+- [ ] T036 Execute the 6-phase security audit workflow using `.agents/skills/security-audit/SKILL.md` across `gastosync_api`, `gastosync_app`, and `gastosync_agent`, remediate any verified findings, and generate `.specs/002-pro-security-db-boletos/security-audit-report.md`
 
 ---
 

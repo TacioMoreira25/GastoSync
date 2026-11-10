@@ -40,6 +40,7 @@ Como usuário que possui compromissos financeiros futuros (contas de consumo, me
 1. **Given** que o usuário abre o modal de novo lançamento (`+`), **When** seleciona a opção "Boleto / Conta" e preenche valor, descrição, categoria, data de vencimento e opcionalmente a linha digitável e a flag de recorrência mensal, **Then** o boleto é salvo com status "Pendente" sem descontar do saldo líquido imediato até que seja pago.
 2. **Given** que o usuário acessa a tela de Transações na sub-aba "Boletos a Pagar", **When** visualiza a lista de boletos, **Then** os boletos são apresentados ordenados por data de vencimento com indicadores visuais claros ("Vence hoje", "Vencido", "A vencer", "Pago"), resumo de valores pendentes e botão para copiar a linha digitável/PIX em um toque.
 3. **Given** um boleto com status "Pendente" ou "Vencido", **When** o usuário clica em "Dar Baixa / Pagar", **Then** o boleto passa para o status "Pago" com registro da data de pagamento, uma despesa correspondente com forma de pagamento "Boleto" é inserida automaticamente no histórico de transações realizadas e, se o boleto for recorrente mensal, um novo boleto pendente é criado para o mesmo dia do mês subsequente.
+4. **Given** uma despesa recorrente cobrada diretamente no cartão de crédito (ex.: "Academia" na categoria "Saúde") que já compõe o valor da Fatura Mensal do Cartão, **When** o usuário cadastra esse item marcando a opção "Desconta no Cartão (Incluso na Fatura)", **Then** o sistema envia os 2 lembretes diários na data do desconto (para liberação de limite), contabiliza o valor na categoria específica ("Saúde") nos gráficos e metas de orçamento (abatendo do valor genérico da fatura), mas NÃO soma esse valor em duplicidade no "Total Final a Pagar" de boletos nem desconta duas vezes do Saldo Disponível.
 
 ---
 
@@ -76,7 +77,27 @@ Como usuário que acessa o GastoSync em múltiplos dispositivos (celular e compu
 
 ---
 
-### User Story 5 - Exportação de Relatório Financeiro em CSV (Priority: P2)
+### User Story 5 - Gestão de Cartões de Crédito (Principal e Secundário) e Teto Saudável de Relacionamento Bancário (Priority: P1)
+
+Como usuário que utiliza cartão de crédito principal e secundário e deseja manter um excelente relacionamento e score com o banco (utilizando, por exemplo, entre 50% e 80% de um limite de R$ 1.500,00, ou seja, entre R$ 750,00 e R$ 1.200,00), quero cadastrar meus cartões (apenas nome, limite, dia de vencimento e faixa ideal de uso, sem dados sensíveis), vincular a eles minhas assinaturas fixas (ex.: academia) e compras do dia a dia no crédito (ex.: mercado), e acompanhar em "Planejamento > Cartões & Limite" e no Dashboard quanto já consumi, quanto falta para atingir meu teto saudável de 70%–80% e quanto resta do limite total.
+
+**Why this priority**: Permite gerenciar não apenas entradas e saídas à vista, mas também o uso estratégico do crédito e o relacionamento bancário, separando claramente gastos fixos de cartão (assinaturas) e gastos variáveis recorrentes (mercado) dentro da meta saudável do limite.
+
+**Independent Test**: Pode ser testado cadastrando um "Cartão Principal" com limite de R$ 1.500,00 e meta saudável de 50% a 80% (R$ 750 a R$ 1.200) e um "Cartão Secundário", lançando uma assinatura fixa no cartão (Academia R$ 120) e uma compra de Mercado no crédito (R$ 680) vinculadas ao Cartão Principal, e conferindo na aba "Planejamento > Cartões & Limite" que o uso total mostra R$ 800,00 (53,3%, dentro da faixa ideal), decompondo Fixas (R$ 120) + Compras/Mercado (R$ 680) e exibindo R$ 400,00 de margem restante até o teto saudável de 80% (R$ 1.200,00).
+
+**Acceptance Scenarios**:
+
+1. **Given** que o usuário acessa a aba "Planejamento" na seção "Cartões & Limite", **When** cadastra um cartão informando nome (ex.: "Nubank Principal" ou "Inter Secundário"), limite total (ex.: R$ 1.500,00), faixa ideal de uso (mínimo 50% e máximo saudável 80%), dia de vencimento e se é o cartão principal, **Then** o cartão é salvo localmente e sincronizado na nuvem sem exigir número de cartão, CVV ou dados bancários sensíveis.
+2. **Given** que o usuário possui cartões cadastrados, **When** registra uma despesa com forma de pagamento "Crédito" ou um boleto/assinatura marcado como "Desconta no Cartão (Incluso na Fatura)", **Then** pode selecionar a qual cartão (Principal ou Secundário) aquele gasto pertence.
+3. **Given** movimentações e assinaturas vinculadas a um cartão no mês vigente, **When** o usuário visualiza o card do cartão em "Planejamento > Cartões & Limite" ou o resumo no Dashboard, **Then** o sistema apresenta:
+   - Valor gasto em **Fixas / Assinaturas** (ex.: Academia, Streaming);
+   - Valor gasto em **Compras / Consumo do Mês** (ex.: Mercado, Farmácia);
+   - **Uso Total Atual (R$ e %)** comparado à **Faixa Saudável (ex.: 50%–80% / R$ 750 a R$ 1.200)** e ao **Limite Total (R$ 1.500)**;
+   - **Margem Saudável Disponível** (quanto ainda pode gastar sem passar dos 80%) e alerta na Central de Notificações caso ultrapasse o teto saudável configurado.
+
+---
+
+### User Story 6 - Exportação de Relatório Financeiro em CSV (Priority: P2)
 
 Como usuário que deseja analisar minhas finanças em planilhas externas ou guardar comprovantes mensais de movimentação, quero exportar minhas transações e boletos em formato CSV padronizado diretamente pela tela de Transações ou pela aba "Mais".
 
@@ -111,15 +132,18 @@ Como usuário que deseja analisar minhas finanças em planilhas externas ou guar
 - **FR-007**: A modelagem de banco de dados na nuvem DEVE manter uma única tabela relacional por entidade (`users`, `transactions`, `bills`, `budgets`) com chave estrangeira obrigatória para o usuário proprietário (`ON DELETE CASCADE`) e índices compostos iniciados pelo identificador do usuário.
 - **FR-008**: A entidade de Transações local e em nuvem DEVE armazenar o identificador único universal do cliente (`client_uuid`), a forma de pagamento selecionada (`PIX`, `Débito`, `Crédito`, `Dinheiro`, `Transferência`, `Boleto`), a data de atualização (`updated_at`) e a marcação de exclusão lógica (`deleted_at`).
 - **FR-009**: Todas as tabelas locais do dispositivo (Transações, Boletos, Orçamentos, Métricas e Insights de IA) DEVEM isolar os registros pelo endereço de e-mail da conta ativa.
-- **FR-010**: O sistema DEVE possuir uma entidade dedicada de Boletos e Contas a Pagar (`bills` / `LocalBills`) separada das transações liquidadas, contendo descrição, valor, data de vencimento, categoria, linha digitável/código PIX opcional, indicador de recorrência mensal, status (`pending`, `paid`, `overdue`), data de pagamento e vínculo com a transação gerada.
-- **FR-011**: Ao marcar um boleto como pago ("Dar Baixa"), o sistema DEVE atualizar o status do boleto para pago, inserir automaticamente uma despesa liquidada correspondente na tabela de transações com forma de pagamento "Boleto" e, quando o boleto for marcado como recorrente, criar automaticamente o boleto pendente do mês seguinte.
+- **FR-010**: O sistema DEVE possuir uma entidade dedicada de Boletos e Contas a Pagar (`bills` / `LocalBills`) separada das transações liquidadas, contendo descrição, valor, data de vencimento, categoria, linha digitável/código PIX opcional, indicador de recorrência mensal (`is_recurring`), indicador de cobrança embutida na fatura do cartão (`is_credit_card_charge`), status (`pending`, `paid`, `overdue`), data de pagamento e vínculo com a transação gerada.
+- **FR-011**: Ao marcar um boleto convencional (`is_credit_card_charge = false`) como pago ("Dar Baixa"), o sistema DEVE atualizar o status do boleto para pago, inserir automaticamente uma despesa liquidada correspondente na tabela de transações com forma de pagamento "Boleto" e, quando o boleto for marcado como recorrente, criar automaticamente o boleto pendente do mês seguinte.
+- **FR-011b**: Para itens marcados como "Desconta no Cartão / Incluso na Fatura" (`is_credit_card_charge = true`), o sistema DEVE: (a) disparar os 2 lembretes diários na data de cobrança para que o usuário libere o limite do cartão; (b) NÃO somar o valor em duplicidade no "Total Final a Pagar" de boletos nem reduzir o Saldo Disponível duas vezes ao confirmar o desconto; e (c) alocar o valor na categoria vinculada (ex.: `Saúde`, `Lazer`) para fins de gráficos e metas de orçamento em `Planejamento`, deduzindo-o proporcionalmente do lançamento geral da Fatura do Cartão para manter a soma total inalterada.
 - **FR-012**: A tela de Transações DEVE oferecer alternância clara entre "Lançamentos" (receitas e despesas realizadas) e "Boletos a Pagar" (obrigações pendentes, vencidas e pagas), além de exibir um resumo dos próximos boletos no Dashboard principal.
 - **FR-013**: O modal de lançamento (`+`) DEVE permitir tanto o cadastro quanto a edição de Despesas, Receitas e Boletos/Contas, incluindo botão de cópia rápida para a linha digitável ou código PIX de boletos.
 - **FR-014**: O sistema DEVE executar verificação e disparo de lembretes de boletos duas vezes ao dia (nos dois horários configurados pelo usuário, por padrão `09:00` e `18:00`) para boletos que vencem em até 3 dias, vencem na data atual ou estão vencidos.
 - **FR-015**: Os lembretes de boletos DEVEM ser apresentados na Central de Notificações interna do aplicativo, em notificações locais do dispositivo/navegador e, quando habilitado pelo usuário, enviados por e-mail pelo servidor.
 - **FR-016**: O sistema DEVE permitir ao usuário atualizar e sincronizar com a nuvem suas preferências de perfil financeiro (nome, renda base mensal, meta percentual de poupança, os dois horários diários de lembrete de boletos e a preferência de alerta por e-mail).
-- **FR-017**: O sistema DEVE permitir a exportação das transações e boletos do usuário em formato CSV padronizado.
+- **FR-017**: O sistema DEVE permitir a exportação das transações, boletos e resumo de cartões do usuário em formato CSV padronizado.
 - **FR-018**: Ao término da implementação, todo o código-fonte DEVE passar por auditoria estruturada de segurança utilizando a skill `security-audit` da Cloudflare instalada no projeto.
+- **FR-019**: O sistema DEVE possuir uma entidade de Cartões de Crédito (`credit_cards` / `LocalCreditCards`) contendo exclusivamente dados não sensíveis de gestão: nome do cartão, limite total, percentual mínimo e máximo da faixa saudável de relacionamento bancário (padrão `50%` a `80%`), dia de vencimento e flag de cartão principal (`is_primary`).
+- **FR-020**: O sistema DEVE permitir vincular transações na modalidade `Crédito` e cobranças recorrentes no cartão (`is_credit_card_charge = true`) a um cartão cadastrado (`credit_card_uuid`), exibindo na aba `Planejamento` (seção `Cartões & Limite`) e no `Dashboard` o termômetro de utilização do limite dividido entre **Fixas/Assinaturas** e **Compras/Mercado**, a margem disponível até o teto saudável (70%–80%) e alertas quando o uso exceder o teto saudável.
 
 ### Key Entities
 
@@ -128,6 +152,7 @@ Como usuário que deseja analisar minhas finanças em planilhas externas ou guar
 - **Transaction**: Movimentação financeira efetivamente realizada (receita ou despesa), contendo identificador universal (`client_uuid`), vínculo com o usuário, descrição, valor decimal exato, data da operação, tipo, categoria, forma de pagamento, status de sincronização e controle de atualização/exclusão lógica.
 - **Bill (Boleto / Conta a Pagar)**: Obrigação financeira com vencimento programado, contendo identificador universal (`client_uuid`), vínculo com o usuário, descrição, valor decimal exato, data de vencimento, categoria, linha digitável/PIX copia-e-cola, flag de recorrência mensal, status (`pending`, `paid`, `overdue`), data de pagamento, referência à transação gerada na baixa e registro do último lembrete enviado.
 - **Budget**: Meta de limite mensal de gastos por categoria pertencente ao usuário.
+- **CreditCard**: Cartão de crédito gerenciado pelo usuário (Principal ou Secundário), contendo identificador universal (`client_uuid`), nome/apelido, limite total, faixa percentual de uso saudável para relacionamento bancário (`min_target_percent` padrão 50%, `max_target_percent` padrão 80%), dia de vencimento e flag `is_primary`.
 
 ## Success Criteria *(mandatory)*
 
