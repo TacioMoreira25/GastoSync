@@ -24,3 +24,6 @@ def read_prompt(env_name: str, default: str) -> str:
 CATEGORIZE_MODELS = [s.strip() for s in os.getenv('CATEGORIZE_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b').split(',') if s.strip()]
 OCR_MODELS = [s.strip() for s in os.getenv('OCR_MODELS', 'qwen/qwen3.8-27b').split(',') if s.strip()]
 MAX_IMAGE_BYTES = int(os.getenv('MAX_IMAGE_BYTES', str(5 * 1024 * 1024)))
+MAX_JSON_BODY_BYTES = int(os.getenv('MAX_JSON_BODY_BYTES', str(32 * 1024)))
+RATE_LIMIT_PER_MINUTE = int(os.getenv('RATE_LIMIT_PER_MINUTE', '15'))
+ENABLE_DOCS = os.getenv('ENABLE_DOCS', 'false').strip().lower() in ('1', 'true', 'yes')
