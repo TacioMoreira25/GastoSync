@@ -18,7 +18,8 @@ def categorize_expense(payload: CategorizeRequest, service: ChatbotService = Dep
 @router.post('/ocr', response_model=OCRResponse)
 async def extract_ocr(image: UploadFile = File(...), service: ChatbotService = Depends(get_service)):
     allowed = {'image/jpeg', 'image/png', 'image/webp'}
-    if image.content_type not in allowed:
+    generic_types = {'application/octet-stream', 'image/jpg', None, ''}
+    if image.content_type not in allowed and image.content_type not in generic_types:
         raise HTTPException(status_code=415, detail='Formato não suportado: envie JPEG, PNG ou WebP.')
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -31,9 +32,12 @@ async def extract_ocr(image: UploadFile = File(...), service: ChatbotService = D
     signatures = {'image/jpeg': data.startswith(b'\xff\xd8\xff'),
                   'image/png': data.startswith(b'\x89PNG\r\n\x1a\n'),
                   'image/webp': data[:4] == b'RIFF' and data[8:12] == b'WEBP'}
-    if not signatures[image.content_type]:
+    detected_mime = next((mime for mime, matches in signatures.items() if matches), None)
+    if not detected_mime:
+        raise HTTPException(status_code=400, detail='Conteúdo não corresponde ao formato da imagem.')
+    if image.content_type in allowed and image.content_type != detected_mime:
         raise HTTPException(status_code=400, detail='Conteúdo não corresponde ao formato da imagem.')
     try:
-        return service.ocr(data, image.content_type)
+        return service.ocr(data, detected_mime)
     except AIServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

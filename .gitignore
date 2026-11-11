@@ -77,10 +77,6 @@ build/
 .mypy_cache/
 .ruff_cache/
 .uv/
-system_prompt.txt
-system_prompt_fibo.txt
-system_prompt_categorize.txt
-system_prompt_ocr.txt
 teste.py
 
 # Spec Kit Machine-local state

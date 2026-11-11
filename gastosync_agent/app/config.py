@@ -3,11 +3,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / '.env', override=True)
 
 API_KEY_GROQ = os.getenv('API_KEY_GROQ')
-CLASSIFIER_MODELS = [s.strip() for s in os.getenv('CLASSIFIER_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',') if s.strip()]
-FIBO_MODELS = [s.strip() for s in os.getenv('FIBO_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',') if s.strip()]
+CLASSIFIER_MODELS = [s.strip() for s in os.getenv('CLASSIFIER_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b').split(',') if s.strip()]
+FIBO_MODELS = [s.strip() for s in os.getenv('FIBO_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b').split(',') if s.strip()]
 
 def read_prompt(env_name: str, default: str) -> str:
     path = Path(os.getenv(env_name, default))
@@ -21,6 +21,6 @@ def read_prompt(env_name: str, default: str) -> str:
         raise RuntimeError(f'Prompt vazio: {path}')
     return content
 
-CATEGORIZE_MODELS = [s.strip() for s in os.getenv('CATEGORIZE_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',') if s.strip()]
-OCR_MODELS = [s.strip() for s in os.getenv('OCR_MODELS', 'meta-llama/llama-4-scout-17b-16e-instruct').split(',') if s.strip()]
+CATEGORIZE_MODELS = [s.strip() for s in os.getenv('CATEGORIZE_MODELS', 'openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b').split(',') if s.strip()]
+OCR_MODELS = [s.strip() for s in os.getenv('OCR_MODELS', 'qwen/qwen3.8-27b').split(',') if s.strip()]
 MAX_IMAGE_BYTES = int(os.getenv('MAX_IMAGE_BYTES', str(5 * 1024 * 1024)))
