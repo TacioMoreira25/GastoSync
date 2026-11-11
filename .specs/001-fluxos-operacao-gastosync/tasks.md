@@ -163,6 +163,7 @@
 - [x] T051 Implementar handlers de sincronização bidirecional (`POST /api/v1/sync/push` e `GET /api/v1/sync/pull`) e entrypoint HTTP Fiber (`cmd/api/main.go`) com CORS e rota `/health` em `gastosync_api/`
 - [x] T052 Criar serviço de autenticação (`AuthService`), provedor de sessão Riverpod com armazenamento seguro do JWT e telas de Login/Cadastro responsivas (Mobile e Web) em `gastosync_app/lib/features/auth/`
 - [x] T053 Integrar guard de autenticação no `GoRouter` e sincronização com `gastosync_api` (rotina de push/pull das transações pendentes no Mobile e operação online autenticada na Web, incluindo limpeza segura no Logout) em `gastosync_app/`
+- [x] T054 Implementar verificação de e-mail de conta via código OTP de 6 dígitos (Brevo/SMTP) no cadastro (`POST /api/v1/auth/send-verification` e `POST /api/v1/auth/verify-email`) e selo de conta verificada em `gastosync_api/` e `gastosync_app/`
 
 ---
 

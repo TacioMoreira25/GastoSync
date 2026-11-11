@@ -7,6 +7,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../auth/domain/auth_provider.dart';
+import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../transactions/data/services/cloud_sync_service.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
@@ -176,6 +177,9 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
   }
 
   Widget _buildProfileCard(BuildContext context, UserProfile profile) {
+    final authState = ref.watch(authProvider);
+    final isVerified = authState.isEmailVerified;
+
     return Container(
       key: const Key('more_profile_card'),
       padding: const EdgeInsets.all(20),
@@ -208,39 +212,113 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Container(
-                  key: const Key('more_active_local_account_badge'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: AppTheme.emeraldBadgeDecoration,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: AppTheme.emeraldDeep,
-                          shape: BoxShape.circle,
-                        ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    Container(
+                      key: const Key('more_active_local_account_badge'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
                       ),
-                      const SizedBox(width: 6),
-                      const Flexible(
-                        child: Text(
-                          'Conta local ativa',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: AppTheme.emeraldDeep,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
+                      decoration: AppTheme.emeraldBadgeDecoration,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: AppTheme.emeraldDeep,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Flexible(
+                            child: Text(
+                              'Conta local ativa',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppTheme.emeraldDeep,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        key: const Key('more_email_verification_badge'),
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: isVerified
+                            ? null
+                            : () async {
+                                final messenger =
+                                    ScaffoldMessenger.of(context);
+                                final ok = await EmailVerificationDialog.show(
+                                  context,
+                                  email: profile.email,
+                                  fullName: profile.fullName,
+                                );
+                                if (ok && mounted) {
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'E-mail verificado com sucesso!',
+                                      ),
+                                      backgroundColor: AppTheme.emeraldDeep,
+                                    ),
+                                  );
+                                }
+                              },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: isVerified
+                              ? AppTheme.emeraldBadgeDecoration
+                              : AppTheme.warningBadgeDecoration,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isVerified
+                                    ? Icons.verified_rounded
+                                    : Icons.mark_email_unread_outlined,
+                                size: 13,
+                                color: isVerified
+                                    ? AppTheme.emeraldDeep
+                                    : AppTheme.warningDark,
+                              ),
+                              const SizedBox(width: 5),
+                              Flexible(
+                                child: Text(
+                                  isVerified
+                                      ? 'E-mail verificado'
+                                      : 'Verificar e-mail',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: isVerified
+                                        ? AppTheme.emeraldDeep
+                                        : AppTheme.warningDark,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),

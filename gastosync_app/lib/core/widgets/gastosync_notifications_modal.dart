@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../features/dashboard/domain/services/financial_health_engine.dart';
 import '../../features/dashboard/presentation/controllers/dashboard_controller.dart';
 import '../../features/settings/domain/models/user_profile.dart';
+import '../../features/transactions/domain/models/bill.dart';
 import '../../features/transactions/domain/models/transaction.dart';
 import '../../features/transactions/presentation/controllers/transactions_controller.dart';
 import '../database/app_database.dart';
@@ -162,6 +163,7 @@ final gastoSyncNotificationsProvider =
   final quickState = ref.watch(notificationsControllerProvider);
   final transactions =
       ref.watch(watchTransactionsProvider).value ?? const <Transaction>[];
+  final bills = ref.watch(watchBillsProvider).value ?? const <Bill>[];
   final budgets =
       ref.watch(watchBudgetsProvider).value ?? const <LocalBudget>[];
   final deletedCategories =
@@ -220,16 +222,12 @@ final gastoSyncNotificationsProvider =
     }
   }
 
-  // 2. Alertas de Orçamento Mensal por Categoria
-  final spentByCategory = <String, double>{};
-  for (final tx in transactions) {
-    if (tx.isExpense &&
-        tx.date.year == now.year &&
-        tx.date.month == now.month) {
-      final key = tx.category.trim().toLowerCase();
-      spentByCategory[key] = (spentByCategory[key] ?? 0.0) + tx.amount;
-    }
-  }
+  // 2. Alertas de Orçamento Mensal por Categoria (com realocação de cobranças no cartão - FR-011b / T014)
+  final spentByCategory = calculateAdjustedMonthlySpendingByCategory(
+    transactions: transactions,
+    bills: bills,
+    referenceDate: now,
+  );
 
   for (final budget in budgets) {
     final key = budget.category.trim().toLowerCase();

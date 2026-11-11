@@ -119,15 +119,17 @@ class AuthAccount {
     required this.email,
     required this.salt,
     required this.passwordHash,
+    this.isEmailVerified = false,
   });
 
   final String fullName;
   final String email;
   final String salt;
   final String passwordHash;
+  final bool isEmailVerified;
 }
 
-/// Ticket temporário de recuperação de senha (OTP de 6 dígitos com expiração de 10 min e limite de tentativas)
+/// Ticket temporário de recuperação/verificação por e-mail (OTP de 6 dígitos com expiração de 10 min e limite de tentativas)
 @immutable
 class PasswordResetTicket {
   const PasswordResetTicket({
@@ -189,6 +191,9 @@ class AuthState {
     this.isAuthenticated = false,
     this.currentEmail,
     this.token,
+    this.isEmailVerified = false,
+    this.pendingVerificationEmail,
+    this.pendingVerificationName,
     this.failedAttempts = 0,
     this.lockedUntil,
     this.errorMessage,
@@ -198,6 +203,9 @@ class AuthState {
   final bool isAuthenticated;
   final String? currentEmail;
   final String? token;
+  final bool isEmailVerified;
+  final String? pendingVerificationEmail;
+  final String? pendingVerificationName;
   final int failedAttempts;
   final DateTime? lockedUntil;
   final String? errorMessage;
@@ -206,11 +214,18 @@ class AuthState {
   bool get isLocked =>
       lockedUntil != null && DateTime.now().isBefore(lockedUntil!);
 
+  bool get requiresEmailVerification =>
+      pendingVerificationEmail != null && pendingVerificationEmail!.isNotEmpty;
+
   AuthState copyWith({
     bool? isAuthenticated,
     String? currentEmail,
     String? token,
     bool clearToken = false,
+    bool? isEmailVerified,
+    String? pendingVerificationEmail,
+    String? pendingVerificationName,
+    bool clearPendingVerification = false,
     int? failedAttempts,
     DateTime? lockedUntil,
     bool clearLock = false,
@@ -223,6 +238,13 @@ class AuthState {
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
       currentEmail: currentEmail ?? this.currentEmail,
       token: clearToken ? null : (token ?? this.token),
+      isEmailVerified: isEmailVerified ?? this.isEmailVerified,
+      pendingVerificationEmail: clearPendingVerification
+          ? null
+          : (pendingVerificationEmail ?? this.pendingVerificationEmail),
+      pendingVerificationName: clearPendingVerification
+          ? null
+          : (pendingVerificationName ?? this.pendingVerificationName),
       failedAttempts: failedAttempts ?? this.failedAttempts,
       lockedUntil: clearLock ? null : (lockedUntil ?? this.lockedUntil),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -266,6 +288,8 @@ class AuthNotifier extends Notifier<AuthState> {
   final Map<String, AuthAccount> _accounts = <String, AuthAccount>{};
   final Map<String, PasswordResetTicket> _resetTickets =
       <String, PasswordResetTicket>{};
+  final Map<String, PasswordResetTicket> _verificationTickets =
+      <String, PasswordResetTicket>{};
 
   @override
   AuthState build() {
@@ -283,6 +307,7 @@ class AuthNotifier extends Notifier<AuthState> {
       email: defaultDemoEmail,
       salt: salt,
       passwordHash: hash,
+      isEmailVerified: true,
     );
   }
 
@@ -300,11 +325,13 @@ class AuthNotifier extends Notifier<AuthState> {
         final salt = r['salt'] as String? ?? '';
         final hash = r['password_hash'] as String? ?? '';
         if (email.isNotEmpty && salt.isNotEmpty && hash.isNotEmpty) {
+          final prevVerified = _accounts[email]?.isEmailVerified ?? false;
           _accounts[email] = AuthAccount(
             fullName: fullName,
             email: email,
             salt: salt,
             passwordHash: hash,
+            isEmailVerified: prevVerified,
           );
         }
       }
@@ -480,6 +507,7 @@ class AuthNotifier extends Notifier<AuthState> {
     // 1. Tenta autenticação remota no backend Go (gastosync_api)
     String? jwtToken;
     String finalName = localAccount?.fullName ?? 'Usuário';
+    bool isVerified = localAccount?.isEmailVerified ?? false;
 
     final authService = ref.read(authServiceProvider);
     final remoteRes = await authService.login(
@@ -489,6 +517,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
     if (remoteRes.isSuccess) {
       jwtToken = remoteRes.token;
+      isVerified = remoteRes.emailVerified || isVerified;
       if (remoteRes.name != null && remoteRes.name!.isNotEmpty) {
         finalName = remoteRes.name!;
       }
@@ -501,6 +530,7 @@ class AuthNotifier extends Notifier<AuthState> {
         email: normalizedEmail,
         salt: salt,
         passwordHash: hash,
+        isEmailVerified: isVerified,
       );
       try {
         await ref.read(appDatabaseProvider).saveAuthAccount(
@@ -534,14 +564,43 @@ class AuthNotifier extends Notifier<AuthState> {
         );
       }
       finalName = localAccount.fullName;
+      isVerified = localAccount.isEmailVerified;
+    } else if (remoteRes.requiresVerification ||
+        remoteRes.errorCode == 'EMAIL_NOT_VERIFIED') {
+      // 3. Conta existe na nuvem, mas o e-mail ainda não foi verificado (403 EMAIL_NOT_VERIFIED)
+      if (remoteRes.devPreviewCode != null &&
+          remoteRes.devPreviewCode!.length == 6) {
+        final codeSalt = PasswordHasher.generateSecureSalt();
+        final codeHash =
+            PasswordHasher.hashPassword(remoteRes.devPreviewCode!, codeSalt);
+        _verificationTickets[normalizedEmail] = PasswordResetTicket(
+          email: normalizedEmail,
+          codeSalt: codeSalt,
+          codeHash: codeHash,
+          expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+        );
+      }
+
+      state = state.copyWith(
+        isAuthenticated: false,
+        currentEmail: normalizedEmail,
+        isEmailVerified: false,
+        pendingVerificationEmail: normalizedEmail,
+        pendingVerificationName: localAccount?.fullName,
+        errorMessage: remoteRes.error ??
+            'Confirme o código de 6 dígitos enviado para o seu e-mail antes de entrar.',
+        clearSuccess: true,
+      );
+      return false;
     } else {
-      // 3. Servidor retornou erro específico (ex: credenciais inválidas)
+      // 4. Servidor retornou erro específico (ex: credenciais inválidas)
       if (localAccount != null) {
         final candidateHash =
             PasswordHasher.hashPassword(normalizedPassword, localAccount.salt);
         if (PasswordHasher.constantTimeEquals(
             candidateHash, localAccount.passwordHash)) {
           finalName = localAccount.fullName;
+          isVerified = localAccount.isEmailVerified;
         } else {
           return _registerFailedAttempt(
             remoteRes.error ?? 'Senha incorreta.',
@@ -577,6 +636,7 @@ class AuthNotifier extends Notifier<AuthState> {
       isAuthenticated: true,
       currentEmail: normalizedEmail,
       token: jwtToken,
+      isEmailVerified: isVerified,
       failedAttempts: 0,
       clearLock: true,
       clearError: true,
@@ -625,6 +685,7 @@ class AuthNotifier extends Notifier<AuthState> {
       email: normalizedEmail,
       salt: salt,
       passwordHash: hash,
+      isEmailVerified: false,
     );
     _accounts[normalizedEmail] = newAccount;
 
@@ -650,15 +711,31 @@ class AuthNotifier extends Notifier<AuthState> {
       token = remoteRes.token;
     }
 
+    final otpCode = (remoteRes.devPreviewCode != null &&
+            remoteRes.devPreviewCode!.length == 6)
+        ? remoteRes.devPreviewCode!
+        : _generateSecureOtp6Digits();
+    final codeSalt = PasswordHasher.generateSecureSalt();
+    final codeHash = PasswordHasher.hashPassword(otpCode, codeSalt);
+    _verificationTickets[normalizedEmail] = PasswordResetTicket(
+      email: normalizedEmail,
+      codeSalt: codeSalt,
+      codeHash: codeHash,
+      expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+    );
+
     state = state.copyWith(
       isAuthenticated: false,
       currentEmail: newAccount.email,
       token: token,
+      isEmailVerified: remoteRes.emailVerified,
+      pendingVerificationEmail: normalizedEmail,
+      pendingVerificationName: normalizedName,
       failedAttempts: 0,
       clearLock: true,
       clearError: true,
       successMessage:
-          'Conta criada com sucesso! Digite sua senha para entrar.',
+          'Conta criada! Digite o código de 6 dígitos enviado para o seu e-mail.',
     );
     return true;
   }
@@ -688,6 +765,7 @@ class AuthNotifier extends Notifier<AuthState> {
       email: existing.email,
       salt: newSalt,
       passwordHash: newHash,
+      isEmailVerified: existing.isEmailVerified,
     );
 
     try {
@@ -926,6 +1004,7 @@ class AuthNotifier extends Notifier<AuthState> {
       email: normalizedEmail,
       salt: newSalt,
       passwordHash: newHash,
+      isEmailVerified: true,
     );
 
     try {
@@ -946,6 +1025,7 @@ class AuthNotifier extends Notifier<AuthState> {
     _resetTickets.remove(normalizedEmail);
 
     state = state.copyWith(
+      isEmailVerified: true,
       failedAttempts: 0,
       clearLock: true,
       clearError: true,
@@ -953,6 +1033,196 @@ class AuthNotifier extends Notifier<AuthState> {
           'Senha redefinida com sucesso! Faça login com sua nova senha.',
     );
     return null;
+  }
+
+  /// Dispara ou reenvia um código OTP de 6 dígitos por e-mail (Brevo/SMTP) para verificar a titularidade da conta (`POST /api/v1/auth/resend-verification`)
+  Future<PasswordResetRequestOutcome> resendEmailVerification({
+    required String email,
+    String? fullName,
+  }) async {
+    final emailError = validateEmail(email);
+    if (emailError != null) {
+      return PasswordResetRequestOutcome(
+        isSuccess: false,
+        maskedEmail: email.trim(),
+        errorMessage: emailError,
+      );
+    }
+
+    final normalizedEmail = email.trim().toLowerCase();
+    final existingLocal = _accounts[normalizedEmail];
+    final resolvedName = (fullName != null && fullName.trim().isNotEmpty)
+        ? fullName.trim()
+        : (existingLocal?.fullName ?? 'Usuário GastoSync');
+
+    final authService = ref.read(authServiceProvider);
+    final remoteDispatch = await authService.resendVerificationEmail(
+      email: normalizedEmail,
+      name: resolvedName,
+    );
+
+    if (!remoteDispatch.isOffline && remoteDispatch.error != null) {
+      return PasswordResetRequestOutcome(
+        isSuccess: false,
+        maskedEmail: maskEmail(normalizedEmail),
+        errorMessage: remoteDispatch.error,
+      );
+    }
+
+    final otpCode = (remoteDispatch.devPreviewCode != null &&
+            remoteDispatch.devPreviewCode!.length == 6)
+        ? remoteDispatch.devPreviewCode!
+        : _generateSecureOtp6Digits();
+
+    final codeSalt = PasswordHasher.generateSecureSalt();
+    final codeHash = PasswordHasher.hashPassword(otpCode, codeSalt);
+
+    _verificationTickets[normalizedEmail] = PasswordResetTicket(
+      email: normalizedEmail,
+      codeSalt: codeSalt,
+      codeHash: codeHash,
+      expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+      attempts: 0,
+      isVerified: false,
+    );
+
+    final deliveryMode =
+        (remoteDispatch.isSuccess && remoteDispatch.deliveryMode == 'smtp')
+            ? 'smtp'
+            : 'inbox_preview';
+
+    return PasswordResetRequestOutcome(
+      isSuccess: true,
+      maskedEmail: maskEmail(normalizedEmail),
+      recipientName: resolvedName,
+      previewCode: deliveryMode == 'smtp' ? null : otpCode,
+      deliveryMode: deliveryMode,
+    );
+  }
+
+  /// Alias para solicitação de código OTP de verificação de e-mail
+  Future<PasswordResetRequestOutcome> requestEmailVerification({
+    required String email,
+    String? fullName,
+  }) {
+    return resendEmailVerification(email: email, fullName: fullName);
+  }
+
+  /// Confirma o código OTP de 6 dígitos e marca o e-mail da conta como verificado (`POST /api/v1/auth/verify-email`)
+  Future<String?> verifyEmailRegistration({
+    required String email,
+    required String code,
+    bool authenticateOnSuccess = false,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedCode = code.trim();
+
+    if (normalizedCode.length != 6 || int.tryParse(normalizedCode) == null) {
+      return 'Digite o código numérico de 6 dígitos enviado para seu e-mail.';
+    }
+
+    final ticket = _verificationTickets[normalizedEmail];
+    if (ticket != null && ticket.isExpired) {
+      _verificationTickets.remove(normalizedEmail);
+      return 'O código expirou (validade de 10 minutos). Solicite um novo código.';
+    }
+
+    if (ticket != null && ticket.attempts >= maxFailedAttempts) {
+      _verificationTickets.remove(normalizedEmail);
+      return 'Código invalidado por excesso de tentativas. Solicite um novo código.';
+    }
+
+    // 1. Valida no backend Go (Brevo/SMTP)
+    final remoteVerify = await ref.read(authServiceProvider).verifyEmail(
+          email: normalizedEmail,
+          code: normalizedCode,
+        );
+
+    bool verified = remoteVerify.isSuccess;
+
+    // 2. Fallback local caso esteja offline ou em dev_inbox_preview
+    if (!verified && ticket != null) {
+      final candidateHash =
+          PasswordHasher.hashPassword(normalizedCode, ticket.codeSalt);
+      verified = PasswordHasher.constantTimeEquals(
+        candidateHash,
+        ticket.codeHash,
+      );
+    }
+
+    if (!verified) {
+      if (ticket != null) {
+        final nextAttempts = ticket.attempts + 1;
+        if (nextAttempts >= maxFailedAttempts) {
+          _verificationTickets.remove(normalizedEmail);
+          return 'Código bloqueado após $maxFailedAttempts tentativas incorretas. Solicite um novo código.';
+        }
+        _verificationTickets[normalizedEmail] =
+            ticket.copyWith(attempts: nextAttempts);
+        final remaining = maxFailedAttempts - nextAttempts;
+        return 'Código incorreto ($remaining tentativa(s) restante(s)). Verifique seu e-mail.';
+      }
+      return remoteVerify.error ??
+          'Código incorreto ou expirado. Verifique seu e-mail.';
+    }
+
+    _verificationTickets.remove(normalizedEmail);
+
+    final existing = _accounts[normalizedEmail];
+    final resolvedName = (remoteVerify.name != null &&
+            remoteVerify.name!.trim().isNotEmpty)
+        ? remoteVerify.name!.trim()
+        : (existing?.fullName ??
+            state.pendingVerificationName ??
+            'Usuário');
+
+    if (existing != null) {
+      _accounts[normalizedEmail] = AuthAccount(
+        fullName: resolvedName,
+        email: existing.email,
+        salt: existing.salt,
+        passwordHash: existing.passwordHash,
+        isEmailVerified: true,
+      );
+    }
+
+    final jwtToken = remoteVerify.token ?? state.token;
+    if (authenticateOnSuccess) {
+      ref.read(userProfileProvider.notifier).updateProfile(
+            fullName: resolvedName,
+            email: normalizedEmail,
+          );
+      if (jwtToken != null && jwtToken.isNotEmpty) {
+        await ref.read(cloudSyncServiceProvider).pullFromCloud(
+              jwtToken: jwtToken,
+              userEmail: normalizedEmail,
+            );
+      }
+    }
+
+    state = state.copyWith(
+      isAuthenticated: authenticateOnSuccess ? true : state.isAuthenticated,
+      currentEmail: normalizedEmail,
+      token: jwtToken,
+      isEmailVerified: true,
+      clearPendingVerification: true,
+      clearError: true,
+      successMessage: 'E-mail verificado com sucesso!',
+    );
+    return null;
+  }
+
+  /// Alias compatível para confirmação de e-mail por código OTP
+  Future<String?> confirmEmailVerification({
+    required String email,
+    required String code,
+    bool authenticateOnSuccess = false,
+  }) {
+    return verifyEmailRegistration(
+      email: email,
+      code: code,
+      authenticateOnSuccess: authenticateOnSuccess,
+    );
   }
 
   Future<void> logout() async {

@@ -9,7 +9,17 @@ class AuthResult {
     this.userId,
     this.name,
     this.email,
+    this.emailVerified = false,
+    this.requiresVerification = false,
+    this.devPreviewCode,
+    this.deliveryMode,
+    this.monthlyIncome,
+    this.savingsGoalPercent,
+    this.reminderTime1,
+    this.reminderTime2,
+    this.emailBillNotifications,
     this.error,
+    this.errorCode,
     this.isOffline = false,
   });
 
@@ -17,13 +27,23 @@ class AuthResult {
   final String? userId;
   final String? name;
   final String? email;
+  final bool emailVerified;
+  final bool requiresVerification;
+  final String? devPreviewCode;
+  final String? deliveryMode;
+  final double? monthlyIncome;
+  final double? savingsGoalPercent;
+  final String? reminderTime1;
+  final String? reminderTime2;
+  final bool? emailBillNotifications;
   final String? error;
+  final String? errorCode;
   final bool isOffline;
 
   bool get isSuccess => error == null && !isOffline;
 }
 
-/// Resultado do disparo de código de recuperação de senha por e-mail
+/// Resultado do disparo de código de recuperação ou verificação de e-mail
 class PasswordResetDispatchResult {
   const PasswordResetDispatchResult({
     this.message,
@@ -116,19 +136,30 @@ class AuthService {
       );
 
       final data = response.data ?? const <String, dynamic>{};
-      final user = data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+      final user =
+          data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
 
       return AuthResult(
         token: data['token'] as String?,
         userId: user['id'] as String?,
         name: user['name'] as String?,
         email: user['email'] as String?,
+        emailVerified: user['email_verified'] as bool? ?? false,
+        requiresVerification: data['requires_verification'] as bool? ?? false,
+        devPreviewCode: data['dev_preview_code'] as String?,
+        deliveryMode: data['delivery_mode'] as String?,
+        monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
+        savingsGoalPercent: (user['savings_goal_percent'] as num?)?.toDouble(),
+        reminderTime1: user['reminder_time_1'] as String?,
+        reminderTime2: user['reminder_time_2'] as String?,
+        emailBillNotifications: user['email_bill_notifications'] as bool?,
       );
     } on DioException catch (e) {
       if (_isNetworkError(e)) {
         return const AuthResult(isOffline: true);
       }
-      final msg = _extractErrorMessage(e) ?? 'Falha ao registrar conta na nuvem.';
+      final msg =
+          _extractErrorMessage(e) ?? 'Falha ao registrar conta na nuvem.';
       return AuthResult(error: msg);
     } catch (_) {
       return const AuthResult(isOffline: true);
@@ -150,17 +181,41 @@ class AuthService {
       );
 
       final data = response.data ?? const <String, dynamic>{};
-      final user = data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+      final user =
+          data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
 
       return AuthResult(
         token: data['token'] as String?,
         userId: user['id'] as String?,
         name: user['name'] as String?,
         email: user['email'] as String?,
+        emailVerified: user['email_verified'] as bool? ?? true,
+        monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
+        savingsGoalPercent: (user['savings_goal_percent'] as num?)?.toDouble(),
+        reminderTime1: user['reminder_time_1'] as String?,
+        reminderTime2: user['reminder_time_2'] as String?,
+        emailBillNotifications: user['email_bill_notifications'] as bool?,
       );
     } on DioException catch (e) {
       if (_isNetworkError(e)) {
         return const AuthResult(isOffline: true);
+      }
+      final responseData = e.response?.data;
+      if (e.response?.statusCode == 403 &&
+          responseData is Map<String, dynamic> &&
+          (responseData['code'] == 'EMAIL_NOT_VERIFIED' ||
+              responseData['requires_verification'] == true)) {
+        final msg = _extractErrorMessage(e) ??
+            'Seu e-mail ainda não foi verificado. Digite o código de 6 dígitos enviado para o seu e-mail.';
+        return AuthResult(
+          email: email.trim().toLowerCase(),
+          emailVerified: false,
+          requiresVerification: true,
+          devPreviewCode: responseData['dev_preview_code'] as String?,
+          deliveryMode: responseData['delivery_mode'] as String?,
+          errorCode: 'EMAIL_NOT_VERIFIED',
+          error: msg,
+        );
       }
       final msg = _extractErrorMessage(e) ?? 'Credenciais inválidas.';
       return AuthResult(error: msg);
@@ -251,6 +306,107 @@ class AuthService {
     }
   }
 
+  /// Solicita/reenvia o código OTP de 6 dígitos para verificar o e-mail da conta (`POST /api/v1/auth/resend-verification`)
+  Future<PasswordResetDispatchResult> resendVerificationEmail({
+    required String email,
+    String? name,
+  }) async {
+    final payload = <String, dynamic>{
+      'email': email.trim().toLowerCase(),
+      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+    };
+    try {
+      Response<Map<String, dynamic>> response;
+      try {
+        response = await _postWithLocalFallback(
+          ApiConstants.authResendVerificationEndpoint,
+          payload,
+        );
+      } on DioException catch (e) {
+        if (_isRouteMissingOnServer(e)) {
+          response = await _postWithLocalFallback(
+            ApiConstants.authSendVerificationEndpoint,
+            payload,
+          );
+        } else {
+          rethrow;
+        }
+      }
+
+      final data = response.data ?? const <String, dynamic>{};
+      return PasswordResetDispatchResult(
+        message: data['message'] as String?,
+        deliveryMode: data['delivery_mode'] as String?,
+        devPreviewCode: data['dev_preview_code'] as String?,
+      );
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
+        return const PasswordResetDispatchResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ??
+          'Não foi possível enviar o código de verificação.';
+      return PasswordResetDispatchResult(error: msg);
+    } catch (_) {
+      return const PasswordResetDispatchResult(isOffline: true);
+    }
+  }
+
+  /// Alias compatível para disparo de código OTP de verificação de e-mail
+  Future<PasswordResetDispatchResult> sendEmailVerification({
+    required String email,
+    String? name,
+  }) {
+    return resendVerificationEmail(email: email, name: name);
+  }
+
+  /// Valida o código OTP de 6 dígitos, marca o e-mail da conta como verificado e retorna o token JWT (`POST /api/v1/auth/verify-email`)
+  Future<AuthResult> verifyEmail({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      final response = await _postWithLocalFallback(
+        ApiConstants.authVerifyEmailEndpoint,
+        {
+          'email': email.trim().toLowerCase(),
+          'code': code.trim(),
+        },
+      );
+      final data = response.data ?? const <String, dynamic>{};
+      final user =
+          data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+
+      return AuthResult(
+        token: data['token'] as String?,
+        userId: user['id'] as String?,
+        name: user['name'] as String?,
+        email: (user['email'] as String?) ?? email.trim().toLowerCase(),
+        emailVerified: true,
+        monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
+        savingsGoalPercent: (user['savings_goal_percent'] as num?)?.toDouble(),
+        reminderTime1: user['reminder_time_1'] as String?,
+        reminderTime2: user['reminder_time_2'] as String?,
+        emailBillNotifications: user['email_bill_notifications'] as bool?,
+      );
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg = _extractErrorMessage(e) ?? 'Código de verificação inválido.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
+    }
+  }
+
+  /// Alias compatível para validação de código OTP de verificação de e-mail
+  Future<AuthResult> verifyEmailCode({
+    required String email,
+    required String code,
+  }) {
+    return verifyEmail(email: email, code: code);
+  }
+
   /// Valida o token JWT atual e retorna os dados do perfil (`GET /api/v1/auth/me`)
   Future<AuthResult> getProfile(String token) async {
     try {
@@ -267,6 +423,12 @@ class AuthService {
         userId: user['id'] as String?,
         name: user['name'] as String?,
         email: user['email'] as String?,
+        emailVerified: user['email_verified'] as bool? ?? false,
+        monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
+        savingsGoalPercent: (user['savings_goal_percent'] as num?)?.toDouble(),
+        reminderTime1: user['reminder_time_1'] as String?,
+        reminderTime2: user['reminder_time_2'] as String?,
+        emailBillNotifications: user['email_bill_notifications'] as bool?,
       );
     } on DioException catch (e) {
       if (_isNetworkError(e)) {

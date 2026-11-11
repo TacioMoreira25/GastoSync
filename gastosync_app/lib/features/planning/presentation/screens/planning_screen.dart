@@ -7,6 +7,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../dashboard/domain/services/financial_health_engine.dart';
 import '../../../dashboard/presentation/controllers/dashboard_controller.dart';
 import '../../../settings/domain/models/user_profile.dart';
+import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
 
@@ -25,6 +26,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final budgetsAsync = ref.watch(watchBudgetsProvider);
     final deletedCategoriesAsync = ref.watch(watchDeletedBudgetCategoriesProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
+    final billsAsync = ref.watch(watchBillsProvider);
     final metricsAsync = ref.watch(financialMetricsStreamProvider);
     final profile = ref.watch(userProfileProvider);
 
@@ -33,6 +35,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 800;
 
     final transactions = transactionsAsync.value ?? const <Transaction>[];
+    final bills = billsAsync.value ?? const <Bill>[];
     final metrics =
         metricsAsync.value ?? FinancialHealthEngine.calculate(transactions);
     final budgets = budgetsAsync.value ?? const <LocalBudget>[];
@@ -80,6 +83,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 budgets: budgets,
                 deletedCategories: deletedCategories,
                 transactions: transactions,
+                bills: bills,
                 currencyFormatter: currencyFormatter,
                 isDesktop: isDesktop,
               ),
@@ -231,23 +235,20 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     required List<LocalBudget> budgets,
     required Set<String> deletedCategories,
     required List<Transaction> transactions,
+    required List<Bill> bills,
     required NumberFormat currencyFormatter,
     required bool isDesktop,
   }) {
     final now = DateTime.now();
 
-    // Soma despesas do mês atual por categoria (case-insensitive)
-    final spentByCategory = <String, double>{};
-    for (final tx in transactions) {
-      if (tx.isExpense &&
-          tx.date.year == now.year &&
-          tx.date.month == now.month) {
-        final key = tx.category.trim().toLowerCase();
-        spentByCategory[key] = (spentByCategory[key] ?? 0.0) + tx.amount;
-      }
-    }
+    // Soma despesas do mês atual por categoria com realocação de cobranças no cartão (FR-011b / T014)
+    final spentByCategory = calculateAdjustedMonthlySpendingByCategory(
+      transactions: transactions,
+      bills: bills,
+      referenceDate: now,
+    );
 
-    // Mescla metas de LocalBudgets com categorias criadas nas Transações que não foram excluídas
+    // Mescla metas de LocalBudgets com categorias criadas nas Transações e Boletos que não foram excluídas
     final mergedByCategory = <String, LocalBudget>{
       for (final b in budgets) b.category.trim().toLowerCase(): b,
     };
@@ -262,6 +263,26 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           !deletedCategories.contains(key)) {
         mergedByCategory[key] = LocalBudget(
           id: syntheticTxId--,
+          userEmail: tx.userEmail ?? 'marcos.pereira@gastosync.local',
+          category: rawCat,
+          limitAmount: math.max(spentByCategory[key] ?? 0.0, 500.0),
+          month: now.month,
+          year: now.year,
+        );
+      }
+    }
+
+    for (final bill in bills) {
+      if (bill.isDeleted) continue;
+      final rawCat = bill.category.trim();
+      final key = rawCat.toLowerCase();
+      if (rawCat.isNotEmpty &&
+          key != 'renda' &&
+          !mergedByCategory.containsKey(key) &&
+          !deletedCategories.contains(key)) {
+        mergedByCategory[key] = LocalBudget(
+          id: syntheticTxId--,
+          userEmail: bill.userEmail ?? 'marcos.pereira@gastosync.local',
           category: rawCat,
           limitAmount: math.max(spentByCategory[key] ?? 0.0, 500.0),
           month: now.month,

@@ -63,7 +63,7 @@ func main() {
 			"env":     cfg.AppEnv,
 			"endpoints": fiber.Map{
 				"health": "/health",
-				"auth":   "/api/v1/auth/{register,login,forgot-password,verify-reset-code,reset-password,me}",
+				"auth":   "/api/v1/auth/{register,login,verify-email,resend-verification,send-verification,forgot-password,verify-reset-code,reset-password,me}",
 				"sync":   "/api/v1/sync/{push,pull}",
 			},
 		})
@@ -85,9 +85,12 @@ func main() {
 	authGroup := apiV1.Group("/auth")
 	authGroup.Post("/register", middleware.AuthRateLimiter(), authHandler.Register)
 	authGroup.Post("/login", middleware.AuthRateLimiter(), authHandler.Login)
-	authGroup.Post("/forgot-password", authHandler.ForgotPassword)
-	authGroup.Post("/verify-reset-code", authHandler.VerifyResetCode)
-	authGroup.Post("/reset-password", authHandler.ResetPassword)
+	authGroup.Post("/verify-email", middleware.AuthRateLimiter(), authHandler.VerifyEmail)
+	authGroup.Post("/resend-verification", middleware.AuthRateLimiter(), authHandler.ResendVerification)
+	authGroup.Post("/send-verification", middleware.AuthRateLimiter(), authHandler.SendVerification)
+	authGroup.Post("/forgot-password", middleware.AuthRateLimiter(), authHandler.ForgotPassword)
+	authGroup.Post("/verify-reset-code", middleware.AuthRateLimiter(), authHandler.VerifyResetCode)
+	authGroup.Post("/reset-password", middleware.AuthRateLimiter(), authHandler.ResetPassword)
 	authGroup.Get("/me", middleware.RequireAuth(cfg.JWTSecret), authHandler.Me)
 
 	syncGroup := apiV1.Group("/sync", middleware.RequireAuth(cfg.JWTSecret))

@@ -8,8 +8,10 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../settings/domain/models/user_profile.dart';
+import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
+import '../../../transactions/presentation/widgets/manual_transaction_form_modal.dart';
 import '../../domain/services/financial_health_engine.dart';
 import '../controllers/dashboard_controller.dart';
 
@@ -38,12 +40,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final metricsAsync = ref.watch(financialMetricsStreamProvider);
     final latestInsightAsync = ref.watch(latestAgentInsightStreamProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
+    final billsAsync = ref.watch(watchBillsProvider);
     final profile = ref.watch(userProfileProvider);
 
     final metrics = metricsAsync.value ??
         FinancialHealthEngine.calculate(const []);
     final latestInsight = latestInsightAsync.value;
     final transactions = transactionsAsync.value ?? const <Transaction>[];
+    final bills =
+        (billsAsync.value ?? const <Bill>[]).where((b) => !b.isDeleted).toList();
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
@@ -95,12 +100,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   const SizedBox(width: 20),
                   Expanded(
                     flex: 2,
-                    child: _buildRecentTransactionsAndInsightsCard(
-                      context,
-                      currencyFormatter,
-                      latestInsight,
-                      metrics,
-                      transactions,
+                    child: Column(
+                      children: [
+                        _buildUpcomingBillsCard(
+                          context,
+                          currencyFormatter,
+                          bills,
+                        ),
+                        const SizedBox(height: 20),
+                        _buildRecentTransactionsAndInsightsCard(
+                          context,
+                          currencyFormatter,
+                          latestInsight,
+                          metrics,
+                          transactions,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -118,6 +133,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 metrics,
                 profile,
                 isDesktop: false,
+              ),
+              const SizedBox(height: 22),
+              _buildUpcomingBillsCard(
+                context,
+                currencyFormatter,
+                bills,
               ),
               const SizedBox(height: 22),
               _buildBurnRateCard(
@@ -1067,6 +1088,327 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       ],
                     ),
                   ],
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Card compacto "Próximos Boletos & Vencimentos" com navegação rápida para Boletos a Pagar (T017)
+  Widget _buildUpcomingBillsCard(
+    BuildContext context,
+    NumberFormat formatter,
+    List<Bill> bills,
+  ) {
+    final dateFmt = DateFormat('dd/MM/yyyy');
+    final unpaidBills = bills.where((b) => !b.isPaid).toList()
+      ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    final upcomingThree = unpaidBills.take(3).toList();
+
+    final totalRealToPay =
+        BillCalculations.calculateTotalPendingCashOutflow(bills);
+    final totalCardCharges =
+        BillCalculations.calculateTotalCreditCardCharges(bills);
+    final overdueCount = unpaidBills.where((b) => b.isOverdue()).length;
+    final dueTodayCount = unpaidBills.where((b) => b.isDueToday()).length;
+
+    void navigateToBillsView() {
+      ref.read(selectedTransactionsSubTabProvider.notifier).selectSubTab(1);
+      context.go('/transactions');
+    }
+
+    return Container(
+      key: const Key('dashboard_upcoming_bills_card'),
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: overdueCount > 0 || dueTodayCount > 0
+                      ? AppTheme.warningBadgeBg
+                      : AppTheme.emeraldSoftBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.event_note_rounded,
+                  size: 18,
+                  color: overdueCount > 0 || dueTodayCount > 0
+                      ? AppTheme.warningDark
+                      : AppTheme.emeraldDeep,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Próximos Boletos & Vencimentos',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton(
+                key: const Key('dashboard_view_all_bills_button'),
+                onPressed: navigateToBillsView,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.emeraldDeep,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text(
+                  'Ver boletos',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Resumo compacto: Total Real a Pagar vs. Lembretes no Cartão (FR-011b)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.subtleSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Total Real a Pagar',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatValue(formatter, totalRealToPay),
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 28,
+                  color: AppTheme.cardBorder,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Inclusos na Fatura',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatValue(formatter, totalCardCharges),
+                        style: const TextStyle(
+                          color: AppTheme.emeraldDeep,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  key: const Key('dashboard_add_bill_button'),
+                  tooltip: 'Novo boleto / conta',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => ManualTransactionFormModal.show(
+                    context,
+                    startInBillMode: true,
+                  ),
+                  icon: const Icon(
+                    Icons.add_circle_outline_rounded,
+                    color: AppTheme.emeraldDeep,
+                    size: 20,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          if (upcomingThree.isEmpty)
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => ManualTransactionFormModal.show(
+                context,
+                startInBillMode: true,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 18,
+                      color: AppTheme.emeraldPrimary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Nenhum boleto pendente. Toque para agendar conta ou boleto recorrente.',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ListView.separated(
+              physics: const NeverScrollableScrollPhysics(),
+              shrinkWrap: true,
+              itemCount: upcomingThree.length,
+              separatorBuilder: (_, _) => const Divider(
+                color: AppTheme.cardBorder,
+                height: 18,
+              ),
+              itemBuilder: (context, index) {
+                final bill = upcomingThree[index];
+                final isOverdue = bill.isOverdue();
+                final isDueToday = bill.isDueToday();
+                final daysUntil = bill.daysUntilDue();
+
+                final String badgeText;
+                final Color badgeColor;
+                final Color badgeBg;
+
+                if (isOverdue) {
+                  badgeText = 'Vencido (${daysUntil.abs()}d)';
+                  badgeColor = AppTheme.errorColor;
+                  badgeBg = AppTheme.errorColor.withValues(alpha: 0.12);
+                } else if (isDueToday) {
+                  badgeText = 'Vence hoje';
+                  badgeColor = AppTheme.warningDark;
+                  badgeBg = AppTheme.warningBadgeBg;
+                } else {
+                  badgeText =
+                      daysUntil <= 3 ? 'Vence em ${daysUntil}d' : dateFmt.format(bill.dueDate);
+                  badgeColor = AppTheme.textSecondary;
+                  badgeBg = AppTheme.subtleSurface;
+                }
+
+                return InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: navigateToBillsView,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: bill.isCreditCardCharge
+                              ? AppTheme.emeraldSoftBg
+                              : AppTheme.subtleSurface,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          bill.isCreditCardCharge
+                              ? Icons.credit_card_rounded
+                              : _categoryIcon(bill.category, isIncome: false),
+                          size: 18,
+                          color: bill.isCreditCardCharge
+                              ? AppTheme.emeraldDeep
+                              : AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              bill.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${bill.category}${bill.isCreditCardCharge ? " · Cartão" : ""} · ${dateFmt.format(bill.dueDate)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            _formatValue(formatter, bill.amount),
+                            style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: badgeBg,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              badgeText,
+                              style: TextStyle(
+                                color: badgeColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 );
               },
             ),

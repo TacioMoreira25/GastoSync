@@ -101,9 +101,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final authNotifier = ref.read(authProvider.notifier);
       if (_isRegisterMode) {
+        final registeredEmail = _emailController.text.trim();
+        final registeredName = _nameController.text.trim();
         final created = await authNotifier.register(
-          fullName: _nameController.text,
-          email: _emailController.text,
+          fullName: registeredName,
+          email: registeredEmail,
           password: _passwordController.text,
         );
         if (created && mounted) {
@@ -111,15 +113,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           setState(() {
             _isRegisterMode = false;
             _submittedOnce = false;
+            _emailController.text = registeredEmail;
             _passwordController.clear();
             _confirmPasswordController.clear();
           });
+          await EmailVerificationDialog.show(
+            context,
+            email: registeredEmail,
+            fullName: registeredName,
+            autoDispatchOnOpen: false,
+            authenticateOnSuccess: true,
+          );
         }
       } else {
-        await authNotifier.login(
+        final loggedIn = await authNotifier.login(
           email: _emailController.text,
           password: _passwordController.text,
         );
+        if (!loggedIn && mounted) {
+          final currentAuthState = ref.read(authProvider);
+          if (currentAuthState.requiresEmailVerification) {
+            await EmailVerificationDialog.show(
+              context,
+              email: currentAuthState.pendingVerificationEmail ??
+                  _emailController.text.trim(),
+              fullName: currentAuthState.pendingVerificationName,
+              autoDispatchOnOpen: false,
+              authenticateOnSuccess: true,
+            );
+          }
+        }
       }
     } finally {
       if (mounted) {
@@ -2009,3 +2032,459 @@ class _ModeTabButton extends StatelessWidget {
     );
   }
 }
+
+typedef _VerifyEmailDialog = EmailVerificationDialog;
+
+/// Modal de verificação de e-mail da conta via código OTP de 6 dígitos enviado pelo Brevo/SMTP
+class EmailVerificationDialog extends ConsumerStatefulWidget {
+  const EmailVerificationDialog({
+    required this.email,
+    this.fullName,
+    this.autoDispatchOnOpen = true,
+    this.authenticateOnSuccess = false,
+    super.key,
+  });
+
+  final String email;
+  final String? fullName;
+  final bool autoDispatchOnOpen;
+  final bool authenticateOnSuccess;
+
+  static Future<bool> show(
+    BuildContext context, {
+    required String email,
+    String? fullName,
+    bool autoDispatchOnOpen = true,
+    bool authenticateOnSuccess = false,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Theme(
+        data: AppTheme.lightTheme,
+        child: _VerifyEmailDialog(
+          email: email,
+          fullName: fullName,
+          autoDispatchOnOpen: autoDispatchOnOpen,
+          authenticateOnSuccess: authenticateOnSuccess,
+        ),
+      ),
+    );
+    return result ?? false;
+  }
+
+  @override
+  ConsumerState<EmailVerificationDialog> createState() =>
+      _EmailVerificationDialogState();
+}
+
+class _EmailVerificationDialogState
+    extends ConsumerState<EmailVerificationDialog> {
+  final List<TextEditingController> _digitControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
+  final List<FocusNode> _digitFocusNodes = List.generate(
+    6,
+    (_) => FocusNode(),
+  );
+
+  bool _isLoading = false;
+  String? _dialogError;
+  String _maskedEmail = '';
+  int _resendCooldownSeconds = 0;
+  Timer? _resendTimer;
+
+  String get _combinedOtp =>
+      _digitControllers.map((c) => c.text.trim()).join();
+
+  @override
+  void initState() {
+    super.initState();
+    _maskedEmail = AuthNotifier.maskEmail(widget.email);
+    if (widget.autoDispatchOnOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dispatchVerificationCode();
+      });
+    } else {
+      _startResendCooldown();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _digitFocusNodes.first.canRequestFocus) {
+          _digitFocusNodes.first.requestFocus();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _resendTimer?.cancel();
+    for (final c in _digitControllers) {
+      c.dispose();
+    }
+    for (final f in _digitFocusNodes) {
+      f.dispose();
+    }
+    super.dispose();
+  }
+
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    setState(() => _resendCooldownSeconds = 60);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_resendCooldownSeconds <= 1) {
+        timer.cancel();
+        setState(() => _resendCooldownSeconds = 0);
+      } else {
+        setState(() => _resendCooldownSeconds--);
+      }
+    });
+  }
+
+  void _clearOtpDigits() {
+    for (final c in _digitControllers) {
+      c.clear();
+    }
+  }
+
+  void _applyFullOtpCode(String rawCode) {
+    final digitsOnly = rawCode.replaceAll(RegExp(r'[^0-9]'), '');
+    for (var i = 0; i < 6; i++) {
+      _digitControllers[i].text = i < digitsOnly.length ? digitsOnly[i] : '';
+    }
+    setState(() => _dialogError = null);
+    if (digitsOnly.length >= 6) {
+      final lastFocus = _digitFocusNodes[5];
+      if (lastFocus.canRequestFocus) {
+        lastFocus.requestFocus();
+      }
+    }
+  }
+
+  void _onDigitChanged(int index, String value) {
+    final digitsOnly = value.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digitsOnly.length > 1) {
+      _applyFullOtpCode(digitsOnly);
+      return;
+    }
+
+    if (digitsOnly.isNotEmpty) {
+      _digitControllers[index].value = TextEditingValue(
+        text: digitsOnly[0],
+        selection: const TextSelection.collapsed(offset: 1),
+      );
+      if (index < 5 && _digitFocusNodes[index + 1].canRequestFocus) {
+        _digitFocusNodes[index + 1].requestFocus();
+      }
+    } else if (index > 0 && _digitFocusNodes[index - 1].canRequestFocus) {
+      _digitFocusNodes[index - 1].requestFocus();
+    }
+    setState(() => _dialogError = null);
+  }
+
+  Future<void> _dispatchVerificationCode() async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _dialogError = null;
+    });
+
+    final outcome =
+        await ref.read(authProvider.notifier).requestEmailVerification(
+              email: widget.email,
+              fullName: widget.fullName,
+            );
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _maskedEmail = outcome.maskedEmail;
+      if (!outcome.isSuccess) {
+        _dialogError = outcome.errorMessage;
+      } else {
+        _clearOtpDigits();
+        _startResendCooldown();
+      }
+    });
+
+    if (outcome.isSuccess) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _digitFocusNodes.first.canRequestFocus) {
+          _digitFocusNodes.first.requestFocus();
+        }
+      });
+    }
+  }
+
+  Future<void> _handleConfirmCode() async {
+    if (_isLoading) return;
+    final code = _combinedOtp;
+    if (code.length != 6) {
+      setState(() {
+        _dialogError =
+            'Digite os 6 dígitos enviados para $_maskedEmail.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _dialogError = null;
+    });
+
+    final error =
+        await ref.read(authProvider.notifier).verifyEmailRegistration(
+              email: widget.email,
+              code: code,
+              authenticateOnSuccess: widget.authenticateOnSuccess,
+            );
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (error != null) {
+      setState(() => _dialogError = error);
+      return;
+    }
+
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      key: const Key('email_verification_dialog'),
+      backgroundColor: AppTheme.cardSurface,
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: AppTheme.emeraldSoftBg,
+                      borderRadius: BorderRadius.circular(11),
+                      border: Border.all(color: AppTheme.emeraldBadgeBg),
+                    ),
+                    child: const Icon(
+                      Icons.verified_user_outlined,
+                      color: AppTheme.emeraldDeep,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Confirmar seu e-mail',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _isLoading
+                        ? null
+                        : () => Navigator.of(context).pop(false),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: AppTheme.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Enviamos um código de verificação de 6 dígitos para $_maskedEmail. Digite-o abaixo para ativar o selo de conta verificada.',
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_dialogError != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(11),
+                  decoration: BoxDecoration(
+                    color: _LoginColors.errorBg,
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: AppTheme.errorColor.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        color: AppTheme.errorColor,
+                        size: 17,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _dialogError!,
+                          style: const TextStyle(
+                            color: AppTheme.errorColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              Row(
+                children: List.generate(6, (index) {
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: index < 5 ? 6 : 0),
+                      child: SizedBox(
+                        height: 52,
+                        child: TextField(
+                          key: Key('verify_email_otp_digit_$index'),
+                          controller: _digitControllers[index],
+                          focusNode: _digitFocusNodes[index],
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
+                          maxLength: 6,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          onChanged: (val) => _onDigitChanged(index, val),
+                          onSubmitted: (_) {
+                            if (_combinedOtp.length == 6) {
+                              _handleConfirmCode();
+                            }
+                          },
+                          style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          decoration: InputDecoration(
+                            counterText: '',
+                            filled: true,
+                            fillColor: AppTheme.backgroundLight,
+                            contentPadding:
+                                const EdgeInsets.symmetric(vertical: 12),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(11),
+                              borderSide:
+                                  const BorderSide(color: AppTheme.cardBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(11),
+                              borderSide:
+                                  const BorderSide(color: AppTheme.cardBorder),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(11),
+                              borderSide: const BorderSide(
+                                color: AppTheme.emeraldPrimary,
+                                width: 1.8,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: (_isLoading || _resendCooldownSeconds > 0)
+                      ? null
+                      : _dispatchVerificationCode,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: AppTheme.emeraldPrimary,
+                  ),
+                  child: Text(
+                    _resendCooldownSeconds > 0
+                        ? 'Reenviar em ${_resendCooldownSeconds}s'
+                        : 'Reenviar código',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  TextButton(
+                    key: const Key('verify_email_later_button'),
+                    onPressed: _isLoading
+                        ? null
+                        : () => Navigator.of(context).pop(false),
+                    child: const Text('Verificar depois'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const Key('verify_email_confirm_button'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.emeraldPrimary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                      ),
+                      onPressed: _isLoading ? null : _handleConfirmCode,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.verified_rounded, size: 16),
+                      label: Text(
+                        _isLoading ? 'Validando...' : 'Confirmar e-mail',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

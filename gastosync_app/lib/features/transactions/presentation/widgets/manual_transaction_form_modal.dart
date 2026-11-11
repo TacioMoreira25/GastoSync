@@ -10,13 +10,22 @@ import '../../../../core/utils/brl_currency_formatter.dart';
 import '../../../budget_agent/data/services/budget_agent_service.dart';
 import '../../../budget_agent/domain/models/agent_prediction_models.dart';
 import '../../../dashboard/presentation/widgets/quick_expense_input_field.dart';
+import '../../domain/models/bill.dart';
 import '../../domain/models/transaction.dart';
 import '../controllers/transactions_controller.dart';
 
 class ManualTransactionFormModal extends ConsumerStatefulWidget {
-  const ManualTransactionFormModal({super.key});
+  const ManualTransactionFormModal({
+    this.startInBillMode = false,
+    super.key,
+  });
 
-  static Future<bool?> show(BuildContext context) {
+  final bool startInBillMode;
+
+  static Future<bool?> show(
+    BuildContext context, {
+    bool startInBillMode = false,
+  }) {
     final width = MediaQuery.sizeOf(context).width;
     if (width >= 600) {
       return showDialog<bool>(
@@ -26,7 +35,9 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
-            child: const ManualTransactionFormModal(),
+            child: ManualTransactionFormModal(
+              startInBillMode: startInBillMode,
+            ),
           ),
         ),
       );
@@ -42,7 +53,9 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
       ),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-        child: const ManualTransactionFormModal(),
+        child: ManualTransactionFormModal(
+          startInBillMode: startInBillMode,
+        ),
       ),
     );
   }
@@ -58,8 +71,12 @@ class _ManualTransactionFormModalState
   final _smartInputController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
+  final _barcodeController = TextEditingController();
 
   TransactionType _selectedType = TransactionType.expense;
+  bool _isBillMode = false;
+  bool _isRecurring = false;
+  bool _isCreditCardCharge = false;
   String _selectedCategory = 'Alimentação';
   String _selectedPaymentMethod = 'PIX';
   DateTime _selectedDate = DateTime.now();
@@ -70,6 +87,7 @@ class _ManualTransactionFormModalState
     'Crédito',
     'Dinheiro',
     'Transferência',
+    'Boleto',
   ];
 
   final List<String> _categories = [
@@ -90,12 +108,72 @@ class _ManualTransactionFormModalState
   bool _isPredictingAi = false;
   bool _isProcessingOcr = false;
 
+  /// Cores explícitas dos switches de boleto (visíveis tanto ligados quanto desligados)
+  static final WidgetStateProperty<Color?> _billSwitchThumbColor =
+      WidgetStateProperty.resolveWith((states) {
+    if (states.contains(WidgetState.disabled)) return AppTheme.cardBorder;
+    return states.contains(WidgetState.selected)
+        ? Colors.white
+        : AppTheme.textMuted;
+  });
+
+  static final WidgetStateProperty<Color?> _billSwitchTrackColor =
+      WidgetStateProperty.resolveWith((states) {
+    return states.contains(WidgetState.selected)
+        ? AppTheme.emeraldPrimary
+        : AppTheme.cardSurface;
+  });
+
+  static final WidgetStateProperty<Color?> _billSwitchOutlineColor =
+      WidgetStateProperty.resolveWith((states) {
+    return states.contains(WidgetState.selected)
+        ? AppTheme.emeraldPrimary
+        : AppTheme.textMuted;
+  });
+
+  @override
+  void initState() {
+    super.initState();
+    _isBillMode = widget.startInBillMode;
+    if (_isBillMode) {
+      _selectedType = TransactionType.expense;
+      _selectedCategory = 'Moradia';
+    }
+  }
+
   @override
   void dispose() {
     _smartInputController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
+    _barcodeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pasteBarcodeFromClipboard() async {
+    final clip = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = clip?.text?.trim() ?? '';
+    if (text.isEmpty || !mounted) return;
+    setState(() {
+      _barcodeController.text = text;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Linha digitável / código PIX colado com sucesso.'),
+      ),
+    );
+  }
+
+  Future<void> _copyBarcodeToClipboard() async {
+    final text = _barcodeController.text.trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Linha digitável / código PIX copiado!'),
+      ),
+    );
   }
 
   void _applyPredictionToFields(AgentPredictionResponse prediction) {
@@ -264,44 +342,58 @@ class _ManualTransactionFormModalState
     final amount =
         BrlCurrencyInputFormatter.parseValue(_amountController.text);
     final description = _descriptionController.text.trim();
-    final effectiveCategory = _selectedType == TransactionType.income
-        ? 'Renda'
-        : (_isRendaCategory(_selectedCategory)
-            ? 'Alimentação'
-            : _selectedCategory);
+    final effectiveCategory =
+        (!_isBillMode && _selectedType == TransactionType.income)
+            ? 'Renda'
+            : (_isRendaCategory(_selectedCategory)
+                ? 'Alimentação'
+                : _selectedCategory);
 
     setState(() => _isSubmitting = true);
     try {
       final controller = ref.read(transactionsControllerProvider);
-      final prediction = _lastAiPrediction;
 
-      if (prediction != null) {
-        await controller.createAiConfirmedTransaction(
+      if (_isBillMode) {
+        await controller.createBill(
           description: description,
           amount: amount,
-          date: _selectedDate,
-          type: _selectedType,
+          dueDate: _selectedDate,
           category: effectiveCategory,
-          rawSuggestion: jsonEncode(prediction.toJson()),
-          confidenceScore: prediction.confidence,
-          categorySuggested: effectiveCategory,
-          budgetTip: prediction.budgetTip,
+          barcode: _barcodeController.text.trim(),
+          isRecurring: _isRecurring,
+          isCreditCardCharge: _isCreditCardCharge,
         );
       } else {
-        await controller.createManualTransaction(
-          description: description,
-          amount: amount,
-          date: _selectedDate,
-          type: _selectedType,
-          category: effectiveCategory,
-        );
-      }
+        final prediction = _lastAiPrediction;
 
-      if (_selectedType == TransactionType.expense) {
-        await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
-              effectiveCategory,
-              defaultLimit: 500.0,
-            );
+        if (prediction != null) {
+          await controller.createAiConfirmedTransaction(
+            description: description,
+            amount: amount,
+            date: _selectedDate,
+            type: _selectedType,
+            category: effectiveCategory,
+            rawSuggestion: jsonEncode(prediction.toJson()),
+            confidenceScore: prediction.confidence,
+            categorySuggested: effectiveCategory,
+            budgetTip: prediction.budgetTip,
+          );
+        } else {
+          await controller.createManualTransaction(
+            description: description,
+            amount: amount,
+            date: _selectedDate,
+            type: _selectedType,
+            category: effectiveCategory,
+          );
+        }
+
+        if (_selectedType == TransactionType.expense) {
+          await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
+                effectiveCategory,
+                defaultLimit: 500.0,
+              );
+        }
       }
 
       if (mounted) {
@@ -310,7 +402,7 @@ class _ManualTransactionFormModalState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao salvar transação: $e')),
+          SnackBar(content: Text('Erro ao salvar lançamento: $e')),
         );
       }
     } finally {
@@ -335,6 +427,7 @@ class _ManualTransactionFormModalState
     final budgets = ref.watch(watchBudgetsProvider).value ?? const <LocalBudget>[];
     final transactions =
         ref.watch(watchTransactionsProvider).value ?? const <Transaction>[];
+    final bills = ref.watch(watchBillsProvider).value ?? const <Bill>[];
 
     // Unifica categorias de despesa (nunca inclui 'Renda')
     final categoryMap = <String, String>{};
@@ -358,6 +451,14 @@ class _ManualTransactionFormModalState
         }
       }
     }
+    for (final bill in bills) {
+      if (!bill.isDeleted) {
+        final trimmed = bill.category.trim();
+        if (trimmed.isNotEmpty && !_isRendaCategory(trimmed)) {
+          categoryMap.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+        }
+      }
+    }
     final allExpenseCategories = categoryMap.values.toList();
 
     return SingleChildScrollView(
@@ -368,15 +469,15 @@ class _ManualTransactionFormModalState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cabeçalho: NOVO LANÇAMENTO / Adicionar transação
+            // Cabeçalho: NOVO LANÇAMENTO / Adicionar transação ou boleto
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         'NOVO LANÇAMENTO',
                         style: TextStyle(
                           color: AppTheme.textMuted,
@@ -385,10 +486,12 @@ class _ManualTransactionFormModalState
                           letterSpacing: 0.8,
                         ),
                       ),
-                      SizedBox(height: 2),
+                      const SizedBox(height: 2),
                       Text(
-                        'Adicionar transação',
-                        style: TextStyle(
+                        _isBillMode
+                            ? 'Adicionar boleto / conta'
+                            : 'Adicionar transação',
+                        style: const TextStyle(
                           color: AppTheme.textPrimary,
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
@@ -605,7 +708,7 @@ class _ManualTransactionFormModalState
             ),
             const SizedBox(height: 18),
 
-            // Abas Despesa / Receita
+            // Abas Despesa / Receita / Boleto / Conta (T015)
             Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
@@ -619,10 +722,12 @@ class _ManualTransactionFormModalState
                     child: _TypeTabButton(
                       key: const Key('tab_expense_button'),
                       label: 'Despesa',
-                      isSelected: _selectedType == TransactionType.expense,
+                      isSelected:
+                          !_isBillMode && _selectedType == TransactionType.expense,
                       selectedColor: AppTheme.navyDark,
                       onTap: () {
                         setState(() {
+                          _isBillMode = false;
                           _selectedType = TransactionType.expense;
                           if (_selectedCategory == 'Renda') {
                             _selectedCategory = 'Alimentação';
@@ -635,12 +740,31 @@ class _ManualTransactionFormModalState
                     child: _TypeTabButton(
                       key: const Key('tab_income_button'),
                       label: 'Receita',
-                      isSelected: _selectedType == TransactionType.income,
+                      isSelected:
+                          !_isBillMode && _selectedType == TransactionType.income,
                       selectedColor: AppTheme.emeraldPrimary,
                       onTap: () {
                         setState(() {
+                          _isBillMode = false;
                           _selectedType = TransactionType.income;
                           _selectedCategory = 'Renda';
+                        });
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _TypeTabButton(
+                      key: const Key('tab_bill_button'),
+                      label: 'Boleto / Conta',
+                      isSelected: _isBillMode,
+                      selectedColor: AppTheme.navyDark,
+                      onTap: () {
+                        setState(() {
+                          _isBillMode = true;
+                          _selectedType = TransactionType.expense;
+                          if (_selectedCategory == 'Renda') {
+                            _selectedCategory = 'Moradia';
+                          }
                         });
                       },
                     ),
@@ -739,7 +863,9 @@ class _ManualTransactionFormModalState
                 fontWeight: FontWeight.w500,
               ),
               decoration: InputDecoration(
-                hintText: 'Nome da transação (ex: Supermercado, Aluguel)',
+                hintText: _isBillMode
+                    ? 'Nome da conta/boleto (ex: Energia, Aluguel, Academia)'
+                    : 'Nome da transação (ex: Supermercado, Aluguel)',
                 hintStyle: const TextStyle(
                   color: AppTheme.textMuted,
                   fontSize: 14,
@@ -768,7 +894,7 @@ class _ManualTransactionFormModalState
             ),
             const SizedBox(height: 16),
 
-            // Categoria: Receita só pode ser 'Renda'; Despesa nunca pode ser 'Renda'
+            // Categoria: Receita só pode ser 'Renda'; Despesa/Boleto nunca pode ser 'Renda'
             const Text(
               'Categoria',
               style: TextStyle(
@@ -778,7 +904,7 @@ class _ManualTransactionFormModalState
               ),
             ),
             const SizedBox(height: 8),
-            if (_selectedType == TransactionType.income)
+            if (!_isBillMode && _selectedType == TransactionType.income)
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -844,45 +970,48 @@ class _ManualTransactionFormModalState
               ),
             const SizedBox(height: 16),
 
-            // Forma de Pagamento (extraída pela IA ou selecionada manualmente)
-            const Text(
-              'Forma de Pagamento',
-              style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+            if (!_isBillMode) ...[
+              // Forma de Pagamento (extraída pela IA ou selecionada manualmente)
+              const Text(
+                'Forma de Pagamento',
+                style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _paymentMethods.map((method) {
-                final isSelected = _selectedPaymentMethod == method;
-                return ChoiceChip(
-                  key: Key('payment_method_chip_$method'),
-                  label: Text(method),
-                  selected: isSelected,
-                  showCheckmark: false,
-                  selectedColor: AppTheme.emeraldPrimary,
-                  backgroundColor: AppTheme.cardSurface,
-                  labelStyle: TextStyle(
-                    color: isSelected ? Colors.white : AppTheme.textSecondary,
-                    fontSize: 12,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  ),
-                  onSelected: (_) {
-                    setState(() => _selectedPaymentMethod = method);
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _paymentMethods.map((method) {
+                  final isSelected = _selectedPaymentMethod == method;
+                  return ChoiceChip(
+                    key: Key('payment_method_chip_$method'),
+                    label: Text(method),
+                    selected: isSelected,
+                    showCheckmark: false,
+                    selectedColor: AppTheme.emeraldPrimary,
+                    backgroundColor: AppTheme.cardSurface,
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.white : AppTheme.textSecondary,
+                      fontSize: 12,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                    onSelected: (_) {
+                      setState(() => _selectedPaymentMethod = method);
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+            ],
 
-            // Seletor de Data
-            const Text(
-              'Data',
-              style: TextStyle(
+            // Seletor de Data / Data de Vencimento
+            Text(
+              _isBillMode ? 'Data de Vencimento' : 'Data',
+              style: const TextStyle(
                 color: AppTheme.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -924,6 +1053,183 @@ class _ManualTransactionFormModalState
                 ),
               ),
             ),
+
+            if (_isBillMode) ...[
+              const SizedBox(height: 16),
+
+              // Linha Digitável / PIX Copia e Cola (Opcional) (T015)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Linha Digitável / PIX Copia e Cola (Opcional)',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        key: const Key('manual_bill_paste_barcode_button'),
+                        onPressed: isBusy ? null : _pasteBarcodeFromClipboard,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: const Icon(Icons.content_paste_rounded, size: 14),
+                        label: const Text(
+                          'Colar',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (_barcodeController.text.trim().isNotEmpty)
+                        TextButton.icon(
+                          key: const Key('manual_bill_copy_barcode_button'),
+                          onPressed: isBusy ? null : _copyBarcodeToClipboard,
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.copy_rounded, size: 14),
+                          label: const Text(
+                            'Copiar',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                key: const Key('manual_bill_barcode_field'),
+                controller: _barcodeController,
+                enabled: !isBusy,
+                onChanged: (_) => setState(() {}),
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Cole aqui o código de barras ou PIX Copia e Cola...',
+                  hintStyle: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 12.5,
+                  ),
+                  prefixIcon: const Icon(
+                    Icons.qr_code_2_rounded,
+                    size: 18,
+                    color: AppTheme.textMuted,
+                  ),
+                  filled: true,
+                  fillColor: AppTheme.backgroundLight,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Switch Repetir mensalmente (Recorrente) (T015)
+              Container(
+                decoration: BoxDecoration(
+                  color: AppTheme.subtleSurface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.cardBorder),
+                ),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      key: const Key('manual_bill_recurring_switch'),
+                      value: _isRecurring,
+                      thumbColor: _billSwitchThumbColor,
+                      trackColor: _billSwitchTrackColor,
+                      trackOutlineColor: _billSwitchOutlineColor,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 2,
+                      ),
+                      title: const Text(
+                        'Repetir mensalmente (Recorrente)',
+                        style: TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Ao dar baixa, agenda automaticamente o próximo mês.',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                      onChanged: isBusy
+                          ? null
+                          : (val) => setState(() => _isRecurring = val),
+                    ),
+                    const Divider(height: 1, color: AppTheme.cardBorder),
+                    // Switch Desconta no Cartão (Incluso na Fatura) (T015 / FR-011b)
+                    SwitchListTile(
+                      key: const Key('manual_bill_credit_card_charge_switch'),
+                      value: _isCreditCardCharge,
+                      thumbColor: _billSwitchThumbColor,
+                      trackColor: _billSwitchTrackColor,
+                      trackOutlineColor: _billSwitchOutlineColor,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 2,
+                      ),
+                      title: const Text(
+                        'Desconta no Cartão (Incluso na Fatura)',
+                        style: TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Notifica 2x/dia e aloca na categoria, sem somar duplicado no total de boletos nem no saldo.',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                      onChanged: isBusy
+                          ? null
+                          : (val) => setState(() => _isCreditCardCharge = val),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 22),
 
             // Botão largo inferior verde "Confirmar e Salvar"
@@ -933,7 +1239,9 @@ class _ManualTransactionFormModalState
                 key: const Key('manual_save_button'),
                 onPressed: isBusy ? null : _confirmAndSave,
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppTheme.emeraldPrimary,
+                  backgroundColor: _isBillMode
+                      ? AppTheme.navyDark
+                      : AppTheme.emeraldPrimary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
@@ -949,9 +1257,11 @@ class _ManualTransactionFormModalState
                           color: Colors.white,
                         ),
                       )
-                    : const Text(
-                        'Confirmar e Salvar',
-                        style: TextStyle(
+                    : Text(
+                        _isBillMode
+                            ? 'Salvar Boleto / Conta'
+                            : 'Confirmar e Salvar',
+                        style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,
                         ),

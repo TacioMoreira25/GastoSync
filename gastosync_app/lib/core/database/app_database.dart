@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,9 +7,27 @@ import 'connection/connection.dart' as impl;
 
 part 'app_database.g.dart';
 
-/// Tabela de Transações com suporte a sincronização offline-first e isolamento por conta
+/// Resultado estruturado da baixa transacional de um boleto (`payBillAndCreateTransaction`)
+class PayBillResult {
+  const PayBillResult({
+    required this.paidBillId,
+    required this.isCreditCardCharge,
+    this.createdTransactionId,
+    this.createdTransactionUuid,
+    this.nextRecurringBillId,
+  });
+
+  final int paidBillId;
+  final bool isCreditCardCharge;
+  final int? createdTransactionId;
+  final String? createdTransactionUuid;
+  final int? nextRecurringBillId;
+}
+
+/// Tabela de Transações com suporte a sincronização offline-first, UUID, forma de pagamento, vínculo de cartão e soft delete (Schema v3)
 class LocalTransactions extends Table {
   IntColumn get id => integer().autoIncrement()();
+  TextColumn get clientUuid => text().withDefault(const Constant(''))();
   TextColumn get userEmail =>
       text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
   TextColumn get description => text().withLength(min: 1, max: 255)();
@@ -15,21 +35,73 @@ class LocalTransactions extends Table {
   DateTimeColumn get date => dateTime()();
   TextColumn get type => text()(); // 'income' ou 'expense'
   TextColumn get category => text()();
+  TextColumn get paymentMethod => text().withDefault(const Constant('PIX'))();
+  TextColumn get creditCardUuid => text().nullable()();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
 }
 
-/// Tabela de Metas e Limites Orçamentários
+/// Tabela de Boletos e Contas a Pagar com suporte a linha digitável/PIX, recorrência mensal e cobranças embutidas na fatura do cartão (Schema v3)
+class LocalBills extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get clientUuid => text().withDefault(const Constant(''))();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
+  TextColumn get description => text().withLength(min: 1, max: 255)();
+  RealColumn get amount => real()();
+  DateTimeColumn get dueDate => dateTime()();
+  TextColumn get category => text()();
+  TextColumn get barcode => text().withDefault(const Constant(''))();
+  BoolColumn get isRecurring => boolean().withDefault(const Constant(false))();
+  BoolColumn get isCreditCardCharge =>
+      boolean().withDefault(const Constant(false))();
+  TextColumn get creditCardUuid => text().nullable()();
+  TextColumn get status =>
+      text().withDefault(const Constant('pending'))(); // 'pending', 'paid', 'overdue'
+  DateTimeColumn get paidAt => dateTime().nullable()();
+  IntColumn get linkedTransactionId => integer().nullable()();
+  TextColumn get linkedTxUuid => text().nullable()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+}
+
+/// Tabela de Cartões de Crédito com limite e faixa saudável de relacionamento bancário (50% a 80%) (Schema v3)
+class LocalCreditCards extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get clientUuid => text().withDefault(const Constant(''))();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
+  TextColumn get name => text().withLength(min: 1, max: 100)();
+  RealColumn get limitAmount => real()();
+  RealColumn get targetMinPercent =>
+      real().withDefault(const Constant(50.0))();
+  RealColumn get targetMaxPercent =>
+      real().withDefault(const Constant(80.0))();
+  IntColumn get dueDay => integer().withDefault(const Constant(10))();
+  BoolColumn get isPrimary => boolean().withDefault(const Constant(false))();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+}
+
+/// Tabela de Metas e Limites Orçamentários isolada por conta (`userEmail`)
 class LocalBudgets extends Table {
   IntColumn get id => integer().autoIncrement()();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
   TextColumn get category => text()();
   RealColumn get limitAmount => real()();
   IntColumn get month => integer()();
   IntColumn get year => integer()();
 }
 
-/// Tabela de Snapshots de Métricas Consolidadas (9 Métricas de Saúde Financeira)
+/// Tabela de Snapshots de Métricas Consolidadas (9 Métricas de Saúde Financeira) isolada por conta (`userEmail`)
 class LocalMetrics extends Table {
   IntColumn get id => integer().autoIncrement()();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
   DateTimeColumn get calculatedAt => dateTime()();
   RealColumn get currentBalance => real()();
   RealColumn get totalIncome => real()();
@@ -42,9 +114,11 @@ class LocalMetrics extends Table {
   RealColumn get healthScore => real()(); // 0 a 100
 }
 
-/// Tabela de Histórico de Insights do Agente de IA (Llama 3.3)
+/// Tabela de Histórico de Insights do Agente de IA (Llama 3.3) isolada por conta (`userEmail`)
 class LocalAgentInsights extends Table {
   IntColumn get id => integer().autoIncrement()();
+  TextColumn get userEmail =>
+      text().withDefault(const Constant('marcos.pereira@gastosync.local'))();
   IntColumn get transactionId => integer().nullable()();
   TextColumn get rawSuggestion => text()();
   RealColumn get confidenceScore => real()();
@@ -56,6 +130,8 @@ class LocalAgentInsights extends Table {
 @DriftDatabase(
   tables: [
     LocalTransactions,
+    LocalBills,
+    LocalCreditCards,
     LocalBudgets,
     LocalMetrics,
     LocalAgentInsights,
@@ -67,13 +143,36 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             await m.addColumn(localTransactions, localTransactions.userEmail);
+          }
+          if (from < 3) {
+            await m.addColumn(localTransactions, localTransactions.clientUuid);
+            await m.addColumn(
+              localTransactions,
+              localTransactions.paymentMethod,
+            );
+            await m.addColumn(
+              localTransactions,
+              localTransactions.creditCardUuid,
+            );
+            await m.addColumn(localTransactions, localTransactions.updatedAt);
+            await m.addColumn(localTransactions, localTransactions.deletedAt);
+
+            await m.addColumn(localBudgets, localBudgets.userEmail);
+            await m.addColumn(localMetrics, localMetrics.userEmail);
+            await m.addColumn(
+              localAgentInsights,
+              localAgentInsights.userEmail,
+            );
+
+            await m.createTable(localBills);
+            await m.createTable(localCreditCards);
           }
         },
       );
@@ -86,9 +185,10 @@ class AppDatabase extends _$AppDatabase {
     'Lazer': 500.0,
   };
 
-  /// Stream reativa de transações filtradas por conta (`userEmail`) ordenadas por data
+  /// Stream reativa de transações ativas (`deletedAt IS NULL`) filtradas por conta (`userEmail`) ordenadas por data
   Stream<List<LocalTransaction>> watchAllTransactions({String? userEmail}) {
-    final query = select(localTransactions);
+    final query = select(localTransactions)
+      ..where((t) => t.deletedAt.isNull());
     if (userEmail != null && userEmail.trim().isNotEmpty) {
       final normalized = userEmail.trim().toLowerCase();
       query.where((t) => t.userEmail.equals(normalized));
@@ -108,7 +208,8 @@ class AppDatabase extends _$AppDatabase {
 
   /// Exclusão de transação por ID
   Future<int> deleteTransactionById(int transactionId) {
-    return (delete(localTransactions)..where((t) => t.id.equals(transactionId))).go();
+    return (delete(localTransactions)..where((t) => t.id.equals(transactionId)))
+        .go();
   }
 
   /// Atualização de status de sincronização com o backend
@@ -118,15 +219,224 @@ class AppDatabase extends _$AppDatabase {
         .then((rows) => rows > 0);
   }
 
+  /// Gera um identificador universal UUID v4 compatível com RFC 4122 para `clientUuid`
+  static String generateClientUuid() {
+    Random random;
+    try {
+      random = Random.secure();
+    } catch (_) {
+      random = Random();
+    }
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // versão 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variante RFC 4122
+
+    String hex(int byte) => byte.toRadixString(16).padLeft(2, '0');
+    return '${hex(bytes[0])}${hex(bytes[1])}${hex(bytes[2])}${hex(bytes[3])}-'
+        '${hex(bytes[4])}${hex(bytes[5])}-'
+        '${hex(bytes[6])}${hex(bytes[7])}-'
+        '${hex(bytes[8])}${hex(bytes[9])}-'
+        '${hex(bytes[10])}${hex(bytes[11])}${hex(bytes[12])}${hex(bytes[13])}${hex(bytes[14])}${hex(bytes[15])}';
+  }
+
+  /// Calcula a data de vencimento do mês seguinte com ajuste para dias 28/29/30/31
+  static DateTime _calculateNextMonthDueDate(DateTime currentDueDate) {
+    final nextYear = currentDueDate.month == 12
+        ? currentDueDate.year + 1
+        : currentDueDate.year;
+    final nextMonth =
+        currentDueDate.month == 12 ? 1 : currentDueDate.month + 1;
+    final lastDayOfNextMonth = DateTime(nextYear, nextMonth + 1, 0).day;
+    final clampedDay = currentDueDate.day > lastDayOfNextMonth
+        ? lastDayOfNextMonth
+        : currentDueDate.day;
+    return DateTime(
+      nextYear,
+      nextMonth,
+      clampedDay,
+      currentDueDate.hour,
+      currentDueDate.minute,
+      currentDueDate.second,
+    );
+  }
+
+  /// Stream reativa de todos os boletos ativos (`deletedAt IS NULL`) filtrados por conta (`userEmail`) e ordenados por vencimento (T013)
+  Stream<List<LocalBill>> watchAllBills({String? userEmail}) {
+    final query = select(localBills)..where((b) => b.deletedAt.isNull());
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((b) => b.userEmail.equals(normalized));
+    }
+    return (query
+          ..orderBy([
+            (b) => OrderingTerm.asc(b.dueDate),
+            (b) => OrderingTerm.asc(b.id),
+          ]))
+        .watch();
+  }
+
+  /// Busca um boleto pelo ID local
+  Future<LocalBill?> getBillById(int billId) {
+    return (select(localBills)..where((b) => b.id.equals(billId)))
+        .getSingleOrNull();
+  }
+
+  /// Inserção de novo boleto garantindo `clientUuid` e `updatedAt` (T013)
+  Future<int> insertBill(LocalBillsCompanion entry) {
+    final now = DateTime.now();
+    final hasUuid =
+        entry.clientUuid.present && entry.clientUuid.value.trim().isNotEmpty;
+    final companion = entry.copyWith(
+      clientUuid:
+          hasUuid ? entry.clientUuid : Value(generateClientUuid()),
+      updatedAt:
+          entry.updatedAt.present ? entry.updatedAt : Value(now),
+    );
+    return into(localBills).insert(companion);
+  }
+
+  /// Atualização de boleto existente por ID marcando `isSynced = false` e `updatedAt = now` (T013)
+  Future<int> updateBill(int billId, LocalBillsCompanion entry) {
+    final now = DateTime.now();
+    final companion = entry.copyWith(
+      isSynced: entry.isSynced.present ? entry.isSynced : const Value(false),
+      updatedAt: entry.updatedAt.present ? entry.updatedAt : Value(now),
+    );
+    return (update(localBills)..where((b) => b.id.equals(billId)))
+        .write(companion);
+  }
+
+  /// Exclusão de boleto por ID (suporta soft delete por padrão para sincronização na nuvem) (T013)
+  Future<int> deleteBillById(int billId, {bool softDelete = true}) {
+    if (softDelete) {
+      final now = DateTime.now();
+      return (update(localBills)..where((b) => b.id.equals(billId))).write(
+        LocalBillsCompanion(
+          deletedAt: Value(now),
+          updatedAt: Value(now),
+          isSynced: const Value(false),
+        ),
+      );
+    }
+    return (delete(localBills)..where((b) => b.id.equals(billId))).go();
+  }
+
+  /// Marca um boleto como sincronizado com o backend
+  Future<bool> markBillAsSynced(int billId) {
+    return (update(localBills)..where((b) => b.id.equals(billId)))
+        .write(const LocalBillsCompanion(isSynced: Value(true)))
+        .then((rows) => rows > 0);
+  }
+
+  /// Dá baixa em um boleto de forma atômica (`payBillAndCreateTransaction`) (T013):
+  /// 1. Marca o boleto como `'paid'` com `paidAt = now`;
+  /// 2. Insere a despesa em `LocalTransactions` (`paymentMethod = 'Boleto'`) SOMENTE quando
+  ///    `isCreditCardCharge == false`, evitando subtrair em duplicidade do saldo líquido (FR-011b);
+  /// 3. Se `isRecurring == true`, agenda automaticamente o boleto pendente do mês seguinte.
+  Future<PayBillResult> payBillAndCreateTransaction(
+    int billId, {
+    DateTime? paidAt,
+  }) async {
+    return transaction(() async {
+      final bill = await getBillById(billId);
+      if (bill == null || bill.deletedAt != null) {
+        throw StateError('Boleto não encontrado para baixa (id: $billId).');
+      }
+
+      if (bill.status.toLowerCase() == 'paid') {
+        return PayBillResult(
+          paidBillId: bill.id,
+          isCreditCardCharge: bill.isCreditCardCharge,
+          createdTransactionId: bill.linkedTransactionId,
+          createdTransactionUuid: bill.linkedTxUuid,
+        );
+      }
+
+      final paymentTimestamp = paidAt ?? DateTime.now();
+      int? createdTxId;
+      String? createdTxUuid;
+
+      // FR-011 / FR-011b: Apenas boletos convencionais (`!isCreditCardCharge`) geram saída
+      // de caixa em `LocalTransactions`; itens embutidos na fatura do cartão não reduzem o saldo 2x.
+      if (!bill.isCreditCardCharge) {
+        createdTxUuid = generateClientUuid();
+        createdTxId = await into(localTransactions).insert(
+          LocalTransactionsCompanion.insert(
+            clientUuid: Value(createdTxUuid),
+            userEmail: Value(bill.userEmail),
+            description: bill.description,
+            amount: bill.amount,
+            date: paymentTimestamp,
+            type: 'expense',
+            category: bill.category,
+            paymentMethod: const Value('Boleto'),
+            creditCardUuid: Value(bill.creditCardUuid),
+            isSynced: const Value(false),
+            updatedAt: Value(paymentTimestamp),
+          ),
+        );
+      }
+
+      await (update(localBills)..where((b) => b.id.equals(bill.id))).write(
+        LocalBillsCompanion(
+          status: const Value('paid'),
+          paidAt: Value(paymentTimestamp),
+          linkedTransactionId: Value(createdTxId),
+          linkedTxUuid: Value(createdTxUuid),
+          isSynced: const Value(false),
+          updatedAt: Value(paymentTimestamp),
+        ),
+      );
+
+      int? nextRecurringBillId;
+      if (bill.isRecurring) {
+        final nextDueDate = _calculateNextMonthDueDate(bill.dueDate);
+        nextRecurringBillId = await into(localBills).insert(
+          LocalBillsCompanion.insert(
+            clientUuid: Value(generateClientUuid()),
+            userEmail: Value(bill.userEmail),
+            description: bill.description,
+            amount: bill.amount,
+            dueDate: nextDueDate,
+            category: bill.category,
+            barcode: Value(bill.barcode),
+            isRecurring: const Value(true),
+            isCreditCardCharge: Value(bill.isCreditCardCharge),
+            creditCardUuid: Value(bill.creditCardUuid),
+            status: const Value('pending'),
+            isSynced: const Value(false),
+            updatedAt: Value(paymentTimestamp),
+          ),
+        );
+      }
+
+      return PayBillResult(
+        paidBillId: bill.id,
+        isCreditCardCharge: bill.isCreditCardCharge,
+        createdTransactionId: createdTxId,
+        createdTransactionUuid: createdTxUuid,
+        nextRecurringBillId: nextRecurringBillId,
+      );
+    });
+  }
+
   /// Inserção de snapshot das 9 métricas financeiras
   Future<int> insertMetricSnapshot(LocalMetricsCompanion entry) {
     return into(localMetrics).insert(entry);
   }
 
   /// Stream do último snapshot de métricas gravado
-  Stream<LocalMetric?> watchLatestMetric() {
-    return (select(localMetrics)
-          ..orderBy([(m) => OrderingTerm.desc(m.calculatedAt), (m) => OrderingTerm.desc(m.id)])
+  Stream<LocalMetric?> watchLatestMetric({String? userEmail}) {
+    final query = select(localMetrics);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((m) => m.userEmail.equals(normalized));
+    }
+    return (query
+          ..orderBy([
+            (m) => OrderingTerm.desc(m.calculatedAt),
+            (m) => OrderingTerm.desc(m.id),
+          ])
           ..limit(1))
         .watchSingleOrNull();
   }
@@ -137,28 +447,56 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Stream do último insight do agente IA gravado
-  Stream<LocalAgentInsight?> watchLatestAgentInsight() {
-    return (select(localAgentInsights)
-          ..orderBy([(i) => OrderingTerm.desc(i.createdAt), (i) => OrderingTerm.desc(i.id)])
+  Stream<LocalAgentInsight?> watchLatestAgentInsight({String? userEmail}) {
+    final query = select(localAgentInsights);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((i) => i.userEmail.equals(normalized));
+    }
+    return (query
+          ..orderBy([
+            (i) => OrderingTerm.desc(i.createdAt),
+            (i) => OrderingTerm.desc(i.id),
+          ])
           ..limit(1))
         .watchSingleOrNull();
   }
 
   /// Stream de todos os insights do agente IA ordenados por data
-  Stream<List<LocalAgentInsight>> watchAllAgentInsights() {
-    return (select(localAgentInsights)
-          ..orderBy([(i) => OrderingTerm.desc(i.createdAt), (i) => OrderingTerm.desc(i.id)]))
+  Stream<List<LocalAgentInsight>> watchAllAgentInsights({String? userEmail}) {
+    final query = select(localAgentInsights);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((i) => i.userEmail.equals(normalized));
+    }
+    return (query
+          ..orderBy([
+            (i) => OrderingTerm.desc(i.createdAt),
+            (i) => OrderingTerm.desc(i.id),
+          ]))
         .watch();
   }
 
   /// Garante a persistência inicial do seed padrão na tabela `LocalBudgets` caso esteja vazia
-  Future<void> seedDefaultBudgetsIfEmpty({int? month, int? year}) async {
+  Future<void> seedDefaultBudgetsIfEmpty({
+    int? month,
+    int? year,
+    String? userEmail,
+  }) async {
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
 
     final existing = await (select(localBudgets)
-          ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear)))
+          ..where(
+            (b) =>
+                b.month.equals(targetMonth) &
+                b.year.equals(targetYear) &
+                b.userEmail.equals(normalizedEmail),
+          ))
         .get();
 
     if (existing.isNotEmpty) return;
@@ -168,6 +506,7 @@ class AppDatabase extends _$AppDatabase {
         b.insert(
           localBudgets,
           LocalBudgetsCompanion.insert(
+            userEmail: Value(normalizedEmail),
             category: entry.key,
             limitAmount: entry.value,
             month: targetMonth,
@@ -180,14 +519,24 @@ class AppDatabase extends _$AppDatabase {
 
   /// Stream reativa de todas as metas mensais (`LocalBudgets`) com seed padrão
   /// para `Alimentação`, `Moradia`, `Transporte` e `Lazer` (T044)
-  Stream<List<LocalBudget>> watchAllBudgets({int? month, int? year}) {
+  Stream<List<LocalBudget>> watchAllBudgets({
+    int? month,
+    int? year,
+    String? userEmail,
+  }) {
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : null;
 
     final query = select(localBudgets)
-      ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear))
-      ..orderBy([(b) => OrderingTerm.asc(b.id)]);
+      ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear));
+    if (normalizedEmail != null) {
+      query.where((b) => b.userEmail.equals(normalizedEmail));
+    }
+    query.orderBy([(b) => OrderingTerm.asc(b.id)]);
 
     return query.watch().map((persistedRows) {
       final byCategory = <String, LocalBudget>{};
@@ -196,6 +545,7 @@ class AppDatabase extends _$AppDatabase {
       for (final entry in defaultCategoryBudgets.entries) {
         byCategory[entry.key.toLowerCase()] = LocalBudget(
           id: syntheticId--,
+          userEmail: normalizedEmail ?? 'marcos.pereira@gastosync.local',
           category: entry.key,
           limitAmount: entry.value,
           month: targetMonth,
@@ -218,13 +568,20 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Lista as categorias cujo orçamento foi explicitamente excluído pelo usuário (`limitAmount <= 0`)
-  Stream<Set<String>> watchDeletedBudgetCategories({int? month, int? year}) {
+  Stream<Set<String>> watchDeletedBudgetCategories({
+    int? month,
+    int? year,
+    String? userEmail,
+  }) {
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
 
     final query = select(localBudgets)
       ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear));
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      query.where((b) => b.userEmail.equals(userEmail.trim().toLowerCase()));
+    }
 
     return query.watch().map((rows) {
       return {
@@ -240,19 +597,30 @@ class AppDatabase extends _$AppDatabase {
     required double limitAmount,
     int? month,
     int? year,
+    String? userEmail,
   }) async {
     final normalizedCategory = category.trim();
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
 
     final existingRows = await (select(localBudgets)
-          ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear)))
+          ..where(
+            (b) =>
+                b.month.equals(targetMonth) &
+                b.year.equals(targetYear) &
+                b.userEmail.equals(normalizedEmail),
+          ))
         .get();
 
     final match = existingRows
         .where(
-          (b) => b.category.trim().toLowerCase() == normalizedCategory.toLowerCase(),
+          (b) =>
+              b.category.trim().toLowerCase() ==
+              normalizedCategory.toLowerCase(),
         )
         .firstOrNull;
 
@@ -268,6 +636,7 @@ class AppDatabase extends _$AppDatabase {
 
     return into(localBudgets).insert(
       LocalBudgetsCompanion.insert(
+        userEmail: Value(normalizedEmail),
         category: normalizedCategory,
         limitAmount: limitAmount,
         month: targetMonth,
@@ -282,6 +651,7 @@ class AppDatabase extends _$AppDatabase {
     double defaultLimit = 500.0,
     int? month,
     int? year,
+    String? userEmail,
   }) async {
     final normalized = category.trim();
     if (normalized.isEmpty || normalized.toLowerCase() == 'renda') return;
@@ -294,9 +664,17 @@ class AppDatabase extends _$AppDatabase {
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
 
     final existingRows = await (select(localBudgets)
-          ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear)))
+          ..where(
+            (b) =>
+                b.month.equals(targetMonth) &
+                b.year.equals(targetYear) &
+                b.userEmail.equals(normalizedEmail),
+          ))
         .get();
 
     final alreadyExists = existingRows.any(
@@ -306,6 +684,7 @@ class AppDatabase extends _$AppDatabase {
     if (!alreadyExists) {
       await into(localBudgets).insert(
         LocalBudgetsCompanion.insert(
+          userEmail: Value(normalizedEmail),
           category: normalized,
           limitAmount: defaultLimit,
           month: targetMonth,
@@ -320,19 +699,30 @@ class AppDatabase extends _$AppDatabase {
     String category, {
     int? month,
     int? year,
+    String? userEmail,
   }) async {
     final normalizedCategory = category.trim();
     final now = DateTime.now();
     final targetMonth = month ?? now.month;
     final targetYear = year ?? now.year;
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
 
     final existingRows = await (select(localBudgets)
-          ..where((b) => b.month.equals(targetMonth) & b.year.equals(targetYear)))
+          ..where(
+            (b) =>
+                b.month.equals(targetMonth) &
+                b.year.equals(targetYear) &
+                b.userEmail.equals(normalizedEmail),
+          ))
         .get();
 
     final match = existingRows
         .where(
-          (b) => b.category.trim().toLowerCase() == normalizedCategory.toLowerCase(),
+          (b) =>
+              b.category.trim().toLowerCase() ==
+              normalizedCategory.toLowerCase(),
         )
         .firstOrNull;
 
@@ -347,6 +737,7 @@ class AppDatabase extends _$AppDatabase {
 
     await into(localBudgets).insert(
       LocalBudgetsCompanion.insert(
+        userEmail: Value(normalizedEmail),
         category: normalizedCategory,
         limitAmount: -1.0,
         month: targetMonth,
