@@ -77,8 +77,6 @@ build/
 .mypy_cache/
 .ruff_cache/
 .uv/
-system_prompt.txt
-system_prompt_fibo.txt
 teste.py
 
 # Spec Kit Machine-local state
