@@ -6,12 +6,14 @@ import 'package:intl/intl.dart';
 
 import '../../features/dashboard/domain/services/financial_health_engine.dart';
 import '../../features/dashboard/presentation/controllers/dashboard_controller.dart';
+import '../../features/planning/domain/models/credit_card_model.dart';
 import '../../features/settings/domain/models/user_profile.dart';
 import '../../features/transactions/domain/models/bill.dart';
 import '../../features/transactions/domain/models/transaction.dart';
 import '../../features/transactions/presentation/controllers/transactions_controller.dart';
 import '../database/app_database.dart';
 import '../router/app_router.dart';
+import '../services/bill_notification_service.dart';
 import '../theme/app_theme.dart';
 import 'gastosync_top_header.dart';
 
@@ -27,6 +29,7 @@ enum NotificationActionType {
   syncNow,
   goDashboard,
   goTransactions,
+  goBills,
   goPlanning,
   goMore,
   openAiChat,
@@ -166,14 +169,21 @@ final gastoSyncNotificationsProvider =
   final bills = ref.watch(watchBillsProvider).value ?? const <Bill>[];
   final budgets =
       ref.watch(watchBudgetsProvider).value ?? const <LocalBudget>[];
+  final creditCards =
+      (ref.watch(watchCreditCardsProvider).value ?? const <LocalCreditCard>[])
+          .map(CreditCard.fromLocal)
+          .toList();
   final deletedCategories =
       ref.watch(watchDeletedBudgetCategoriesProvider).value ?? const <String>{};
   final metrics = ref.watch(financialMetricsStreamProvider).value ??
       FinancialHealthEngine.calculate(transactions);
   final latestInsight = ref.watch(latestAgentInsightStreamProvider).value;
   final profile = ref.watch(userProfileProvider);
+  // Mantém o verificador de janelas 2x/dia ativo enquanto o sino de notificações estiver montado
+  ref.watch(billNotificationServiceProvider);
 
   final currencyFmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+  final dateFmt = DateFormat('dd/MM/yyyy');
   final now = DateTime.now();
   final items = <GastoSyncNotificationItem>[];
 
@@ -195,6 +205,89 @@ final gastoSyncNotificationsProvider =
         ),
       );
     }
+  }
+
+  // 0.5. Alertas de Boletos Vencidos, Vencendo Hoje e Próximos (<= 3 dias) (T022)
+  final actionableBills = bills
+      .where((b) => !b.isPaid && !b.isDeleted && b.daysUntilDue(now) <= 3)
+      .toList()
+    ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+
+  for (final bill in actionableBills) {
+    final diffDays = bill.daysUntilDue(now);
+    final billKey = bill.clientUuid.isNotEmpty
+        ? bill.clientUuid
+        : (bill.id?.toString() ?? bill.description);
+    final statusSuffix = diffDays < 0
+        ? 'overdue'
+        : (diffDays == 0 ? 'due_today' : 'due_in_${diffDays}d');
+    final id = 'bill_alert_${billKey}_$statusSuffix';
+
+    if (quickState.dismissedIds.contains(id)) continue;
+
+    final NotificationSeverity severity;
+    final IconData icon;
+    final String categoryLabel;
+    final String title;
+    final String message;
+    final String actionLabel;
+
+    if (diffDays < 0) {
+      final overdueDays = diffDays.abs();
+      severity = NotificationSeverity.critical;
+      icon = Icons.notification_important_rounded;
+      categoryLabel =
+          bill.isCreditCardCharge ? 'Cartão • Em Atraso' : 'Boleto Vencido';
+      title = bill.isCreditCardCharge
+          ? 'Cobrança no cartão pendente: ${bill.description}'
+          : 'Boleto vencido há $overdueDays dia${overdueDays > 1 ? "s" : ""}: ${bill.description}';
+      message = bill.isCreditCardCharge
+          ? 'Valor de ${currencyFmt.format(bill.amount)} (${bill.category}) previsto em ${dateFmt.format(bill.dueDate)} na fatura do cartão. Confirme na aba Boletos.'
+          : 'Valor de ${currencyFmt.format(bill.amount)} (${bill.category}) venceu em ${dateFmt.format(bill.dueDate)}. Pague ou copie a linha digitável.';
+      actionLabel =
+          bill.isCreditCardCharge ? 'Confirmar no Cartão' : 'Dar Baixa / Pagar';
+    } else if (diffDays == 0) {
+      severity = NotificationSeverity.critical;
+      icon = Icons.event_busy_rounded;
+      categoryLabel =
+          bill.isCreditCardCharge ? 'Cartão • Hoje' : 'Vence Hoje';
+      title = bill.isCreditCardCharge
+          ? 'Desconta HOJE no cartão: ${bill.description}'
+          : 'Boleto vence HOJE: ${bill.description}';
+      message = bill.isCreditCardCharge
+          ? 'Lembrete 2x/dia (${profile.reminderTime1} e ${profile.reminderTime2}): mantenha ${currencyFmt.format(bill.amount)} de limite livre no cartão para ${bill.description} (${bill.category}).'
+          : 'Valor de ${currencyFmt.format(bill.amount)} (${bill.category}) vence hoje (${dateFmt.format(bill.dueDate)}). Evite multas e juros.';
+      actionLabel =
+          bill.isCreditCardCharge ? 'Ver Cobrança no Cartão' : 'Pagar Boleto';
+    } else {
+      severity = NotificationSeverity.warning;
+      icon = Icons.schedule_rounded;
+      categoryLabel = bill.isCreditCardCharge
+          ? 'Cartão • Em $diffDays dia${diffDays > 1 ? "s" : ""}'
+          : 'Vence em $diffDays dia${diffDays > 1 ? "s" : ""}';
+      title = bill.isCreditCardCharge
+          ? '${bill.description} desconta no cartão em $diffDays dia${diffDays > 1 ? "s" : ""}'
+          : 'Boleto vence em $diffDays dia${diffDays > 1 ? "s" : ""}: ${bill.description}';
+      message = bill.isCreditCardCharge
+          ? 'Cobrança recorrente de ${currencyFmt.format(bill.amount)} (${bill.category}) agendada para ${dateFmt.format(bill.dueDate)} na fatura.'
+          : 'Valor de ${currencyFmt.format(bill.amount)} (${bill.category}) vence em ${dateFmt.format(bill.dueDate)}. Lembretes ativos às ${profile.reminderTime1} e ${profile.reminderTime2}.';
+      actionLabel = 'Abrir Boletos a Pagar';
+    }
+
+    items.add(
+      GastoSyncNotificationItem(
+        id: id,
+        title: title,
+        message: message,
+        timestamp: now.subtract(Duration(minutes: diffDays <= 0 ? 1 : 3)),
+        severity: severity,
+        categoryLabel: categoryLabel,
+        icon: icon,
+        isRead: quickState.readIds.contains(id),
+        actionLabel: actionLabel,
+        actionType: NotificationActionType.goBills,
+      ),
+    );
   }
 
   // 1. Transações pendentes de sincronização local (Offline-First)
@@ -278,6 +371,49 @@ final gastoSyncNotificationsProvider =
         );
       }
     }
+  }
+
+  // 2.5. Alertas de Cartões acima do Teto Saudável (targetMaxPercent, ex: 80%) (T031 / US5)
+  final cardSummaries = CreditCardUsageSummary.calculateAll(
+    cards: creditCards,
+    transactions: transactions,
+    bills: bills,
+    referenceDate: now,
+  );
+
+  for (final summary in cardSummaries) {
+    if (!summary.isAboveHealthyCeiling) continue;
+    final card = summary.card;
+    final statusSuffix =
+        summary.isLimitExceeded ? 'limit_exceeded' : 'healthy_ceiling_exceeded';
+    final id =
+        'credit_card_${card.clientUuid}_${statusSuffix}_${now.month}_${now.year}';
+    if (quickState.dismissedIds.contains(id)) continue;
+
+    final percent = summary.utilizationPercent.round();
+    final maxHealthyPct = card.targetMaxPercent.round();
+    final minHealthyPct = card.targetMinPercent.round();
+
+    items.add(
+      GastoSyncNotificationItem(
+        id: id,
+        title: summary.isLimitExceeded
+            ? 'Limite estourado em ${card.name} ($percent%)'
+            : '${card.name} acima do teto saudável de $maxHealthyPct% ($percent%)',
+        message: summary.isLimitExceeded
+            ? 'Uso de ${currencyFmt.format(summary.totalUsedAmount)} superou o limite total de ${currencyFmt.format(card.limitAmount)} (teto saudável: ${currencyFmt.format(card.healthyMaxAmount)}).'
+            : 'Você utilizou ${currencyFmt.format(summary.totalUsedAmount)} de ${currencyFmt.format(card.limitAmount)}, acima da faixa saudável de $minHealthyPct%–$maxHealthyPct% (${currencyFmt.format(card.healthyMaxAmount)}).',
+        timestamp: now.subtract(const Duration(minutes: 9)),
+        severity: summary.isLimitExceeded
+            ? NotificationSeverity.critical
+            : NotificationSeverity.warning,
+        categoryLabel: 'Cartão & Limite',
+        icon: Icons.credit_card_off_rounded,
+        isRead: quickState.readIds.contains(id),
+        actionLabel: 'Ver Cartões & Limite',
+        actionType: NotificationActionType.goPlanning,
+      ),
+    );
   }
 
   // 3. Alerta de Burn Rate Diário / Projeção de Fim de Mês
@@ -545,6 +681,12 @@ class _GastoSyncNotificationsModalState
       case NotificationActionType.goDashboard:
         ref.read(goRouterProvider).go('/dashboard');
       case NotificationActionType.goTransactions:
+        if (item.id.startsWith('bill')) {
+          ref.read(selectedTransactionsSubTabProvider.notifier).selectSubTab(1);
+        }
+        ref.read(goRouterProvider).go('/transactions');
+      case NotificationActionType.goBills:
+        ref.read(selectedTransactionsSubTabProvider.notifier).selectSubTab(1);
         ref.read(goRouterProvider).go('/transactions');
       case NotificationActionType.goPlanning:
         ref.read(goRouterProvider).go('/planning');
@@ -562,11 +704,17 @@ class _GastoSyncNotificationsModalState
   @override
   Widget build(BuildContext context) {
     final allItems = ref.watch(gastoSyncNotificationsProvider);
+    final profile = ref.watch(userProfileProvider);
     final unreadCount = allItems.where((e) => !e.isRead).length;
     final visibleItems = _onlyUnread
         ? allItems.where((e) => !e.isRead).toList()
         : allItems;
     final notifier = ref.read(notificationsControllerProvider.notifier);
+    final nextWindowLabel = BillNotificationService.describeNextReminderWindow(
+      DateTime.now(),
+      reminderTime1: profile.reminderTime1,
+      reminderTime2: profile.reminderTime2,
+    );
 
     return ColoredBox(
       key: const Key('gastosync_notifications_modal'),
@@ -589,6 +737,16 @@ class _GastoSyncNotificationsModalState
             onClearAll: allItems.isNotEmpty
                 ? () => notifier.clearAll(allItems.map((e) => e.id))
                 : null,
+          ),
+          _BillReminderScheduleBanner(
+            reminderTime1: profile.reminderTime1,
+            reminderTime2: profile.reminderTime2,
+            emailEnabled: profile.emailBillNotifications,
+            nextWindowLabel: nextWindowLabel,
+            onConfigureTap: () {
+              Navigator.of(context).pop();
+              ref.read(goRouterProvider).go('/more');
+            },
           ),
           Expanded(
             child: visibleItems.isEmpty
@@ -1226,6 +1384,96 @@ class _EmptyNotificationsView extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _BillReminderScheduleBanner extends StatelessWidget {
+  const _BillReminderScheduleBanner({
+    required this.reminderTime1,
+    required this.reminderTime2,
+    required this.emailEnabled,
+    required this.nextWindowLabel,
+    required this.onConfigureTap,
+  });
+
+  final String reminderTime1;
+  final String reminderTime2;
+  final bool emailEnabled;
+  final String nextWindowLabel;
+  final VoidCallback onConfigureTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        color: AppTheme.cardSurface,
+        border: Border(
+          bottom: BorderSide(color: AppTheme.cardBorder),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppTheme.emeraldSoftBg,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.alarm_on_rounded,
+              size: 16,
+              color: AppTheme.emeraldPrimary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Alertas de Boletos 2x/dia: $reminderTime1 e $reminderTime2',
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  'Próximo: $nextWindowLabel • E-mail ${emailEnabled ? "ativo" : "pausado"}',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onConfigureTap,
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.emeraldPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'Horários',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

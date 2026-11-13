@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../auth/data/services/auth_service.dart';
+
 @immutable
 class UserProfile {
   const UserProfile({
@@ -9,6 +11,10 @@ class UserProfile {
     this.accountLabel = 'Conta pessoal',
     this.monthlyBaseIncome = 8500.0,
     this.savingsRateTarget = 20.0,
+    this.reminderTime1 = '09:00',
+    this.reminderTime2 = '18:00',
+    this.emailBillNotifications = true,
+    this.jwtToken,
   });
 
   final String fullName;
@@ -16,6 +22,10 @@ class UserProfile {
   final String accountLabel;
   final double monthlyBaseIncome;
   final double savingsRateTarget;
+  final String reminderTime1;
+  final String reminderTime2;
+  final bool emailBillNotifications;
+  final String? jwtToken;
 
   /// Teto mensal recomendado de despesas considerando a meta de poupança
   double get monthlyExpenseCeiling =>
@@ -53,6 +63,11 @@ class UserProfile {
     String? accountLabel,
     double? monthlyBaseIncome,
     double? savingsRateTarget,
+    String? reminderTime1,
+    String? reminderTime2,
+    bool? emailBillNotifications,
+    String? jwtToken,
+    bool clearToken = false,
   }) {
     return UserProfile(
       fullName: fullName ?? this.fullName,
@@ -60,6 +75,11 @@ class UserProfile {
       accountLabel: accountLabel ?? this.accountLabel,
       monthlyBaseIncome: monthlyBaseIncome ?? this.monthlyBaseIncome,
       savingsRateTarget: savingsRateTarget ?? this.savingsRateTarget,
+      reminderTime1: reminderTime1 ?? this.reminderTime1,
+      reminderTime2: reminderTime2 ?? this.reminderTime2,
+      emailBillNotifications:
+          emailBillNotifications ?? this.emailBillNotifications,
+      jwtToken: clearToken ? null : (jwtToken ?? this.jwtToken),
     );
   }
 }
@@ -68,20 +88,75 @@ class UserProfileNotifier extends Notifier<UserProfile> {
   @override
   UserProfile build() => const UserProfile();
 
-  void updateProfile({
+  Future<bool> updateProfile({
     String? fullName,
     String? email,
     String? accountLabel,
     double? monthlyBaseIncome,
     double? savingsRateTarget,
-  }) {
+    String? reminderTime1,
+    String? reminderTime2,
+    bool? emailBillNotifications,
+    String? jwtToken,
+    bool syncToCloud = true,
+  }) async {
     state = state.copyWith(
       fullName: fullName,
       email: email,
       accountLabel: accountLabel,
       monthlyBaseIncome: monthlyBaseIncome,
       savingsRateTarget: savingsRateTarget,
+      reminderTime1: reminderTime1,
+      reminderTime2: reminderTime2,
+      emailBillNotifications: emailBillNotifications,
+      jwtToken: jwtToken,
     );
+
+    final activeToken = state.jwtToken;
+    if (!syncToCloud || activeToken == null || activeToken.trim().isEmpty) {
+      return true;
+    }
+
+    final res = await ref.read(authServiceProvider).updateRemoteProfile(
+          token: activeToken,
+          name: state.fullName,
+          monthlyIncome: state.monthlyBaseIncome,
+          savingsGoalPercent: state.savingsRateTarget,
+          reminderTime1: state.reminderTime1,
+          reminderTime2: state.reminderTime2,
+          emailBillNotifications: state.emailBillNotifications,
+        );
+
+    if (res.isSuccess) {
+      state = state.copyWith(
+        fullName: res.name,
+        monthlyBaseIncome: res.monthlyIncome,
+        savingsRateTarget: res.savingsGoalPercent,
+        reminderTime1: res.reminderTime1,
+        reminderTime2: res.reminderTime2,
+        emailBillNotifications: res.emailBillNotifications,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  Future<bool> updateBillNotificationPreferences({
+    String? reminderTime1,
+    String? reminderTime2,
+    bool? emailBillNotifications,
+  }) {
+    return updateProfile(
+      reminderTime1: reminderTime1,
+      reminderTime2: reminderTime2,
+      emailBillNotifications: emailBillNotifications,
+      syncToCloud: true,
+    );
+  }
+
+  void clearSessionToken() {
+    state = state.copyWith(clearToken: true);
   }
 }
 

@@ -10,6 +10,7 @@ import '../../../settings/domain/models/user_profile.dart';
 import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
+import '../../domain/models/credit_card_model.dart';
 
 class PlanningScreen extends ConsumerStatefulWidget {
   const PlanningScreen({super.key});
@@ -19,7 +20,7 @@ class PlanningScreen extends ConsumerStatefulWidget {
 }
 
 class _PlanningScreenState extends ConsumerState<PlanningScreen> {
-  int _selectedSubTab = 0; // 0 = Orçamentos & Metas, 1 = Saúde Financeira
+  int _selectedSubTab = 0; // 0 = Orçamentos & Metas, 1 = Saúde Financeira, 2 = Cartões & Limite
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +28,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final deletedCategoriesAsync = ref.watch(watchDeletedBudgetCategoriesProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
     final billsAsync = ref.watch(watchBillsProvider);
+    final creditCardsAsync = ref.watch(watchCreditCardsProvider);
     final metricsAsync = ref.watch(financialMetricsStreamProvider);
     final profile = ref.watch(userProfileProvider);
 
@@ -36,6 +38,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
 
     final transactions = transactionsAsync.value ?? const <Transaction>[];
     final bills = billsAsync.value ?? const <Bill>[];
+    final creditCards = (creditCardsAsync.value ?? const <LocalCreditCard>[])
+        .map(CreditCard.fromLocal)
+        .toList();
     final metrics =
         metricsAsync.value ?? FinancialHealthEngine.calculate(transactions);
     final budgets = budgetsAsync.value ?? const <LocalBudget>[];
@@ -87,13 +92,23 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 currencyFormatter: currencyFormatter,
                 isDesktop: isDesktop,
               ),
-            ] else ...[
+            ] else if (_selectedSubTab == 1) ...[
               // Sub-aba "Saúde Financeira": Indicadores detalhados das 9 métricas
               _buildFinancialHealthSubTab(
                 metrics: metrics,
                 profile: profile,
                 displayScore: displayScore,
                 statusLabel: scoreStatusLabel,
+                currencyFormatter: currencyFormatter,
+                isDesktop: isDesktop,
+              ),
+            ] else ...[
+              // Sub-aba "Cartões & Limite": Termômetro de uso e faixa saudável 50% a 80% (T031 / US5)
+              _buildCreditCardsSubTab(
+                context: context,
+                creditCards: creditCards,
+                transactions: transactions,
+                bills: bills,
                 currencyFormatter: currencyFormatter,
                 isDesktop: isDesktop,
               ),
@@ -130,7 +145,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               Text(
                 _selectedSubTab == 0
                     ? 'Orçamentos & Metas'
-                    : 'Saúde Financeira',
+                    : (_selectedSubTab == 1
+                        ? 'Saúde Financeira'
+                        : 'Cartões & Limite'),
                 style: TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: isDesktop ? 22 : 18,
@@ -203,6 +220,16 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               icon: Icons.insights_rounded,
               isSelected: _selectedSubTab == 1,
               onTap: () => setState(() => _selectedSubTab = 1),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _SubTabButton(
+              key: const Key('planning_tab_credit_cards'),
+              label: 'Cartões & Limite',
+              icon: Icons.credit_card_rounded,
+              isSelected: _selectedSubTab == 2,
+              onTap: () => setState(() => _selectedSubTab = 2),
             ),
           ),
         ],
@@ -797,6 +824,563 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               child: const Text('Salvar meta'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // SUB-ABA CARTÕES & LIMITE (T031 / US5)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCreditCardsSubTab({
+    required BuildContext context,
+    required List<CreditCard> creditCards,
+    required List<Transaction> transactions,
+    required List<Bill> bills,
+    required NumberFormat currencyFormatter,
+    required bool isDesktop,
+  }) {
+    final summaries = CreditCardUsageSummary.calculateAll(
+      cards: creditCards,
+      transactions: transactions,
+      bills: bills,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            key: const Key('planning_new_credit_card_button'),
+            onPressed: () => _showUpsertCreditCardDialog(context),
+            icon: const Icon(Icons.add_card_rounded, size: 20),
+            label: const Text('+ Novo Cartão de Crédito'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.navyDark,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        if (summaries.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: AppTheme.whiteCardDecoration,
+            child: const Center(
+              child: Text(
+                'Nenhum cartão cadastrado. Adicione seu Cartão Principal acima.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+              ),
+            ),
+          )
+        else ...[
+          for (var i = 0; i < summaries.length; i++) ...[
+            _buildSingleCreditCardSummaryCard(
+              context: context,
+              summary: summaries[i],
+              canDelete: summaries.length > 1 || !summaries[i].card.isPrimary,
+              currencyFormatter: currencyFormatter,
+            ),
+            if (i < summaries.length - 1) const SizedBox(height: 16),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSingleCreditCardSummaryCard({
+    required BuildContext context,
+    required CreditCardUsageSummary summary,
+    required bool canDelete,
+    required NumberFormat currencyFormatter,
+  }) {
+    final card = summary.card;
+    final clampedRatio = card.limitAmount > 0
+        ? (summary.totalUsedAmount / card.limitAmount).clamp(0.0, 1.0)
+        : 0.0;
+
+    final Color barColor;
+    final BoxDecoration statusBadgeDeco;
+    final Color statusBadgeTextColor;
+
+    if (summary.isLimitExceeded) {
+      barColor = AppTheme.errorColor;
+      statusBadgeDeco = BoxDecoration(
+        color: AppTheme.errorColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      );
+      statusBadgeTextColor = AppTheme.errorColor;
+    } else if (summary.isAboveHealthyCeiling) {
+      barColor = AppTheme.warningAmber;
+      statusBadgeDeco = AppTheme.warningBadgeDecoration;
+      statusBadgeTextColor = AppTheme.warningDark;
+    } else {
+      barColor = AppTheme.emeraldPrimary;
+      statusBadgeDeco = AppTheme.emeraldBadgeDecoration;
+      statusBadgeTextColor = AppTheme.emeraldDeep;
+    }
+
+    return Container(
+      key: Key('planning_credit_card_${card.id ?? card.name}'),
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: card.isPrimary
+                      ? AppTheme.navyDark
+                      : AppTheme.subtleSurface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.credit_card_rounded,
+                  size: 20,
+                  color:
+                      card.isPrimary ? Colors.white : AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            card.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (card.isPrimary) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: AppTheme.emeraldBadgeDecoration,
+                            child: const Text(
+                              'Principal',
+                              style: TextStyle(
+                                color: AppTheme.emeraldDeep,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Limite Total: ${currencyFormatter.format(card.limitAmount)} · Vencimento dia ${card.dueDay}',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                key: Key('edit_credit_card_${card.id ?? card.name}'),
+                tooltip: 'Editar cartão e faixa saudável',
+                icon: const Icon(
+                  Icons.edit_outlined,
+                  size: 19,
+                  color: AppTheme.textSecondary,
+                ),
+                onPressed: () =>
+                    _showUpsertCreditCardDialog(context, existing: card),
+              ),
+              if (canDelete && card.id != null && card.id! > 0)
+                IconButton(
+                  key: Key('delete_credit_card_${card.id}'),
+                  tooltip: 'Remover cartão',
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    size: 19,
+                    color: AppTheme.textMuted,
+                  ),
+                  onPressed: () {
+                    ref.read(appDatabaseProvider).deleteCreditCard(card.id!);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Uso Total vs Limite
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'TOTAL UTILIZADO NO MÊS (FIXAS + COMPRAS)',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${currencyFormatter.format(summary.totalUsedAmount)} (${summary.utilizationPercent.toStringAsFixed(1)}%)',
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: statusBadgeDeco,
+                  child: Text(
+                    summary.relationshipStatusLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: statusBadgeTextColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: clampedRatio,
+              minHeight: 10,
+              backgroundColor: AppTheme.subtleSurface,
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Divisão: Assinaturas Fixas vs Compras Variáveis no Cartão
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.subtleSurface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Fixas / Assinaturas',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        currencyFormatter.format(
+                          summary.fixedSubscriptionsAmount,
+                        ),
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '${summary.fixedSubscriptionsCount} conta(s) na fatura',
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.subtleSurface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Compras no Crédito',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        currencyFormatter.format(
+                          summary.variablePurchasesAmount,
+                        ),
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '${summary.variablePurchasesCount} lançamento(s)',
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Faixa Saudável de Relacionamento Bancário (50% a 80%)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: summary.isAboveHealthyCeiling
+                  ? AppTheme.warningBadgeBg.withValues(alpha: 0.55)
+                  : AppTheme.emeraldSoftBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: summary.isAboveHealthyCeiling
+                    ? AppTheme.warningBorder
+                    : AppTheme.emeraldBadgeBg,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  summary.isAboveHealthyCeiling
+                      ? Icons.warning_amber_rounded
+                      : Icons.trending_up_rounded,
+                  size: 18,
+                  color: summary.isAboveHealthyCeiling
+                      ? AppTheme.warningDark
+                      : AppTheme.emeraldDeep,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    summary.isAboveHealthyCeiling
+                        ? 'Atenção: você ultrapassou o teto saudável de ${card.targetMaxPercent.toStringAsFixed(0)}% (${currencyFormatter.format(summary.healthyMaxAmount)}) em ${currencyFormatter.format(summary.amountAboveHealthyCeiling)}. Limite total restante: ${currencyFormatter.format(summary.remainingTotalLimit)}.'
+                        : 'Faixa saudável para relacionamento bancário (${card.targetMinPercent.toStringAsFixed(0)}%–${card.targetMaxPercent.toStringAsFixed(0)}%): ${currencyFormatter.format(summary.healthyMinAmount)} a ${currencyFormatter.format(summary.healthyMaxAmount)} · Margem saudável restante: ${currencyFormatter.format(summary.remainingHealthyMargin)}.',
+                    style: TextStyle(
+                      color: summary.isAboveHealthyCeiling
+                          ? AppTheme.warningDark
+                          : AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showUpsertCreditCardDialog(
+    BuildContext context, {
+    CreditCard? existing,
+  }) async {
+    final nameCtrl = TextEditingController(
+      text: existing?.name ?? 'Cartão Secundário',
+    );
+    final limitCtrl = TextEditingController(
+      text: (existing?.limitAmount ?? 1500.0).toStringAsFixed(2),
+    );
+    final minPctCtrl = TextEditingController(
+      text: (existing?.targetMinPercent ?? 50.0).toStringAsFixed(0),
+    );
+    final maxPctCtrl = TextEditingController(
+      text: (existing?.targetMaxPercent ?? 80.0).toStringAsFixed(0),
+    );
+    final dueDayCtrl = TextEditingController(
+      text: (existing?.dueDay ?? 10).toString(),
+    );
+    var isPrimary = existing?.isPrimary ?? false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.cardSurface,
+              title: Text(
+                existing != null
+                    ? 'Editar ${existing.name}'
+                    : 'Novo Cartão de Crédito',
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome do Cartão',
+                        hintText: 'Ex: Cartão Principal, Cartão Secundário',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: limitCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Limite Total (R\$)',
+                        hintText: 'Ex: 1500.00',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: minPctCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Piso Ideal (%)',
+                              hintText: '50',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: maxPctCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Teto Saudável (%)',
+                              hintText: '80',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: dueDayCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Dia de Vencimento da Fatura (1 a 31)',
+                        hintText: '10',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Definir como Cartão Principal',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      value: isPrimary,
+                      activeThumbColor: Colors.white,
+                      activeTrackColor: AppTheme.emeraldPrimary,
+                      onChanged: (val) =>
+                          setDialogState(() => isPrimary = val),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final name = nameCtrl.text.trim();
+                    final limit = double.tryParse(
+                      limitCtrl.text.trim().replaceAll(',', '.'),
+                    );
+                    final minPct = double.tryParse(
+                          minPctCtrl.text.trim().replaceAll(',', '.'),
+                        ) ??
+                        50.0;
+                    final maxPct = double.tryParse(
+                          maxPctCtrl.text.trim().replaceAll(',', '.'),
+                        ) ??
+                        80.0;
+                    final dueDay =
+                        int.tryParse(dueDayCtrl.text.trim()) ?? 10;
+
+                    if (name.isEmpty || limit == null || limit <= 0) return;
+
+                    await ref.read(appDatabaseProvider).upsertCreditCard(
+                          id: existing?.id,
+                          clientUuid: existing?.clientUuid,
+                          name: name,
+                          limitAmount: limit,
+                          targetMinPercent: minPct,
+                          targetMaxPercent: maxPct,
+                          dueDay: dueDay,
+                          isPrimary: isPrimary,
+                        );
+
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                  },
+                  child: const Text('Salvar Cartão'),
+                ),
+              ],
+            );
+          },
         );
       },
     );

@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
+import '../../../../core/services/bill_notification_service.dart';
+import '../../../../core/services/csv_export_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../auth/domain/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../planning/domain/models/credit_card_model.dart';
 import '../../../transactions/data/services/cloud_sync_service.dart';
+import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
 import '../../domain/models/user_profile.dart';
+import '../../../budget_agent/data/services/budget_agent_service.dart';
+import '../../../budget_agent/domain/models/agent_prediction_models.dart';
 
 class MoreScreen extends ConsumerStatefulWidget {
   const MoreScreen({super.key});
@@ -65,6 +70,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(userProfileProvider);
+    final quotaAsync = ref.watch(agentQuotaStatusProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
     final transactions = transactionsAsync.value ?? const <Transaction>[];
     final pendingTransactions =
@@ -107,16 +113,28 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                           pendingCount: pendingCount,
                           pendingTransactions: pendingTransactions,
                         ),
+                        const SizedBox(height: 18),
+                        _buildAiAgentQuotaCard(context, quotaAsync),
                       ],
                     ),
                   ),
                   const SizedBox(width: 20),
                   Expanded(
-                    child: _buildFinancialSettingsSection(
-                      context: context,
-                      profile: profile,
-                      transactions: transactions,
-                      currencyFormatter: currencyFormatter,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildBillRemindersSection(
+                          context: context,
+                          profile: profile,
+                        ),
+                        const SizedBox(height: 22),
+                        _buildFinancialSettingsSection(
+                          context: context,
+                          profile: profile,
+                          transactions: transactions,
+                          currencyFormatter: currencyFormatter,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -133,9 +151,20 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 pendingCount: pendingCount,
                 pendingTransactions: pendingTransactions,
               ),
+              const SizedBox(height: 18),
+
+              // Card Status da IA & Limites da Cota (Groq Cloud no Render)
+              _buildAiAgentQuotaCard(context, quotaAsync),
               const SizedBox(height: 22),
 
-              // 3. Lista Configurações financeiras
+              // 3. Alertas & Notificações de Boletos (2x/dia) (T023)
+              _buildBillRemindersSection(
+                context: context,
+                profile: profile,
+              ),
+              const SizedBox(height: 22),
+
+              // 4. Lista Configurações financeiras
               _buildFinancialSettingsSection(
                 context: context,
                 profile: profile,
@@ -490,6 +519,487 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
     );
   }
 
+  Widget _buildAiAgentQuotaCard(
+    BuildContext context,
+    AsyncValue<AgentQuotaStatus> quotaAsync,
+  ) {
+    final status = quotaAsync.value ?? AgentQuotaStatus.offline();
+    final isLoading = quotaAsync.isLoading;
+    final isOnline = status.isOnline;
+
+    final badgeBg =
+        isOnline ? AppTheme.emeraldBadgeBg : AppTheme.warningBadgeBg;
+    final badgeDotColor =
+        isOnline ? AppTheme.emeraldDeep : AppTheme.warningAmber;
+    final badgeTextColor =
+        isOnline ? AppTheme.emeraldDeep : AppTheme.warningDark;
+    final badgeText = isOnline
+        ? 'Groq Online • ${status.latencyMs}ms'
+        : 'IA Offline • Fallback Local Ativo';
+
+    return Container(
+      key: const Key('more_ai_agent_quota_card'),
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Cabeçalho + Badge de Status em Tempo Real
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: isOnline
+                      ? AppTheme.emeraldPrimary.withValues(alpha: 0.12)
+                      : AppTheme.warningAmber.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.psychology_outlined,
+                  color: isOnline
+                      ? AppTheme.emeraldPrimary
+                      : AppTheme.warningDark,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Status da IA & Limites da Cota (Groq)',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Render Cloud · ${status.provider}',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Badge de status em tempo real
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: badgeBg,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: badgeDotColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    badgeText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: badgeTextColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 2. Barras de Progresso Didáticas de Limites da Cota
+          // Requisições Diárias (RPD)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Flexible(
+                child: Text(
+                  'Requisições Diárias (RPD)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                '${status.totalRequests} / ${status.dailyRequestLimit} req (${status.requestUsagePercent.toStringAsFixed(1)}%)',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: status.requestUsageRatio,
+              minHeight: 6,
+              backgroundColor: AppTheme.subtleSurface,
+              color: status.requestUsageRatio > 0.8
+                  ? AppTheme.warningAmber
+                  : AppTheme.emeraldPrimary,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Tokens Processados (TPM)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Flexible(
+                child: Text(
+                  'Tokens Processados (Teto 12.000 TPM)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                '${status.totalTokensUsed} / ${status.minuteTokenLimit} TPM',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: status.tokenUsageRatio,
+              minHeight: 6,
+              backgroundColor: AppTheme.subtleSurface,
+              color: AppTheme.emeraldPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 3. Chips de Modelos e Fallback
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _buildQuotaChip(
+                icon: Icons.chat_bubble_outline_rounded,
+                label: 'Texto: ${status.activeTextModel}',
+              ),
+              _buildQuotaChip(
+                icon: Icons.document_scanner_outlined,
+                label: 'OCR: ${status.activeOcrModel}',
+              ),
+              if (status.lastModelUsed.isNotEmpty)
+                _buildQuotaChip(
+                  icon: Icons.history_rounded,
+                  label: 'Último: ${status.lastModelUsed}',
+                ),
+              _buildQuotaChip(
+                icon: Icons.alt_route_rounded,
+                label: 'Fallbacks ativados: ${status.fallbackTriggers}',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 4. Botão "Atualizar Status da IA"
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('more_refresh_ai_quota_button'),
+              onPressed: isLoading
+                  ? null
+                  : () => ref.invalidate(agentQuotaStatusProvider),
+              icon: isLoading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppTheme.emeraldPrimary,
+                      ),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 16),
+              label: Text(
+                isLoading ? 'Consultando...' : 'Atualizar Status da IA',
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.emeraldPrimary,
+                side: const BorderSide(color: AppTheme.cardBorder),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuotaChip({
+    required IconData icon,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.subtleSurface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.textMuted),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillRemindersSection({
+    required BuildContext context,
+    required UserProfile profile,
+  }) {
+    final nextWindowLabel = BillNotificationService.describeNextReminderWindow(
+      DateTime.now(),
+      reminderTime1: profile.reminderTime1,
+      reminderTime2: profile.reminderTime2,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            const Text(
+              'Alertas de Boletos (2x ao dia)',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: AppTheme.emeraldBadgeDecoration,
+              child: Text(
+                'Próximo: $nextWindowLabel',
+                style: const TextStyle(
+                  color: AppTheme.emeraldDeep,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          key: const Key('more_bill_reminders_card'),
+          decoration: AppTheme.whiteCardDecoration,
+          child: Column(
+            children: [
+              _SettingsTile(
+                key: const Key('more_setting_reminder_time_1'),
+                icon: Icons.wb_sunny_outlined,
+                title: '1º Horário de Lembrete Diário',
+                subtitle:
+                    'Notificação matinal às ${profile.reminderTime1} (toque para alterar)',
+                onTap: () => _pickReminderTime(
+                  context: context,
+                  slot: 1,
+                  currentTime: profile.reminderTime1,
+                ),
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 1),
+              _SettingsTile(
+                key: const Key('more_setting_reminder_time_2'),
+                icon: Icons.nights_stay_outlined,
+                title: '2º Horário de Lembrete Diário',
+                subtitle:
+                    'Notificação vespertina/noturna às ${profile.reminderTime2} (toque para alterar)',
+                onTap: () => _pickReminderTime(
+                  context: context,
+                  slot: 2,
+                  currentTime: profile.reminderTime2,
+                ),
+              ),
+              const Divider(color: AppTheme.cardBorder, height: 1),
+              Material(
+                color: Colors.transparent,
+                child: SwitchListTile(
+                  key: const Key('more_setting_email_bill_notifications'),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+                  secondary: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppTheme.subtleSurface,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.mark_email_read_outlined,
+                      color: AppTheme.textSecondary,
+                      size: 20,
+                    ),
+                  ),
+                  title: const Text(
+                    'Receber Lembretes por E-mail',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    profile.emailBillNotifications
+                        ? 'Envia resumo 2x/dia (${profile.reminderTime1} e ${profile.reminderTime2}) para ${profile.email}'
+                        : 'Alertas por e-mail desativados (apenas notificações no app)',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                  value: profile.emailBillNotifications,
+                  activeThumbColor: Colors.white,
+                  activeTrackColor: AppTheme.emeraldPrimary,
+                  inactiveThumbColor: AppTheme.textMuted,
+                  inactiveTrackColor: AppTheme.cardBorder,
+                  onChanged: (enabled) async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    await ref
+                        .read(userProfileProvider.notifier)
+                        .updateBillNotificationPreferences(
+                          emailBillNotifications: enabled,
+                        );
+                    if (!mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          enabled
+                              ? 'Lembretes de boletos por e-mail ativados!'
+                              : 'Lembretes de boletos por e-mail pausados.',
+                        ),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickReminderTime({
+    required BuildContext context,
+    required int slot,
+    required String currentTime,
+  }) async {
+    final parts = currentTime.split(':');
+    final initialHour =
+        parts.length == 2 ? (int.tryParse(parts[0]) ?? (slot == 1 ? 9 : 18)) : (slot == 1 ? 9 : 18);
+    final initialMinute =
+        parts.length == 2 ? (int.tryParse(parts[1]) ?? 0) : 0;
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: initialHour.clamp(0, 23),
+        minute: initialMinute.clamp(0, 59),
+      ),
+      helpText: 'SELECIONE O $slotº HORÁRIO DIÁRIO (24H)',
+      cancelText: 'Cancelar',
+      confirmText: 'Salvar Horário',
+      builder: (ctx, child) {
+        return MediaQuery(
+          data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+    );
+
+    if (picked == null || !mounted) return;
+
+    final formatted =
+        '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+
+    final messenger = ScaffoldMessenger.of(this.context);
+    if (slot == 1) {
+      await ref
+          .read(userProfileProvider.notifier)
+          .updateBillNotificationPreferences(reminderTime1: formatted);
+    } else {
+      await ref
+          .read(userProfileProvider.notifier)
+          .updateBillNotificationPreferences(reminderTime2: formatted);
+    }
+
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          '$slotº horário diário de alerta de boletos atualizado para $formatted!',
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Widget _buildFinancialSettingsSection({
     required BuildContext context,
     required UserProfile profile,
@@ -543,7 +1053,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 icon: Icons.download_rounded,
                 title: 'Exportar Relatório CSV',
                 subtitle:
-                    'Exportar ${transactions.length} transação(ões) do banco local',
+                    'Exportar transações (${transactions.length}), boletos e cartões em RFC-4180',
                 onTap: () => _exportCsvReport(context, transactions),
               ),
               const Divider(color: AppTheme.cardBorder, height: 1),
@@ -716,27 +1226,21 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
     BuildContext context,
     List<Transaction> transactions,
   ) async {
-    final buffer = StringBuffer(
-      'id,descricao,categoria,tipo,valor,data,sincronizado\n',
-    );
-    final dateFmt = DateFormat('yyyy-MM-dd');
-    for (final tx in transactions) {
-      final safeDesc = tx.description.replaceAll(',', ' ');
-      final safeCat = tx.category.replaceAll(',', ' ');
-      buffer.writeln(
-        '${tx.id ?? ""},$safeDesc,$safeCat,${tx.type.name},${tx.amount.toStringAsFixed(2)},${dateFmt.format(tx.date)},${tx.isSynced}',
-      );
-    }
+    final profile = ref.read(userProfileProvider);
+    final bills = (ref.read(watchBillsProvider).value ?? const <Bill>[])
+        .where((b) => !b.isDeleted)
+        .toList();
+    final creditCards =
+        (ref.read(watchCreditCardsProvider).value ?? const <LocalCreditCard>[])
+            .map(CreditCard.fromLocal)
+            .toList();
 
-    await Clipboard.setData(ClipboardData(text: buffer.toString()));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Relatório CSV (${transactions.length} registros) copiado para a área de transferência!',
-        ),
-        behavior: SnackBarBehavior.floating,
-      ),
+    await CsvExportService.showExportModal(
+      context,
+      transactions: transactions,
+      bills: bills,
+      creditCards: creditCards,
+      userEmail: profile.email,
     );
   }
 }

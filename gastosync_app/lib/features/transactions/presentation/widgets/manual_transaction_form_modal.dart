@@ -17,14 +17,20 @@ import '../controllers/transactions_controller.dart';
 class ManualTransactionFormModal extends ConsumerStatefulWidget {
   const ManualTransactionFormModal({
     this.startInBillMode = false,
+    this.initialTransaction,
+    this.initialBill,
     super.key,
   });
 
   final bool startInBillMode;
+  final Transaction? initialTransaction;
+  final Bill? initialBill;
 
   static Future<bool?> show(
     BuildContext context, {
     bool startInBillMode = false,
+    Transaction? initialTransaction,
+    Bill? initialBill,
   }) {
     final width = MediaQuery.sizeOf(context).width;
     if (width >= 600) {
@@ -37,6 +43,8 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
             constraints: const BoxConstraints(maxWidth: 520),
             child: ManualTransactionFormModal(
               startInBillMode: startInBillMode,
+              initialTransaction: initialTransaction,
+              initialBill: initialBill,
             ),
           ),
         ),
@@ -55,6 +63,8 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
         child: ManualTransactionFormModal(
           startInBillMode: startInBillMode,
+          initialTransaction: initialTransaction,
+          initialBill: initialBill,
         ),
       ),
     );
@@ -79,6 +89,7 @@ class _ManualTransactionFormModalState
   bool _isCreditCardCharge = false;
   String _selectedCategory = 'Alimentação';
   String _selectedPaymentMethod = 'PIX';
+  String? _selectedCreditCardUuid;
   DateTime _selectedDate = DateTime.now();
 
   static const List<String> _paymentMethods = [
@@ -131,13 +142,64 @@ class _ManualTransactionFormModalState
         : AppTheme.textMuted;
   });
 
+  bool get _isEditingTransaction => widget.initialTransaction != null;
+  bool get _isEditingBill => widget.initialBill != null;
+  bool get _isEditing => _isEditingTransaction || _isEditingBill;
+
   @override
   void initState() {
     super.initState();
-    _isBillMode = widget.startInBillMode;
-    if (_isBillMode) {
+    final initialBill = widget.initialBill;
+    final initialTx = widget.initialTransaction;
+
+    if (initialBill != null) {
+      _isBillMode = true;
       _selectedType = TransactionType.expense;
-      _selectedCategory = 'Moradia';
+      _descriptionController.text = initialBill.description;
+      _amountController.text =
+          BrlCurrencyInputFormatter.formatValue(initialBill.amount);
+      _selectedDate = initialBill.dueDate;
+      final cat = initialBill.category.trim();
+      if (cat.isNotEmpty && !_isRendaCategory(cat)) {
+        if (!_categories.contains(cat)) {
+          _categories.add(cat);
+        }
+        _selectedCategory = cat;
+      } else {
+        _selectedCategory = 'Moradia';
+      }
+      _barcodeController.text = initialBill.barcode;
+      _isRecurring = initialBill.isRecurring;
+      _isCreditCardCharge = initialBill.isCreditCardCharge;
+      _selectedCreditCardUuid = initialBill.creditCardUuid;
+    } else if (initialTx != null) {
+      _isBillMode = false;
+      _selectedType = initialTx.type;
+      _descriptionController.text = initialTx.description;
+      _amountController.text =
+          BrlCurrencyInputFormatter.formatValue(initialTx.amount);
+      _selectedDate = initialTx.date;
+      final cat = initialTx.category.trim();
+      if (initialTx.isIncome) {
+        _selectedCategory = 'Renda';
+      } else if (cat.isNotEmpty && !_isRendaCategory(cat)) {
+        if (!_categories.contains(cat)) {
+          _categories.add(cat);
+        }
+        _selectedCategory = cat;
+      } else {
+        _selectedCategory = 'Alimentação';
+      }
+      if (_paymentMethods.contains(initialTx.paymentMethod)) {
+        _selectedPaymentMethod = initialTx.paymentMethod;
+      }
+      _selectedCreditCardUuid = initialTx.creditCardUuid;
+    } else {
+      _isBillMode = widget.startInBillMode;
+      if (_isBillMode) {
+        _selectedType = TransactionType.expense;
+        _selectedCategory = 'Moradia';
+      }
     }
   }
 
@@ -323,6 +385,186 @@ class _ManualTransactionFormModalState
     }
   }
 
+  Future<void> _promptNewCreditCard() async {
+    final nameCtrl = TextEditingController(text: 'Cartão Secundário');
+    final limitCtrl = TextEditingController(text: '1500,00');
+    final dueDayCtrl = TextEditingController(text: '15');
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardSurface,
+        title: const Text('Novo Cartão de Crédito'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nome / Apelido do Cartão',
+                hintText: 'Ex: Cartão Secundário, Nubank, Itaú...',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: limitCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Limite Total do Cartão (R\$)',
+                hintText: 'Ex: 1500,00',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dueDayCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Dia de Vencimento da Fatura (1 a 31)',
+                hintText: 'Ex: 10',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Salvar Cartão'),
+          ),
+        ],
+      ),
+    );
+
+    if (created == true && mounted) {
+      final name = nameCtrl.text.trim();
+      final limit = double.tryParse(
+            limitCtrl.text.trim().replaceAll('.', '').replaceAll(',', '.'),
+          ) ??
+          double.tryParse(limitCtrl.text.trim().replaceAll(',', '.')) ??
+          1500.0;
+      final dueDay = (int.tryParse(dueDayCtrl.text.trim()) ?? 10).clamp(1, 31);
+      final newUuid = AppDatabase.generateClientUuid();
+
+      if (name.isNotEmpty && limit > 0) {
+        await ref.read(appDatabaseProvider).upsertCreditCard(
+              clientUuid: newUuid,
+              name: name,
+              limitAmount: limit,
+              targetMinPercent: 50.0,
+              targetMaxPercent: 80.0,
+              dueDay: dueDay,
+              isPrimary: false,
+            );
+        if (mounted) {
+          setState(() {
+            _selectedCreditCardUuid = newUuid;
+          });
+        }
+      }
+    }
+  }
+
+  Widget _buildCreditCardSelector({
+    required List<LocalCreditCard> cards,
+    required bool isBusy,
+  }) {
+    final currencyFmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final defaultUuid = cards.isNotEmpty
+        ? (cards.where((c) => c.isPrimary).firstOrNull ?? cards.first)
+            .clientUuid
+        : null;
+    final activeUuid = (_selectedCreditCardUuid != null &&
+            cards.any((c) => c.clientUuid == _selectedCreditCardUuid))
+        ? _selectedCreditCardUuid
+        : defaultUuid;
+
+    return Container(
+      key: const Key('manual_credit_card_selector_container'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.subtleSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.credit_card_rounded,
+                size: 16,
+                color: AppTheme.emeraldPrimary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _isBillMode
+                    ? 'Cartão da Cobrança / Assinatura'
+                    : 'Cartão de Crédito Utilizado',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ...cards.map((card) {
+                final isSelected = card.clientUuid == activeUuid;
+                return ChoiceChip(
+                  key: Key('credit_card_chip_${card.name}'),
+                  label: Text(
+                    '${card.name} (${currencyFmt.format(card.limitAmount)})',
+                  ),
+                  selected: isSelected,
+                  showCheckmark: false,
+                  selectedColor: AppTheme.navyDark,
+                  backgroundColor: AppTheme.cardSurface,
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.white : AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                  onSelected: isBusy
+                      ? null
+                      : (_) {
+                          setState(() {
+                            _selectedCreditCardUuid = card.clientUuid;
+                          });
+                        },
+                );
+              }),
+              ActionChip(
+                key: const Key('add_credit_card_chip'),
+                backgroundColor: AppTheme.emeraldSoftBg,
+                side: const BorderSide(color: AppTheme.emeraldBadgeBg),
+                label: const Text(
+                  '+ Novo Cartão',
+                  style: TextStyle(
+                    color: AppTheme.emeraldDeep,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onPressed: isBusy ? null : _promptNewCreditCard,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _selectDate() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
@@ -352,40 +594,97 @@ class _ManualTransactionFormModalState
     setState(() => _isSubmitting = true);
     try {
       final controller = ref.read(transactionsControllerProvider);
+      final cards =
+          ref.read(watchCreditCardsProvider).value ?? const <LocalCreditCard>[];
+      final defaultCardUuid = cards.isNotEmpty
+          ? (cards.where((c) => c.isPrimary).firstOrNull ?? cards.first)
+              .clientUuid
+          : null;
+      final selectedCardUuid =
+          (_selectedCreditCardUuid != null &&
+                  _selectedCreditCardUuid!.trim().isNotEmpty)
+              ? _selectedCreditCardUuid!.trim()
+              : defaultCardUuid;
 
       if (_isBillMode) {
-        await controller.createBill(
-          description: description,
-          amount: amount,
-          dueDate: _selectedDate,
-          category: effectiveCategory,
-          barcode: _barcodeController.text.trim(),
-          isRecurring: _isRecurring,
-          isCreditCardCharge: _isCreditCardCharge,
-        );
-      } else {
-        final prediction = _lastAiPrediction;
-
-        if (prediction != null) {
-          await controller.createAiConfirmedTransaction(
-            description: description,
-            amount: amount,
-            date: _selectedDate,
-            type: _selectedType,
-            category: effectiveCategory,
-            rawSuggestion: jsonEncode(prediction.toJson()),
-            confidenceScore: prediction.confidence,
-            categorySuggested: effectiveCategory,
-            budgetTip: prediction.budgetTip,
+        final effectiveBillCardUuid =
+            _isCreditCardCharge ? selectedCardUuid : null;
+        if (widget.initialBill != null) {
+          await controller.updateBill(
+            widget.initialBill!.copyWith(
+              description: description,
+              amount: amount,
+              dueDate: _selectedDate,
+              category: effectiveCategory,
+              barcode: _barcodeController.text.trim(),
+              isRecurring: _isRecurring,
+              isCreditCardCharge: _isCreditCardCharge,
+              creditCardUuid: effectiveBillCardUuid,
+              clearCreditCardUuid: effectiveBillCardUuid == null,
+              isSynced: false,
+              updatedAt: DateTime.now(),
+            ),
           );
         } else {
-          await controller.createManualTransaction(
+          await controller.createBill(
             description: description,
             amount: amount,
-            date: _selectedDate,
-            type: _selectedType,
+            dueDate: _selectedDate,
             category: effectiveCategory,
+            barcode: _barcodeController.text.trim(),
+            isRecurring: _isRecurring,
+            isCreditCardCharge: _isCreditCardCharge,
+            creditCardUuid: effectiveBillCardUuid,
           );
+        }
+      } else {
+        final isCreditExpense = _selectedType == TransactionType.expense &&
+            _selectedPaymentMethod == 'Crédito';
+        final effectiveTxCardUuid = isCreditExpense ? selectedCardUuid : null;
+
+        if (widget.initialTransaction != null) {
+          await controller.updateTransaction(
+            widget.initialTransaction!.copyWith(
+              description: description,
+              amount: amount,
+              date: _selectedDate,
+              type: _selectedType,
+              category: effectiveCategory,
+              paymentMethod: _selectedPaymentMethod,
+              creditCardUuid: effectiveTxCardUuid,
+              clearCreditCardUuid: effectiveTxCardUuid == null,
+              isSynced: false,
+              updatedAt: DateTime.now(),
+            ),
+          );
+        } else {
+          final prediction = _lastAiPrediction;
+
+          if (prediction != null) {
+            await controller.createAiConfirmedTransaction(
+              description: description,
+              amount: amount,
+              date: _selectedDate,
+              type: _selectedType,
+              category: effectiveCategory,
+              paymentMethod: _selectedPaymentMethod,
+              creditCardUuid: effectiveTxCardUuid,
+              rawSuggestion: jsonEncode(prediction.toJson()),
+              confidenceScore: prediction.confidence,
+              categorySuggested: effectiveCategory,
+              budgetTip: prediction.budgetTip,
+            );
+          } else {
+            await controller.createManualTransaction(
+              description: description,
+              amount: amount,
+              date: _selectedDate,
+              type: _selectedType,
+              category: effectiveCategory,
+              paymentMethod: _selectedPaymentMethod,
+              creditCardUuid: effectiveTxCardUuid,
+            );
+          }
         }
 
         if (_selectedType == TransactionType.expense) {
@@ -428,6 +727,8 @@ class _ManualTransactionFormModalState
     final transactions =
         ref.watch(watchTransactionsProvider).value ?? const <Transaction>[];
     final bills = ref.watch(watchBillsProvider).value ?? const <Bill>[];
+    final creditCards =
+        ref.watch(watchCreditCardsProvider).value ?? const <LocalCreditCard>[];
 
     // Unifica categorias de despesa (nunca inclui 'Renda')
     final categoryMap = <String, String>{};
@@ -477,9 +778,9 @@ class _ManualTransactionFormModalState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'NOVO LANÇAMENTO',
-                        style: TextStyle(
+                      Text(
+                        _isEditing ? 'EDITAR REGISTRO' : 'NOVO LANÇAMENTO',
+                        style: const TextStyle(
                           color: AppTheme.textMuted,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -489,8 +790,12 @@ class _ManualTransactionFormModalState
                       const SizedBox(height: 2),
                       Text(
                         _isBillMode
-                            ? 'Adicionar boleto / conta'
-                            : 'Adicionar transação',
+                            ? (_isEditingBill
+                                ? 'Editar boleto / conta'
+                                : 'Adicionar boleto / conta')
+                            : (_isEditingTransaction
+                                ? 'Editar transação'
+                                : 'Adicionar transação'),
                         style: const TextStyle(
                           color: AppTheme.textPrimary,
                           fontSize: 20,
@@ -1006,6 +1311,14 @@ class _ManualTransactionFormModalState
                 }).toList(),
               ),
               const SizedBox(height: 16),
+              if (_selectedType == TransactionType.expense &&
+                  _selectedPaymentMethod == 'Crédito') ...[
+                _buildCreditCardSelector(
+                  cards: creditCards,
+                  isBusy: isBusy,
+                ),
+                const SizedBox(height: 16),
+              ],
             ],
 
             // Seletor de Data / Data de Vencimento
@@ -1229,6 +1542,13 @@ class _ManualTransactionFormModalState
                   ],
                 ),
               ),
+              if (_isCreditCardCharge) ...[
+                const SizedBox(height: 14),
+                _buildCreditCardSelector(
+                  cards: creditCards,
+                  isBusy: isBusy,
+                ),
+              ],
             ],
             const SizedBox(height: 22),
 
@@ -1259,8 +1579,12 @@ class _ManualTransactionFormModalState
                       )
                     : Text(
                         _isBillMode
-                            ? 'Salvar Boleto / Conta'
-                            : 'Confirmar e Salvar',
+                            ? (_isEditingBill
+                                ? 'Salvar Alterações do Boleto'
+                                : 'Salvar Boleto / Conta')
+                            : (_isEditingTransaction
+                                ? 'Salvar Alterações'
+                                : 'Confirmar e Salvar'),
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,

@@ -968,6 +968,156 @@ func (h *AuthHandler) Me(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(user)
 }
 
+func isValidReminderTime(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if len(trimmed) != 5 || trimmed[2] != ':' {
+		return false
+	}
+	t, err := time.Parse("15:04", trimmed)
+	if err != nil {
+		return false
+	}
+	return t.Format("15:04") == trimmed
+}
+
+// UpdateProfile updates the authenticated user's financial profile and twice-daily bill reminder preferences (PUT /api/v1/auth/profile).
+func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
+	userID, _ := c.Locals(middleware.UserIDKey).(string)
+	if strings.TrimSpace(userID) == "" {
+		return response.Unauthorized(
+			c,
+			"UNAUTHORIZED",
+			"Sessão inválida ou expirada.",
+		)
+	}
+
+	var req models.UpdateProfileRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(
+			c,
+			"INVALID_PAYLOAD",
+			"Não foi possível processar os dados enviados para atualização do perfil.",
+			nil,
+		)
+	}
+
+	var normalizedName *string
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" || len(trimmed) > 120 {
+			return response.BadRequest(
+				c,
+				"INVALID_NAME",
+				"O nome deve conter entre 1 e 120 caracteres.",
+				map[string]string{"name": "Informe um nome válido (1 a 120 caracteres)."},
+			)
+		}
+		normalizedName = &trimmed
+	}
+
+	if req.MonthlyIncome != nil && *req.MonthlyIncome < 0 {
+		return response.BadRequest(
+			c,
+			"INVALID_MONTHLY_INCOME",
+			"A renda mensal base não pode ser negativa.",
+			map[string]string{"monthly_income": "Informe um valor maior ou igual a zero."},
+		)
+	}
+
+	if req.SavingsGoalPercent != nil && (*req.SavingsGoalPercent < 0 || *req.SavingsGoalPercent > 100) {
+		return response.BadRequest(
+			c,
+			"INVALID_SAVINGS_GOAL",
+			"A meta percentual de poupança deve estar entre 0% e 100%.",
+			map[string]string{"savings_goal_percent": "Informe um percentual entre 0 e 100."},
+		)
+	}
+
+	var normalizedTime1 *string
+	if req.ReminderTime1 != nil {
+		trimmed := strings.TrimSpace(*req.ReminderTime1)
+		if !isValidReminderTime(trimmed) {
+			return response.BadRequest(
+				c,
+				"INVALID_REMINDER_TIME_1",
+				"O 1º horário de lembrete deve estar no formato HH:MM (ex: 09:00).",
+				map[string]string{"reminder_time_1": "Formato esperado: HH:MM (00:00 a 23:59)."},
+			)
+		}
+		normalizedTime1 = &trimmed
+	}
+
+	var normalizedTime2 *string
+	if req.ReminderTime2 != nil {
+		trimmed := strings.TrimSpace(*req.ReminderTime2)
+		if !isValidReminderTime(trimmed) {
+			return response.BadRequest(
+				c,
+				"INVALID_REMINDER_TIME_2",
+				"O 2º horário de lembrete deve estar no formato HH:MM (ex: 18:00).",
+				map[string]string{"reminder_time_2": "Formato esperado: HH:MM (00:00 a 23:59)."},
+			)
+		}
+		normalizedTime2 = &trimmed
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+
+	var user models.User
+	const updateQuery = `
+		UPDATE users
+		SET name                     = COALESCE($2, name),
+		    monthly_income           = COALESCE($3, monthly_income),
+		    savings_goal_percent     = COALESCE($4, savings_goal_percent),
+		    reminder_time_1          = COALESCE($5, reminder_time_1),
+		    reminder_time_2          = COALESCE($6, reminder_time_2),
+		    email_bill_notifications = COALESCE($7, email_bill_notifications),
+		    updated_at               = NOW()
+		WHERE id = $1
+		RETURNING id, name, email, email_verified, email_verified_at, monthly_income, savings_goal_percent, reminder_time_1, reminder_time_2, email_bill_notifications, created_at
+	`
+	err := h.pool.QueryRow(
+		ctx,
+		updateQuery,
+		userID,
+		normalizedName,
+		req.MonthlyIncome,
+		req.SavingsGoalPercent,
+		normalizedTime1,
+		normalizedTime2,
+		req.EmailBillNotifications,
+	).Scan(
+		&user.ID,
+		&user.Name,
+		&user.Email,
+		&user.EmailVerified,
+		&user.EmailVerifiedAt,
+		&user.MonthlyIncome,
+		&user.SavingsGoalPercent,
+		&user.ReminderTime1,
+		&user.ReminderTime2,
+		&user.EmailBillNotifications,
+		&user.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return response.NotFound(
+				c,
+				"USER_NOT_FOUND",
+				"Perfil de usuário não encontrado no servidor.",
+			)
+		}
+		return response.InternalError(
+			c,
+			"PROFILE_UPDATE_FAILED",
+			"Não foi possível salvar as preferências do seu perfil no momento.",
+		)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(user)
+}
+
 func (h *AuthHandler) generateJWT(userID, email string) (string, error) {
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{

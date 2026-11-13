@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
+import '../../../../core/services/csv_export_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../planning/domain/models/credit_card_model.dart';
+import '../../../settings/domain/models/user_profile.dart';
 import '../../domain/models/bill.dart';
 import '../../domain/models/transaction.dart';
 import '../controllers/transactions_controller.dart';
@@ -78,6 +81,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(watchTransactionsProvider);
     final billsAsync = ref.watch(watchBillsProvider);
+    final creditCardsAsync = ref.watch(watchCreditCardsProvider);
+    final profile = ref.watch(userProfileProvider);
     final pendingBillsCount = ref.watch(pendingBillsCountProvider);
     final selectedSubTab = ref.watch(selectedTransactionsSubTabProvider);
     final budgets = ref.watch(watchBudgetsProvider).value ?? const <LocalBudget>[];
@@ -89,6 +94,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
     final bills =
         (billsAsync.value ?? const <Bill>[]).where((b) => !b.isDeleted).toList();
+    final creditCards = (creditCardsAsync.value ?? const <LocalCreditCard>[])
+        .map(CreditCard.fromLocal)
+        .toList();
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
@@ -162,7 +170,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1. Cabeçalho MOVIMENTAÇÕES + Badge verde "X sincronizadas"
+                // 1. Cabeçalho MOVIMENTAÇÕES + Badge verde "X sincronizadas" + Exportar CSV (T033)
                 _buildHeaderSection(
                   context: context,
                   syncedCount: syncedCount,
@@ -170,6 +178,13 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   totalCount: transactions.length,
                   selectedSubTab: selectedSubTab,
                   isDesktop: isDesktop,
+                  onExportCsv: () => CsvExportService.showExportModal(
+                    context,
+                    transactions: transactions,
+                    bills: bills,
+                    creditCards: creditCards,
+                    userEmail: profile.email,
+                  ),
                 ),
                 const SizedBox(height: 16),
 
@@ -235,6 +250,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     required int totalCount,
     required int selectedSubTab,
     required bool isDesktop,
+    required VoidCallback onExportCsv,
   }) {
     final badgeLabel = '$syncedCount sincronizada${syncedCount == 1 ? '' : 's'}';
 
@@ -311,8 +327,32 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             ),
           ),
         ],
+        const SizedBox(width: 8),
+        if (isDesktop)
+          OutlinedButton.icon(
+            key: const Key('transactions_export_csv_button'),
+            onPressed: onExportCsv,
+            icon: const Icon(Icons.download_rounded, size: 17),
+            label: const Text('Exportar CSV'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.textPrimary,
+              side: const BorderSide(color: AppTheme.cardBorder),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            ),
+          )
+        else
+          IconButton(
+            key: const Key('transactions_export_csv_button'),
+            tooltip: 'Exportar CSV',
+            onPressed: onExportCsv,
+            icon: const Icon(
+              Icons.download_rounded,
+              color: AppTheme.textSecondary,
+              size: 20,
+            ),
+          ),
         if (isDesktop) ...[
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           FilledButton.icon(
             key: const Key('add_transaction_fab'),
             onPressed: () => ManualTransactionFormModal.show(
@@ -397,17 +437,22 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Boletos a Pagar',
-                      style: TextStyle(
-                        color: selectedSubTab == 1
-                            ? Colors.white
-                            : AppTheme.textSecondary,
-                        fontSize: 13,
-                        fontWeight: selectedSubTab == 1
-                            ? FontWeight.w700
-                            : FontWeight.w600,
+                    Flexible(
+                      child: Text(
+                        'Boletos a Pagar',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selectedSubTab == 1
+                              ? Colors.white
+                              : AppTheme.textSecondary,
+                          fontSize: 13,
+                          fontWeight: selectedSubTab == 1
+                              ? FontWeight.w700
+                              : FontWeight.w600,
+                        ),
                       ),
                     ),
                     if (pendingBillsCount > 0) ...[
@@ -826,9 +871,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                       const SizedBox(height: 3),
                       Text(
-                        '${tx.category} · ${dateFormatter.format(tx.date)}',
+                        '${tx.category} · ${tx.paymentMethod} · ${dateFormatter.format(tx.date)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -881,6 +926,23 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 if (tx.id != null) ...[
                   const SizedBox(width: 4),
                   IconButton(
+                    key: Key('edit_transaction_button_${tx.id}'),
+                    icon: const Icon(
+                      Icons.edit_outlined,
+                      size: 18,
+                      color: AppTheme.textSecondary,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Editar transação',
+                    onPressed: () {
+                      ManualTransactionFormModal.show(
+                        context,
+                        initialTransaction: tx,
+                      );
+                    },
+                  ),
+                  IconButton(
+                    key: Key('delete_transaction_button_${tx.id}'),
                     icon: const Icon(
                       Icons.delete_outline_rounded,
                       size: 19,
@@ -1143,20 +1205,41 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           ),
                         ),
                         if (bill.id != null)
-                          IconButton(
-                            key: Key('delete_bill_button_${bill.id}'),
-                            icon: const Icon(
-                              Icons.delete_outline_rounded,
-                              size: 18,
-                              color: AppTheme.textMuted,
-                            ),
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Excluir boleto',
-                            onPressed: () {
-                              ref
-                                  .read(transactionsControllerProvider)
-                                  .deleteBill(bill.id!);
-                            },
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                key: Key('edit_bill_button_${bill.id}'),
+                                icon: const Icon(
+                                  Icons.edit_outlined,
+                                  size: 18,
+                                  color: AppTheme.textSecondary,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Editar boleto',
+                                onPressed: () {
+                                  ManualTransactionFormModal.show(
+                                    context,
+                                    initialBill: bill,
+                                  );
+                                },
+                              ),
+                              IconButton(
+                                key: Key('delete_bill_button_${bill.id}'),
+                                icon: const Icon(
+                                  Icons.delete_outline_rounded,
+                                  size: 18,
+                                  color: AppTheme.textMuted,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Excluir boleto',
+                                onPressed: () {
+                                  ref
+                                      .read(transactionsControllerProvider)
+                                      .deleteBill(bill.id!);
+                                },
+                              ),
+                            ],
                           ),
                       ],
                     ),

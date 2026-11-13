@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
+import '../../../planning/domain/models/credit_card_model.dart';
 import '../../../settings/domain/models/user_profile.dart';
 import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
@@ -41,6 +42,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final latestInsightAsync = ref.watch(latestAgentInsightStreamProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
     final billsAsync = ref.watch(watchBillsProvider);
+    final creditCardsAsync = ref.watch(watchCreditCardsProvider);
     final profile = ref.watch(userProfileProvider);
 
     final metrics = metricsAsync.value ??
@@ -49,6 +51,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final transactions = transactionsAsync.value ?? const <Transaction>[];
     final bills =
         (billsAsync.value ?? const <Bill>[]).where((b) => !b.isDeleted).toList();
+    final creditCards = (creditCardsAsync.value ?? const <LocalCreditCard>[])
+        .map(CreditCard.fromLocal)
+        .toList();
+    final cardSummaries = CreditCardUsageSummary.calculateAll(
+      cards: creditCards,
+      transactions: transactions,
+      bills: bills,
+    );
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
@@ -108,6 +118,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           bills,
                         ),
                         const SizedBox(height: 20),
+                        _buildCreditCardHealthyLimitCard(
+                          context,
+                          currencyFormatter,
+                          cardSummaries,
+                        ),
+                        const SizedBox(height: 20),
                         _buildRecentTransactionsAndInsightsCard(
                           context,
                           currencyFormatter,
@@ -139,6 +155,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 context,
                 currencyFormatter,
                 bills,
+              ),
+              const SizedBox(height: 22),
+              _buildCreditCardHealthyLimitCard(
+                context,
+                currencyFormatter,
+                cardSummaries,
               ),
               const SizedBox(height: 22),
               _buildBurnRateCard(
@@ -1412,6 +1434,217 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 );
               },
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Card de Indicador Resumido de Cartões & Limite Saudável (50%–80%) no Dashboard (T031 / US5)
+  Widget _buildCreditCardHealthyLimitCard(
+    BuildContext context,
+    NumberFormat formatter,
+    List<CreditCardUsageSummary> cardSummaries,
+  ) {
+    if (cardSummaries.isEmpty) return const SizedBox.shrink();
+
+    final totalLimit = cardSummaries.fold<double>(
+      0.0,
+      (sum, item) => sum + item.card.limitAmount,
+    );
+    final totalUsed = cardSummaries.fold<double>(
+      0.0,
+      (sum, item) => sum + item.totalUsedAmount,
+    );
+    final totalAvailable = math.max(0.0, totalLimit - totalUsed);
+    final overallPercent =
+        totalLimit > 0 ? (totalUsed / totalLimit) * 100.0 : 0.0;
+    final hasAlert = cardSummaries.any((s) => s.isAboveHealthyCeiling);
+
+    return Container(
+      key: const Key('dashboard_credit_cards_limit_card'),
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: hasAlert
+                      ? AppTheme.warningBadgeBg
+                      : AppTheme.emeraldSoftBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.credit_card_rounded,
+                  size: 18,
+                  color:
+                      hasAlert ? AppTheme.warningDark : AppTheme.emeraldDeep,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Cartões & Limite Saudável',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton(
+                key: const Key('dashboard_manage_credit_cards_button'),
+                onPressed: () => context.go('/planning'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.emeraldDeep,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text(
+                  'Gerenciar',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Faixa de resumo global dos cartões
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.subtleSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Utilizado no Mês',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_formatValue(formatter, totalUsed)} (${overallPercent.round()}%)',
+                        style: TextStyle(
+                          color: hasAlert
+                              ? AppTheme.errorColor
+                              : AppTheme.textPrimary,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 28,
+                  color: AppTheme.cardBorder,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Limite Livre',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatValue(formatter, totalAvailable),
+                        style: const TextStyle(
+                          color: AppTheme.emeraldDeep,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Lista compacta de cartões monitorados e faixa saudável (50%–80%)
+          ...cardSummaries.take(3).map((summary) {
+            final card = summary.card;
+            final ratio =
+                (summary.utilizationPercent / 100.0).clamp(0.0, 1.0);
+            final Color barColor;
+            if (summary.isLimitExceeded) {
+              barColor = AppTheme.errorColor;
+            } else if (summary.isAboveHealthyCeiling) {
+              barColor = AppTheme.warningAmber;
+            } else {
+              barColor = AppTheme.emeraldPrimary;
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${card.name} · Faixa ${card.targetMinPercent.round()}%–${card.targetMaxPercent.round()}%',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${summary.utilizationPercent.round()}% · Teto ${_formatValue(formatter, card.healthyMaxAmount)}',
+                        style: TextStyle(
+                          color: summary.isAboveHealthyCeiling
+                              ? AppTheme.errorColor
+                              : AppTheme.textSecondary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: ratio,
+                      minHeight: 6,
+                      backgroundColor: AppTheme.subtleSurface,
+                      valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );

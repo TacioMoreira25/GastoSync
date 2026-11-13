@@ -618,6 +618,13 @@ class AuthNotifier extends Notifier<AuthState> {
     ref.read(userProfileProvider.notifier).updateProfile(
           fullName: finalName,
           email: normalizedEmail,
+          monthlyBaseIncome: remoteRes.monthlyIncome,
+          savingsRateTarget: remoteRes.savingsGoalPercent,
+          reminderTime1: remoteRes.reminderTime1,
+          reminderTime2: remoteRes.reminderTime2,
+          emailBillNotifications: remoteRes.emailBillNotifications,
+          jwtToken: jwtToken,
+          syncToCloud: false,
         );
 
     try {
@@ -1191,6 +1198,13 @@ class AuthNotifier extends Notifier<AuthState> {
       ref.read(userProfileProvider.notifier).updateProfile(
             fullName: resolvedName,
             email: normalizedEmail,
+            monthlyBaseIncome: remoteVerify.monthlyIncome,
+            savingsRateTarget: remoteVerify.savingsGoalPercent,
+            reminderTime1: remoteVerify.reminderTime1,
+            reminderTime2: remoteVerify.reminderTime2,
+            emailBillNotifications: remoteVerify.emailBillNotifications,
+            jwtToken: jwtToken,
+            syncToCloud: false,
           );
       if (jwtToken != null && jwtToken.isNotEmpty) {
         await ref.read(cloudSyncServiceProvider).pullFromCloud(
@@ -1229,6 +1243,7 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
+    ref.read(userProfileProvider.notifier).clearSessionToken();
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
     state = const AuthState(isAuthenticated: false);
   }

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../features/dashboard/domain/services/financial_health_engine.dart';
 import '../../features/dashboard/presentation/controllers/dashboard_controller.dart';
 import '../../features/settings/domain/models/user_profile.dart';
 import '../constants/api_constants.dart';
@@ -615,18 +616,6 @@ class GastoSyncAiFloatingButton extends StatelessWidget {
   }
 }
 
-class _ChatMessage {
-  const _ChatMessage({
-    required this.text,
-    required this.isUser,
-    required this.timestamp,
-  });
-
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
-}
-
 class _QuickPrompt {
   const _QuickPrompt(this.icon, this.label);
 
@@ -721,13 +710,183 @@ class GastoSyncAiChatModal extends ConsumerStatefulWidget {
       _GastoSyncAiChatModalState();
 }
 
-class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
-  final _inputController = TextEditingController();
-  final _scrollController = ScrollController();
-  final _inputFocusNode = FocusNode();
-  final List<_ChatMessage> _messages = [];
-  bool _isSending = false;
-  bool _isAgentOnline = false;
+@immutable
+class ChatMessage {
+  const ChatMessage({
+    required this.text,
+    required this.isUser,
+    required this.timestamp,
+  });
+
+  final String text;
+  final bool isUser;
+  final DateTime timestamp;
+}
+
+@immutable
+class FiboChatState {
+  const FiboChatState({
+    this.messages = const <ChatMessage>[],
+    this.isSending = false,
+    this.isAgentOnline = true,
+  });
+
+  final List<ChatMessage> messages;
+  final bool isSending;
+  final bool isAgentOnline;
+
+  bool get hasUserMessages => messages.any((m) => m.isUser);
+
+  FiboChatState copyWith({
+    List<ChatMessage>? messages,
+    bool? isSending,
+    bool? isAgentOnline,
+  }) {
+    return FiboChatState(
+      messages: messages ?? this.messages,
+      isSending: isSending ?? this.isSending,
+      isAgentOnline: isAgentOnline ?? this.isAgentOnline,
+    );
+  }
+}
+
+class FiboChatNotifier extends Notifier<FiboChatState> {
+  static const String _initialGreeting =
+      'Olá! Sou o assistente financeiro do GastoSync.\n\n'
+      'Posso ajudar você a acompanhar seus gastos do mês, planejar sua meta de poupança e avaliar sua reserva de emergência.';
+
+  @override
+  FiboChatState build() {
+    return FiboChatState(
+      messages: [
+        ChatMessage(
+          text: _initialGreeting,
+          isUser: false,
+          timestamp: DateTime.now(),
+        ),
+      ],
+    );
+  }
+
+  void clearConversation() {
+    state = FiboChatState(
+      messages: [
+        ChatMessage(
+          text: 'Conversa reiniciada. Como posso ajudar com suas finanças hoje?',
+          isUser: false,
+          timestamp: DateTime.now(),
+        ),
+      ],
+      isSending: false,
+      isAgentOnline: state.isAgentOnline,
+    );
+  }
+
+  Future<void> sendMessage(String rawText) async {
+    final trimmed = rawText.trim();
+    if (trimmed.isEmpty || state.isSending) return;
+
+    final hasInjection = OwaspPromptSanitizer.containsInjectionAttempt(trimmed);
+    final sanitizedText = OwaspPromptSanitizer.sanitize(trimmed);
+
+    state = state.copyWith(
+      messages: [
+        ...state.messages,
+        ChatMessage(
+          text: sanitizedText,
+          isUser: true,
+          timestamp: DateTime.now(),
+        ),
+      ],
+      isSending: true,
+    );
+
+    if (hasInjection) {
+      state = state.copyWith(
+        messages: [
+          ...state.messages,
+          ChatMessage(
+            text:
+                'Proteção OWASP MASVS ativa: entrada bloqueada por conter padrões suspeitos de Prompt Injection. Envie apenas dúvidas ou lançamentos financeiros.',
+            isUser: false,
+            timestamp: DateTime.now(),
+          ),
+        ],
+        isSending: false,
+      );
+      return;
+    }
+
+    // Prepara payload de histórico com até as últimas 8 mensagens
+    final validMessages =
+        state.messages.where((m) => m.text.isNotEmpty).toList();
+    final recent = validMessages.length > 8
+        ? validMessages.sublist(validMessages.length - 8)
+        : validMessages;
+    final historyPayload = recent
+        .map((m) => {
+              'role': m.isUser ? 'user' : 'assistant',
+              'content': m.text,
+            })
+        .toList();
+
+    // Contexto financeiro do usuário local (Renda, Despesas, Poupança, Ritmo)
+    final metrics = ref.read(financialMetricsStreamProvider).value;
+    final profile = ref.read(userProfileProvider);
+    String? financialContext;
+    if (metrics != null) {
+      financialContext =
+          'Renda mensal: R\$ ${profile.monthlyBaseIncome.toStringAsFixed(2)} | '
+          'Despesas no mês: R\$ ${metrics.totalExpense.toStringAsFixed(2)} | '
+          'Saldo disponível: R\$ ${metrics.currentBalance.toStringAsFixed(2)} | '
+          'Meta de poupança: ${profile.savingsRateTarget.toStringAsFixed(0)}% | '
+          'Ritmo diário: R\$ ${metrics.dailyBurnRate.toStringAsFixed(2)}/dia';
+    }
+
+    String replyText;
+    bool isOnline = state.isAgentOnline;
+    try {
+      final dio = ref.read(dioProvider);
+      final response = await dio.post<Map<String, dynamic>>(
+        ApiConstants.agentChatEndpoint,
+        data: {
+          'message': sanitizedText,
+          'history': historyPayload,
+          'financial_context': ?financialContext,
+        },
+        options: Options(
+          sendTimeout: ApiConstants.textPredictionTimeout,
+          receiveTimeout: ApiConstants.textPredictionTimeout,
+        ),
+      );
+      final data = response.data;
+      final remoteReply =
+          data?['reply'] ?? data?['response'] ?? data?['recommendation'];
+      if (remoteReply != null && remoteReply.toString().trim().isNotEmpty) {
+        isOnline = true;
+        replyText = remoteReply.toString().trim();
+      } else {
+        isOnline = false;
+        replyText = _buildLocalFallbackReply(sanitizedText, metrics, profile);
+      }
+    } catch (_) {
+      isOnline = false;
+      replyText = _buildLocalFallbackReply(sanitizedText, metrics, profile);
+    }
+
+    state = state.copyWith(
+      messages: [
+        ...state.messages,
+        ChatMessage(
+          text: replyText,
+          isUser: false,
+          timestamp: DateTime.now(),
+        ),
+      ],
+      isSending: false,
+      isAgentOnline: isOnline,
+    );
+  }
 
   static String _fmtBrl(double value) {
     final abs = value.abs();
@@ -740,146 +899,11 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
     return '$prefix$intPart,${parts[1]}';
   }
 
-  static const List<_QuickPrompt> _quickPrompts = [
-    _QuickPrompt(
-      Icons.local_fire_department_rounded,
-      'Como está meu Burn Rate este mês?',
-    ),
-    _QuickPrompt(
-      Icons.savings_rounded,
-      'Como atingir 20% de taxa de poupança?',
-    ),
-    _QuickPrompt(
-      Icons.shield_rounded,
-      'Avaliar minha reserva de emergência',
-    ),
-  ];
-
-  bool get _hasUserMessages => _messages.any((m) => m.isUser);
-
-  @override
-  void initState() {
-    super.initState();
-    _inputFocusNode.addListener(_onFocusChanged);
-    _messages.add(
-      _ChatMessage(
-        text:
-            'Olá! Sou o assistente financeiro do GastoSync.\n\n'
-            'Posso ajudar você a acompanhar seus gastos do mês, planejar sua meta de poupança e avaliar sua reserva de emergência.',
-        isUser: false,
-        timestamp: DateTime.now(),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _inputFocusNode
-      ..removeListener(_onFocusChanged)
-      ..dispose();
-    _inputController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onFocusChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
-
-  Future<void> _sendPrompt([String? presetPrompt]) async {
-    final rawText = (presetPrompt ?? _inputController.text).trim();
-    if (rawText.isEmpty || _isSending) return;
-
-    if (presetPrompt == null) {
-      _inputController.clear();
-    }
-
-    final hasInjection = OwaspPromptSanitizer.containsInjectionAttempt(rawText);
-    final sanitizedText = OwaspPromptSanitizer.sanitize(rawText);
-
-    setState(() {
-      _messages.add(
-        _ChatMessage(
-          text: sanitizedText,
-          isUser: true,
-          timestamp: DateTime.now(),
-        ),
-      );
-      _isSending = true;
-    });
-    _scrollToBottom();
-
-    if (hasInjection) {
-      if (!mounted) return;
-      setState(() {
-        _messages.add(
-          _ChatMessage(
-            text:
-                'Proteção OWASP MASVS ativa: entrada bloqueada por conter padrões suspeitos de Prompt Injection. Envie apenas dúvidas ou lançamentos financeiros.',
-            isUser: false,
-            timestamp: DateTime.now(),
-          ),
-        );
-        _isSending = false;
-      });
-      _scrollToBottom();
-      return;
-    }
-
-    String replyText;
-    try {
-      final dio = ref.read(dioProvider);
-      final response = await dio.post<Map<String, dynamic>>(
-        ApiConstants.agentChatEndpoint,
-        data: {'message': sanitizedText},
-        options: Options(
-          sendTimeout: ApiConstants.textPredictionTimeout,
-          receiveTimeout: ApiConstants.textPredictionTimeout,
-        ),
-      );
-      final data = response.data;
-      final remoteReply =
-          data?['reply'] ?? data?['response'] ?? data?['recommendation'];
-      if (remoteReply != null && remoteReply.toString().trim().isNotEmpty) {
-        _isAgentOnline = true;
-        replyText = remoteReply.toString().trim();
-      } else {
-        _isAgentOnline = false;
-        replyText = _buildLocalContextualReply(sanitizedText);
-      }
-    } catch (_) {
-      _isAgentOnline = false;
-      replyText = _buildLocalContextualReply(sanitizedText);
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _messages.add(
-        _ChatMessage(
-          text: replyText,
-          isUser: false,
-          timestamp: DateTime.now(),
-        ),
-      );
-      _isSending = false;
-    });
-    _scrollToBottom();
-  }
-
-  String _buildLocalContextualReply(String prompt) {
-    final metrics = ref.read(financialMetricsStreamProvider).value;
-    final profile = ref.read(userProfileProvider);
+  static String _buildLocalFallbackReply(
+    String prompt,
+    FinancialMetrics? metrics,
+    UserProfile profile,
+  ) {
     final lower = prompt.trim().toLowerCase();
 
     if (metrics == null) {
@@ -927,7 +951,7 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
           '💡 O recomendado para segurança financeira é manter entre 6 e 12 meses do seu custo mensal guardado.';
     }
 
-    // 4. Mensagem livre (ex: "oi", dúvidas abertas) quando o agente de IA está fora do ar
+    // 4. Mensagem padrão
     return 'Olá, ${profile.firstName}! No momento o servidor de IA conversacional está fora do ar, por isso não consigo responder conversas livres agora.\n\n'
         'Mesmo offline, seu painel local está atualizado:\n'
         '• Saldo disponível: ${_fmtBrl(metrics.currentBalance)}\n'
@@ -936,28 +960,104 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
         '• Ritmo diário: ${_fmtBrl(metrics.dailyBurnRate)}/dia\n\n'
         'Você pode tocar nas sugestões rápidas ou perguntar sobre seu "Burn Rate", "Poupança" ou "Reserva" para consultar seus dados locais!';
   }
+}
+
+final fiboChatControllerProvider =
+    NotifierProvider<FiboChatNotifier, FiboChatState>(FiboChatNotifier.new);
+
+class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
+  final _inputController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _inputFocusNode = FocusNode();
+
+  static const List<_QuickPrompt> _quickPrompts = [
+    _QuickPrompt(
+      Icons.local_fire_department_rounded,
+      'Como está meu Burn Rate este mês?',
+    ),
+    _QuickPrompt(
+      Icons.savings_rounded,
+      'Como atingir 20% de taxa de poupança?',
+    ),
+    _QuickPrompt(
+      Icons.shield_rounded,
+      'Avaliar minha reserva de emergência',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _inputFocusNode.addListener(_onFocusChanged);
+  }
+
+  @override
+  void dispose() {
+    _inputFocusNode
+      ..removeListener(_onFocusChanged)
+      ..dispose();
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  Future<void> _sendPrompt([String? presetPrompt]) async {
+    final rawText = (presetPrompt ?? _inputController.text).trim();
+    if (rawText.isEmpty) return;
+
+    final chatState = ref.read(fiboChatControllerProvider);
+    if (chatState.isSending) return;
+
+    if (presetPrompt == null) {
+      _inputController.clear();
+    }
+
+    _scrollToBottom();
+    await ref.read(fiboChatControllerProvider.notifier).sendMessage(rawText);
+    _scrollToBottom();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final chatState = ref.watch(fiboChatControllerProvider);
+    final messages = chatState.messages;
+    final isSending = chatState.isSending;
+    final hasUserMessages = chatState.hasUserMessages;
+
     final items = <Widget>[
-      for (var i = 0; i < _messages.length; i++)
+      for (var i = 0; i < messages.length; i++)
         Padding(
           padding: EdgeInsets.only(
             top: i == 0
                 ? 0
-                : (_messages[i].isUser == _messages[i - 1].isUser ? 6 : 16),
+                : (messages[i].isUser == messages[i - 1].isUser ? 6 : 16),
           ),
-          child: _MessageBubble(message: _messages[i]),
+          child: _MessageBubble(message: messages[i]),
         ),
-      if (!_hasUserMessages) ...[
+      if (!hasUserMessages) ...[
         const SizedBox(height: 20),
         _SuggestionList(
           prompts: _quickPrompts,
-          enabled: !_isSending,
+          enabled: !isSending,
           onSelected: _sendPrompt,
         ),
       ],
-      if (_isSending) ...[
+      if (isSending) ...[
         const SizedBox(height: 16),
         const _TypingBubble(),
       ],
@@ -970,7 +1070,11 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
         children: [
           _ChatHeader(
             showDragHandle: widget.isBottomSheet,
-            isOnline: _isAgentOnline,
+            isOnline: chatState.isAgentOnline,
+            onClear: () {
+              ref.read(fiboChatControllerProvider.notifier).clearConversation();
+              _scrollToBottom();
+            },
             onClose: () => Navigator.of(context).pop(),
           ),
           Expanded(
@@ -980,13 +1084,13 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
               children: items,
             ),
           ),
-          _buildComposer(),
+          _buildComposer(isSending),
         ],
       ),
     );
   }
 
-  Widget _buildComposer() {
+  Widget _buildComposer(bool isSending) {
     final focused = _inputFocusNode.hasFocus;
 
     return Container(
@@ -1065,7 +1169,7 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
                       valueListenable: _inputController,
                       builder: (context, value, _) {
                         final canSend =
-                            value.text.trim().isNotEmpty && !_isSending;
+                            value.text.trim().isNotEmpty && !isSending;
                         return SizedBox(
                           width: 40,
                           height: 40,
@@ -1080,7 +1184,7 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
                               disabledBackgroundColor: AppTheme.cardBorder,
                               disabledForegroundColor: AppTheme.textMuted,
                             ),
-                            icon: _isSending
+                            icon: isSending
                                 ? const SizedBox(
                                     width: 16,
                                     height: 16,
@@ -1123,11 +1227,13 @@ class _ChatHeader extends StatelessWidget {
     required this.showDragHandle,
     required this.isOnline,
     required this.onClose,
+    this.onClear,
   });
 
   final bool showDragHandle;
   final bool isOnline;
   final VoidCallback onClose;
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -1246,6 +1352,21 @@ class _ChatHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              if (onClear != null) ...[
+                IconButton(
+                  tooltip: 'Nova conversa',
+                  onPressed: onClear,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.08),
+                    foregroundColor: Colors.white,
+                    fixedSize: const Size(36, 36),
+                    minimumSize: const Size(36, 36),
+                    padding: EdgeInsets.zero,
+                  ),
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 20),
+                ),
+                const SizedBox(width: 6),
+              ],
               IconButton(
                 tooltip: 'Fechar',
                 onPressed: onClose,
@@ -1280,7 +1401,7 @@ class _AiAvatar extends StatelessWidget {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.message});
 
-  final _ChatMessage message;
+  final ChatMessage message;
 
   static String _formatTime(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';

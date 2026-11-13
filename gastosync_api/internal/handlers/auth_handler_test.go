@@ -152,3 +152,19 @@ func TestRegisterWeakPasswordAndRateLimiter(t *testing.T) {
 		t.Fatalf("expected status 429 after exceeding rate limit, got %d", lastStatus)
 	}
 }
+
+func TestIsValidReminderTime(t *testing.T) {
+	validTimes := []string{"00:00", "09:00", "18:00", "23:59", " 08:30 "}
+	for _, ts := range validTimes {
+		if !isValidReminderTime(ts) {
+			t.Errorf("expected %q to be valid reminder time", ts)
+		}
+	}
+
+	invalidTimes := []string{"", "9:00", "24:00", "18:60", "abc", "12-30"}
+	for _, ts := range invalidTimes {
+		if isValidReminderTime(ts) {
+			t.Errorf("expected %q to be invalid reminder time", ts)
+		}
+	}
+}

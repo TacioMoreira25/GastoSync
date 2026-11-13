@@ -5,7 +5,9 @@ import '../../domain/models/transaction.dart';
 
 abstract class TransactionRepository {
   Stream<List<Transaction>> watchAllTransactions({String? userEmail});
+  Future<List<Transaction>> getPendingSyncTransactions({String? userEmail});
   Future<int> addTransaction(Transaction transaction);
+  Future<int> updateTransaction(Transaction transaction);
   Future<int> addTransactionWithAgentInsight({
     required Transaction transaction,
     required String rawSuggestion,
@@ -13,7 +15,7 @@ abstract class TransactionRepository {
     required String categorySuggested,
     required String budgetTip,
   });
-  Future<void> deleteTransaction(int id);
+  Future<void> deleteTransaction(int id, {bool softDelete = true});
   Future<bool> markAsSynced(int id);
 }
 
@@ -30,9 +32,36 @@ class TransactionRepositoryImpl implements TransactionRepository {
   }
 
   @override
+  Future<List<Transaction>> getPendingSyncTransactions({
+    String? userEmail,
+  }) async {
+    final rows = await _database.getPendingSyncTransactions(
+      userEmail: userEmail,
+    );
+    return rows.map(Transaction.fromLocal).toList();
+  }
+
+  @override
   Future<int> addTransaction(Transaction transaction) {
     final companion = transaction.toCompanion();
     return _database.insertTransaction(companion);
+  }
+
+  @override
+  Future<int> updateTransaction(Transaction transaction) {
+    final txId = transaction.id;
+    if (txId == null) {
+      throw ArgumentError(
+        'Não é possível atualizar uma transação sem ID local.',
+      );
+    }
+    final companion = transaction
+        .copyWith(
+          isSynced: false,
+          updatedAt: DateTime.now(),
+        )
+        .toCompanion();
+    return _database.updateTransaction(txId, companion);
   }
 
   @override
@@ -47,6 +76,10 @@ class TransactionRepositoryImpl implements TransactionRepository {
       final txId = await _database.insertTransaction(transaction.toCompanion());
       await _database.insertAgentInsight(
         LocalAgentInsightsCompanion.insert(
+          userEmail: transaction.userEmail != null &&
+                  transaction.userEmail!.trim().isNotEmpty
+              ? drift.Value(transaction.userEmail!.trim().toLowerCase())
+              : const drift.Value.absent(),
           transactionId: drift.Value(txId),
           rawSuggestion: rawSuggestion,
           confidenceScore: confidenceScore,
@@ -60,8 +93,8 @@ class TransactionRepositoryImpl implements TransactionRepository {
   }
 
   @override
-  Future<void> deleteTransaction(int id) async {
-    await _database.deleteTransactionById(id);
+  Future<void> deleteTransaction(int id, {bool softDelete = true}) async {
+    await _database.deleteTransactionById(id, softDelete: softDelete);
   }
 
   @override

@@ -63,7 +63,7 @@ func main() {
 			"env":     cfg.AppEnv,
 			"endpoints": fiber.Map{
 				"health": "/health",
-				"auth":   "/api/v1/auth/{register,login,verify-email,resend-verification,send-verification,forgot-password,verify-reset-code,reset-password,me}",
+				"auth":   "/api/v1/auth/{register,login,verify-email,resend-verification,send-verification,forgot-password,verify-reset-code,reset-password,me,profile}",
 				"sync":   "/api/v1/sync/{push,pull}",
 			},
 		})
@@ -80,6 +80,10 @@ func main() {
 	authHandler := handlers.NewAuthHandler(pool, cfg)
 	syncHandler := handlers.NewSyncHandler(pool)
 
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	defer cancelWorker()
+	handlers.StartBillReminderWorker(workerCtx, pool, authHandler)
+
 	apiV1 := app.Group("/api/v1")
 
 	authGroup := apiV1.Group("/auth")
@@ -92,6 +96,7 @@ func main() {
 	authGroup.Post("/verify-reset-code", middleware.AuthRateLimiter(), authHandler.VerifyResetCode)
 	authGroup.Post("/reset-password", middleware.AuthRateLimiter(), authHandler.ResetPassword)
 	authGroup.Get("/me", middleware.RequireAuth(cfg.JWTSecret), authHandler.Me)
+	authGroup.Put("/profile", middleware.RequireAuth(cfg.JWTSecret), authHandler.UpdateProfile)
 
 	syncGroup := apiV1.Group("/sync", middleware.RequireAuth(cfg.JWTSecret))
 	syncGroup.Post("/push", syncHandler.Push)
@@ -112,5 +117,6 @@ func main() {
 
 	<-quit
 	log.Println("shutting down GastoSync Core API gracefully...")
+	cancelWorker()
 	_ = app.ShutdownWithTimeout(10 * time.Second)
 }

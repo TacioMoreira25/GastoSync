@@ -90,12 +90,12 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ### Implementation for User Story 3
 
-- [ ] T018 [P] [US3] Implement `UpdateProfile` handler (`PUT /api/v1/auth/profile`) in `gastosync_api/internal/handlers/auth_handler.go` and register route in `gastosync_api/cmd/api/main.go` to persist `name`, `monthly_income`, `savings_goal_percent`, `reminder_time_1`, `reminder_time_2`, and `email_bill_notifications`
-- [ ] T019 [P] [US3] Implement `StartBillReminderWorker` in `gastosync_api/internal/handlers/bill_notifier.go` and wire it in `gastosync_api/cmd/api/main.go` to check due/overdue bills at each user's `reminder_time_1` and `reminder_time_2` (2x/day) and dispatch HTML reminder emails via Brevo / Resend / SMTP
-- [ ] T020 [US3] Update `UserProfile` and `UserProfileNotifier` in `gastosync_app/lib/features/settings/domain/models/user_profile.dart` to store `reminderTime1` (default `'09:00'`), `reminderTime2` (default `'18:00'`), and `emailBillNotifications` (default `true`), syncing changes with `PUT /api/v1/auth/profile`
-- [ ] T021 [US3] Create `BillNotificationService` in `gastosync_app/lib/core/services/bill_notification_service.dart` that evaluates twice-daily reminder windows (`reminderTime1` and `reminderTime2`), tracks per-window dispatch state to prevent duplicate alerts in the same shift, and triggers local device/browser notifications
-- [ ] T022 [US3] Integrate due-today, overdue, and upcoming (<= 3 days) bill alerts into `gastoSyncNotificationsProvider` and `GastoSyncNotificationsModal` in `gastosync_app/lib/core/widgets/gastosync_notifications_modal.dart`
-- [ ] T023 [US3] Add UI controls in `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`) allowing the user to customize the 1st and 2nd daily bill notification times (`HH:MM`) and toggle email bill reminders
+- [x] T018 [P] [US3] Implement `UpdateProfile` handler (`PUT /api/v1/auth/profile`) in `gastosync_api/internal/handlers/auth_handler.go` and register route in `gastosync_api/cmd/api/main.go` to persist `name`, `monthly_income`, `savings_goal_percent`, `reminder_time_1`, `reminder_time_2`, and `email_bill_notifications`
+- [x] T019 [P] [US3] Implement `StartBillReminderWorker` in `gastosync_api/internal/handlers/bill_notifier.go` and wire it in `gastosync_api/cmd/api/main.go` to check due/overdue bills at each user's `reminder_time_1` and `reminder_time_2` (2x/day) and dispatch HTML reminder emails via Brevo / Resend / SMTP
+- [x] T020 [US3] Update `UserProfile` and `UserProfileNotifier` in `gastosync_app/lib/features/settings/domain/models/user_profile.dart` to store `reminderTime1` (default `'09:00'`), `reminderTime2` (default `'18:00'`), and `emailBillNotifications` (default `true`), syncing changes with `PUT /api/v1/auth/profile`
+- [x] T021 [US3] Create `BillNotificationService` in `gastosync_app/lib/core/services/bill_notification_service.dart` that evaluates twice-daily reminder windows (`reminderTime1` and `reminderTime2`), tracks per-window dispatch state to prevent duplicate alerts in the same shift, and triggers local device/browser notifications
+- [x] T022 [US3] Integrate due-today, overdue, and upcoming (<= 3 days) bill alerts into `gastoSyncNotificationsProvider` and `GastoSyncNotificationsModal` in `gastosync_app/lib/core/widgets/gastosync_notifications_modal.dart`
+- [x] T023 [US3] Add UI controls in `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`) allowing the user to customize the 1st and 2nd daily bill notification times (`HH:MM`) and toggle email bill reminders
 
 **Checkpoint**: User Stories 1, 2 e 3 concluídas e testáveis de forma independente.
 
@@ -109,10 +109,10 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ### Implementation for User Story 4
 
-- [ ] T024 [P] [US4] Update `Push` and `Pull` in `gastosync_api/internal/handlers/sync_handler.go` to upsert `transactions` and `bills` by `(user_id, client_uuid)`, propagate soft deletions (`deleted_at`), and filter `WHERE deleted_at IS NULL` on pull
-- [ ] T025 [US4] Update `Transaction` domain model in `gastosync_app/lib/features/transactions/domain/models/transaction.dart` and repository in `gastosync_app/lib/features/transactions/data/repositories/transaction_repository_impl.dart` to include `clientUuid`, `paymentMethod`, `updatedAt`, and `deletedAt`
-- [ ] T026 [US4] Update `CloudSyncService` in `gastosync_app/lib/features/transactions/data/services/cloud_sync_service.dart` to send real `payment_method`, `client_uuid`, `deleted_at`, and `bills` payload on push, and hydrate both `LocalTransactions` and `LocalBills` on pull
-- [ ] T027 [US4] Add edit mode support (`initialTransaction` and `initialBill`) to `ManualTransactionFormModal` in `gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart` and add edit action buttons to transaction and bill cards in `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`
+- [x] T024 [P] [US4] Update `Push` and `Pull` in `gastosync_api/internal/handlers/sync_handler.go` to upsert `transactions` and `bills` by `(user_id, client_uuid)`, propagate soft deletions (`deleted_at`), and filter `WHERE deleted_at IS NULL` on pull
+- [x] T025 [US4] Update `Transaction` domain model in `gastosync_app/lib/features/transactions/domain/models/transaction.dart` and repository in `gastosync_app/lib/features/transactions/data/repositories/transaction_repository_impl.dart` to include `clientUuid`, `paymentMethod`, `updatedAt`, and `deletedAt`
+- [x] T026 [US4] Update `CloudSyncService` in `gastosync_app/lib/features/transactions/data/services/cloud_sync_service.dart` to send real `payment_method`, `client_uuid`, `deleted_at`, and `bills` payload on push, and hydrate both `LocalTransactions` and `LocalBills` on pull
+- [x] T027 [US4] Add edit mode support (`initialTransaction` and `initialBill`) to `ManualTransactionFormModal` in `gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart` and add edit action buttons to transaction and bill cards in `gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`
 
 **Checkpoint**: User Stories 1 a 4 concluídas.
 
@@ -126,10 +126,10 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ### Implementation for User Story 5
 
-- [ ] T028 [P] [US5] Create `CreditCard` and `CreditCardUsageSummary` domain models in `gastosync_app/lib/features/planning/domain/models/credit_card_model.dart` calculating `fixedSubscriptionsAmount`, `variablePurchasesAmount`, `totalUsedAmount`, `utilizationPercent`, `healthyMinAmount` (e.g. 50%), `healthyMaxAmount` (e.g. 80%), `remainingHealthyMargin`, and `isAboveHealthyCeiling`
-- [ ] T029 [US5] Implement `LocalCreditCards` DAO methods (`watchAllCreditCards`, `upsertCreditCard`, `deleteCreditCard`, and default seed for `Cartão Principal` with R$ 1.500 limit and 50%–80% target range) in `gastosync_app/lib/core/database/app_database.dart`
-- [ ] T030 [US5] Add credit card selector chip/dropdown in `ManualTransactionFormModal` (`gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart`) whenever `paymentMethod == 'Crédito'` or `isCreditCardCharge == true`
-- [ ] T031 [US5] Add `Cartões & Limite` view/section in `PlanningScreen` (`gastosync_app/lib/features/planning/presentation/screens/planning_screen.dart`), summary indicator on `DashboardScreen`, and alert in `GastoSyncNotificationsModal` when a card exceeds its healthy utilization ceiling (`targetMaxPercent`)
+- [x] T028 [P] [US5] Create `CreditCard` and `CreditCardUsageSummary` domain models in `gastosync_app/lib/features/planning/domain/models/credit_card_model.dart` calculating `fixedSubscriptionsAmount`, `variablePurchasesAmount`, `totalUsedAmount`, `utilizationPercent`, `healthyMinAmount` (e.g. 50%), `healthyMaxAmount` (e.g. 80%), `remainingHealthyMargin`, and `isAboveHealthyCeiling`
+- [x] T029 [US5] Implement `LocalCreditCards` DAO methods (`watchAllCreditCards`, `upsertCreditCard`, `deleteCreditCard`, and default seed for `Cartão Principal` with R$ 1.500 limit and 50%–80% target range) in `gastosync_app/lib/core/database/app_database.dart`
+- [x] T030 [US5] Add credit card selector chip/dropdown in `ManualTransactionFormModal` (`gastosync_app/lib/features/transactions/presentation/widgets/manual_transaction_form_modal.dart`) whenever `paymentMethod == 'Crédito'` or `isCreditCardCharge == true`
+- [x] T031 [US5] Add `Cartões & Limite` view/section in `PlanningScreen` (`gastosync_app/lib/features/planning/presentation/screens/planning_screen.dart`), summary indicator on `DashboardScreen`, and alert in `GastoSyncNotificationsModal` when a card exceeds its healthy utilization ceiling (`targetMaxPercent`)
 
 ---
 
@@ -141,8 +141,8 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ### Implementation for User Story 6
 
-- [ ] T032 [P] [US6] Create `CsvExportService` in `gastosync_app/lib/core/services/csv_export_service.dart` formatting `Transaction`, `Bill`, and `CreditCard` records into RFC-4180 CSV with UTF-8 BOM
-- [ ] T033 [US6] Wire the CSV export modal/download action in `TransactionsScreen` (`gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`) and `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`)
+- [x] T032 [P] [US6] Create `CsvExportService` in `gastosync_app/lib/core/services/csv_export_service.dart` formatting `Transaction`, `Bill`, and `CreditCard` records into RFC-4180 CSV with UTF-8 BOM
+- [x] T033 [US6] Wire the CSV export modal/download action in `TransactionsScreen` (`gastosync_app/lib/features/transactions/presentation/screens/transactions_screen.dart`) and `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`)
 
 ---
 
@@ -150,9 +150,9 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 **Purpose**: Testes automatizados de ponta a ponta e execução da auditoria de segurança em 6 fases com a skill `cloudflare/security-audit-skill`
 
-- [ ] T034 [P] Write comprehensive Flutter unit and widget tests for `LocalBills`, `LocalCreditCards` (healthy 50%–80% utilization math, Fixed vs Variable breakdown), recurrence, 2x/day notifications, `paymentMethod` persistence, and CSV export in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
-- [ ] T035 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/` and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
-- [ ] T036 Execute the 6-phase security audit workflow using `.agents/skills/security-audit/SKILL.md` across `gastosync_api`, `gastosync_app`, and `gastosync_agent`, remediate any verified findings, and generate `.specs/002-pro-security-db-boletos/security-audit-report.md`
+- [x] T034 [P] Write comprehensive Flutter unit and widget tests for `LocalBills`, `LocalCreditCards` (healthy 50%–80% utilization math, Fixed vs Variable breakdown), recurrence, 2x/day notifications, `paymentMethod` persistence, and CSV export in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
+- [x] T035 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/` and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
+- [x] T036 Execute the 6-phase security audit workflow using `.agents/skills/security-audit/SKILL.md` across `gastosync_api`, `gastosync_app`, and `gastosync_agent`, remediate any verified findings, and generate `.specs/002-pro-security-db-boletos/security-audit-report.md`
 
 ---
 

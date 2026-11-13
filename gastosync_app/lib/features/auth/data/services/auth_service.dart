@@ -126,9 +126,9 @@ class AuthService {
     required String password,
   }) async {
     try {
-      final response = await _dio.post<Map<String, dynamic>>(
+      final response = await _postWithLocalFallback(
         ApiConstants.authRegisterEndpoint,
-        data: {
+        {
           'name': name.trim(),
           'email': email.trim().toLowerCase(),
           'password': password,
@@ -138,14 +138,17 @@ class AuthService {
       final data = response.data ?? const <String, dynamic>{};
       final user =
           data['user'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+      final emailVerified = (user['email_verified'] as bool?) ?? false;
+      final requiresVerification =
+          (data['requires_verification'] as bool?) ?? !emailVerified;
 
       return AuthResult(
         token: data['token'] as String?,
         userId: user['id'] as String?,
-        name: user['name'] as String?,
-        email: user['email'] as String?,
-        emailVerified: user['email_verified'] as bool? ?? false,
-        requiresVerification: data['requires_verification'] as bool? ?? false,
+        name: (user['name'] as String?) ?? name.trim(),
+        email: (user['email'] as String?) ?? email.trim().toLowerCase(),
+        emailVerified: emailVerified,
+        requiresVerification: requiresVerification,
         devPreviewCode: data['dev_preview_code'] as String?,
         deliveryMode: data['delivery_mode'] as String?,
         monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
@@ -435,6 +438,88 @@ class AuthService {
         return const AuthResult(isOffline: true);
       }
       final msg = _extractErrorMessage(e) ?? 'Sessão expirada.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
+    }
+  }
+
+  /// Atualiza os dados financeiros e preferências de lembretes de boletos na nuvem (`PUT /api/v1/auth/profile`) (T020)
+  Future<AuthResult> updateRemoteProfile({
+    required String token,
+    String? name,
+    double? monthlyIncome,
+    double? savingsGoalPercent,
+    String? reminderTime1,
+    String? reminderTime2,
+    bool? emailBillNotifications,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (name != null && name.trim().isNotEmpty) {
+      payload['name'] = name.trim();
+    }
+    if (monthlyIncome != null) {
+      payload['monthly_income'] = monthlyIncome;
+    }
+    if (savingsGoalPercent != null) {
+      payload['savings_goal_percent'] = savingsGoalPercent;
+    }
+    if (reminderTime1 != null && reminderTime1.trim().isNotEmpty) {
+      payload['reminder_time_1'] = reminderTime1.trim();
+    }
+    if (reminderTime2 != null && reminderTime2.trim().isNotEmpty) {
+      payload['reminder_time_2'] = reminderTime2.trim();
+    }
+    if (emailBillNotifications != null) {
+      payload['email_bill_notifications'] = emailBillNotifications;
+    }
+
+    final options = Options(
+      headers: {
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    try {
+      Response<Map<String, dynamic>> response;
+      try {
+        response = await _dio.put<Map<String, dynamic>>(
+          ApiConstants.authProfileEndpoint,
+          data: payload,
+          options: options,
+        );
+      } on DioException catch (e) {
+        if ((_isNetworkError(e) || _isRouteMissingOnServer(e)) &&
+            _dio.options.baseUrl != 'http://localhost:8080') {
+          response = await _localFallbackDio.put<Map<String, dynamic>>(
+            ApiConstants.authProfileEndpoint,
+            data: payload,
+            options: options,
+          );
+        } else {
+          rethrow;
+        }
+      }
+
+      final user = response.data ?? const <String, dynamic>{};
+      return AuthResult(
+        token: token,
+        userId: user['id']?.toString(),
+        name: user['name'] as String?,
+        email: user['email'] as String?,
+        emailVerified: (user['email_verified'] as bool?) ?? true,
+        monthlyIncome: (user['monthly_income'] as num?)?.toDouble(),
+        savingsGoalPercent: (user['savings_goal_percent'] as num?)?.toDouble(),
+        reminderTime1: user['reminder_time_1'] as String?,
+        reminderTime2: user['reminder_time_2'] as String?,
+        emailBillNotifications: user['email_bill_notifications'] as bool?,
+      );
+    } on DioException catch (e) {
+      if (_isNetworkError(e)) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg =
+          _extractErrorMessage(e) ?? 'Falha ao atualizar perfil na nuvem.';
       return AuthResult(error: msg);
     } catch (_) {
       return const AuthResult(isOffline: true);

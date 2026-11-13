@@ -51,6 +51,20 @@ final dioProvider = Provider<Dio>((ref) {
               sanitizedMap[key] = OwaspPromptSanitizer.sanitize(value);
             }
           }
+          final history = sanitizedMap['history'];
+          if (history is List) {
+            sanitizedMap['history'] = history.map((item) {
+              if (item is Map<String, dynamic>) {
+                final copy = Map<String, dynamic>.from(item);
+                if (copy['content'] is String) {
+                  copy['content'] =
+                      OwaspPromptSanitizer.sanitize(copy['content'] as String);
+                }
+                return copy;
+              }
+              return item;
+            }).toList();
+          }
           options.data = sanitizedMap;
         }
 

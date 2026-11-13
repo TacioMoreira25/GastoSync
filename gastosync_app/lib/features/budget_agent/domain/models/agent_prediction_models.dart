@@ -337,3 +337,100 @@ class InformalExpenseParser {
     );
   }
 }
+
+/// Modelo imutável de telemetria pública e cota da IA (Groq Cloud no Render)
+@immutable
+class AgentQuotaStatus {
+  const AgentQuotaStatus({
+    required this.isOnline,
+    required this.latencyMs,
+    this.provider = 'Groq Cloud',
+    required this.activeTextModel,
+    this.fallbackTextModels = const <String>[],
+    required this.activeOcrModel,
+    this.fallbackOcrModels = const <String>[],
+    required this.lastModelUsed,
+    required this.totalRequests,
+    this.dailyRequestLimit = 1000,
+    required this.totalTokensUsed,
+    this.minuteTokenLimit = 12000,
+    required this.fallbackTriggers,
+    this.checkedAt,
+  });
+
+  final bool isOnline;
+  final int latencyMs;
+  final String provider;
+  final String activeTextModel;
+  final List<String> fallbackTextModels;
+  final String activeOcrModel;
+  final List<String> fallbackOcrModels;
+  final String lastModelUsed;
+  final int totalRequests;
+  final int dailyRequestLimit;
+  final int totalTokensUsed;
+  final int minuteTokenLimit;
+  final int fallbackTriggers;
+  final DateTime? checkedAt;
+
+  factory AgentQuotaStatus.offline([int latencyMs = 0]) {
+    return AgentQuotaStatus(
+      isOnline: false,
+      latencyMs: latencyMs,
+      provider: 'Groq Cloud (Offline)',
+      activeTextModel: 'Llama 3.3 (Fallback Local)',
+      fallbackTextModels: const <String>[],
+      activeOcrModel: 'OCR Offline (Fallback Local)',
+      fallbackOcrModels: const <String>[],
+      lastModelUsed: 'Motor Heurístico Local',
+      totalRequests: 0,
+      dailyRequestLimit: 1000,
+      totalTokensUsed: 0,
+      minuteTokenLimit: 12000,
+      fallbackTriggers: 0,
+      checkedAt: DateTime.now(),
+    );
+  }
+
+  factory AgentQuotaStatus.fromJson(
+    Map<String, dynamic> json, {
+    int latencyMs = 0,
+  }) {
+    final status = (json['status'] as String? ?? 'ok').toLowerCase();
+    final rawFallbackText = json['fallback_text_models'];
+    final rawFallbackOcr = json['fallback_ocr_models'];
+
+    return AgentQuotaStatus(
+      isOnline: status == 'ok',
+      latencyMs: latencyMs,
+      provider: json['provider'] as String? ?? 'Groq Cloud',
+      activeTextModel:
+          json['active_text_model'] as String? ?? 'openai/gpt-oss-120b',
+      fallbackTextModels: rawFallbackText is List
+          ? rawFallbackText.map((e) => e.toString()).toList()
+          : const <String>[],
+      activeOcrModel:
+          json['active_ocr_model'] as String? ?? 'llama-4-scout-17b',
+      fallbackOcrModels: rawFallbackOcr is List
+          ? rawFallbackOcr.map((e) => e.toString()).toList()
+          : const <String>[],
+      lastModelUsed: json['last_model_used'] as String? ?? '',
+      totalRequests: (json['total_requests'] as num?)?.toInt() ?? 0,
+      dailyRequestLimit: (json['daily_request_limit'] as num?)?.toInt() ?? 1000,
+      totalTokensUsed: (json['total_tokens_used'] as num?)?.toInt() ?? 0,
+      minuteTokenLimit: (json['minute_token_limit'] as num?)?.toInt() ?? 12000,
+      fallbackTriggers: (json['fallback_triggers'] as num?)?.toInt() ?? 0,
+      checkedAt: DateTime.now(),
+    );
+  }
+
+  double get requestUsageRatio =>
+      dailyRequestLimit > 0 ? (totalRequests / dailyRequestLimit).clamp(0.0, 1.0) : 0.0;
+
+  double get requestUsagePercent => requestUsageRatio * 100.0;
+
+  double get tokenUsageRatio =>
+      minuteTokenLimit > 0 ? (totalTokensUsed / minuteTokenLimit).clamp(0.0, 1.0) : 0.0;
+
+  double get tokenUsagePercent => tokenUsageRatio * 100.0;
+}

@@ -122,5 +122,73 @@ void main() {
       expect(response.category, equals('Transporte'));
       expect(response.confidence, closeTo(0.89, 0.001));
     });
+
+    test('Deve consultar telemetria e status da IA via GET /api/v1/agent/status', () async {
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.defaultBaseUrl));
+      dio.httpClientAdapter = _MockHttpClientAdapter((options) async {
+        expect(options.path, equals(ApiConstants.agentStatusEndpoint));
+        expect(options.method, equals('GET'));
+
+        final payload = jsonEncode({
+          'status': 'ok',
+          'provider': 'Groq Cloud',
+          'active_text_model': 'openai/gpt-oss-120b',
+          'fallback_text_models': ['llama-3.3-70b-versatile'],
+          'active_ocr_model': 'llama-4-scout-17b',
+          'fallback_ocr_models': ['meta-llama/llama-4-scout-17b'],
+          'total_requests': 42,
+          'daily_request_limit': 1000,
+          'total_tokens_used': 3500,
+          'minute_token_limit': 12000,
+          'fallback_triggers': 2,
+          'last_model_used': 'openai/gpt-oss-120b',
+        });
+
+        return ResponseBody.fromString(
+          payload,
+          200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        );
+      });
+
+      final service = BudgetAgentService(dio);
+      final status = await service.fetchAgentQuotaStatus();
+
+      expect(status.isOnline, isTrue);
+      expect(status.provider, equals('Groq Cloud'));
+      expect(status.activeTextModel, equals('openai/gpt-oss-120b'));
+      expect(status.fallbackTextModels, contains('llama-3.3-70b-versatile'));
+      expect(status.activeOcrModel, equals('llama-4-scout-17b'));
+      expect(status.totalRequests, equals(42));
+      expect(status.dailyRequestLimit, equals(1000));
+      expect(status.requestUsagePercent, closeTo(4.2, 0.01));
+      expect(status.totalTokensUsed, equals(3500));
+      expect(status.minuteTokenLimit, equals(12000));
+      expect(status.tokenUsagePercent, closeTo((3500 / 12000) * 100, 0.01));
+      expect(status.fallbackTriggers, equals(2));
+      expect(status.lastModelUsed, equals('openai/gpt-oss-120b'));
+    });
+
+    test('Deve retornar AgentQuotaStatus.offline() em caso de falha de conexão com o Render', () async {
+      final dio = Dio(BaseOptions(baseUrl: ApiConstants.defaultBaseUrl));
+      dio.httpClientAdapter = _MockHttpClientAdapter((options) async {
+        throw DioException.connectionError(
+          requestOptions: options,
+          reason: 'Cold start ou serviço Render offline',
+        );
+      });
+
+      final service = BudgetAgentService(dio);
+      final status = await service.fetchAgentQuotaStatus();
+
+      expect(status.isOnline, isFalse);
+      expect(status.provider, contains('Offline'));
+      expect(status.totalRequests, equals(0));
+      expect(status.dailyRequestLimit, equals(1000));
+      expect(status.requestUsageRatio, equals(0.0));
+      expect(status.tokenUsageRatio, equals(0.0));
+    });
   });
 }

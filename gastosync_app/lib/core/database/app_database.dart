@@ -201,15 +201,76 @@ class AppDatabase extends _$AppDatabase {
         .watch();
   }
 
-  /// Inserção de nova transação
+  /// Inserção de nova transação garantindo `clientUuid` e `updatedAt` (T025)
   Future<int> insertTransaction(LocalTransactionsCompanion entry) {
-    return into(localTransactions).insert(entry);
+    final now = DateTime.now();
+    final hasUuid =
+        entry.clientUuid.present && entry.clientUuid.value.trim().isNotEmpty;
+    final companion = entry.copyWith(
+      clientUuid: hasUuid ? entry.clientUuid : Value(generateClientUuid()),
+      updatedAt: entry.updatedAt.present ? entry.updatedAt : Value(now),
+    );
+    return into(localTransactions).insert(companion);
   }
 
-  /// Exclusão de transação por ID
-  Future<int> deleteTransactionById(int transactionId) {
+  /// Atualização de transação existente por ID marcando `isSynced = false` e `updatedAt = now` (T025)
+  Future<int> updateTransaction(
+    int transactionId,
+    LocalTransactionsCompanion entry,
+  ) {
+    final now = DateTime.now();
+    final companion = entry.copyWith(
+      isSynced: entry.isSynced.present ? entry.isSynced : const Value(false),
+      updatedAt: entry.updatedAt.present ? entry.updatedAt : Value(now),
+    );
+    return (update(localTransactions)..where((t) => t.id.equals(transactionId)))
+        .write(companion);
+  }
+
+  /// Exclusão de transação por ID (suporta soft delete por padrão para propagar `deleted_at` na nuvem) (T025)
+  Future<int> deleteTransactionById(
+    int transactionId, {
+    bool softDelete = true,
+  }) {
+    if (softDelete) {
+      final now = DateTime.now();
+      return (update(localTransactions)
+            ..where((t) => t.id.equals(transactionId)))
+          .write(
+        LocalTransactionsCompanion(
+          deletedAt: Value(now),
+          updatedAt: Value(now),
+          isSynced: const Value(false),
+        ),
+      );
+    }
     return (delete(localTransactions)..where((t) => t.id.equals(transactionId)))
         .go();
+  }
+
+  /// Lista todas as transações pendentes de sincronização (`isSynced = false`), incluindo exclusões lógicas (`deletedAt != null`) (T025/T026)
+  Future<List<LocalTransaction>> getPendingSyncTransactions({
+    String? userEmail,
+  }) {
+    final query = select(localTransactions)
+      ..where((t) => t.isSynced.equals(false));
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((t) => t.userEmail.equals(normalized));
+    }
+    return query.get();
+  }
+
+  /// Lista todos os boletos pendentes de sincronização (`isSynced = false`), incluindo exclusões lógicas (`deletedAt != null`) (T025/T026)
+  Future<List<LocalBill>> getPendingSyncBills({
+    String? userEmail,
+  }) {
+    final query = select(localBills)..where((b) => b.isSynced.equals(false));
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((b) => b.userEmail.equals(normalized));
+    }
+    return query.get();
   }
 
   /// Atualização de status de sincronização com o backend
@@ -746,6 +807,206 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // GESTÃO DE CARTÕES DE CRÉDITO E FAIXA SAUDÁVEL (50% A 80%) (T029 / US5)
+  // ---------------------------------------------------------------------------
+
+  /// Garante que o usuário possua ao menos o `Cartão Principal` padrão (limite R$ 1.500, faixa 50%–80%)
+  Future<void> seedDefaultCreditCardIfEmpty({String? userEmail}) async {
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
+
+    final existing = await (select(localCreditCards)
+          ..where((c) => c.userEmail.equals(normalizedEmail)))
+        .get();
+
+    if (existing.isNotEmpty) return;
+
+    final now = DateTime.now();
+    await into(localCreditCards).insert(
+      LocalCreditCardsCompanion.insert(
+        clientUuid: Value(generateClientUuid()),
+        userEmail: Value(normalizedEmail),
+        name: 'Cartão Principal',
+        limitAmount: 1500.0,
+        targetMinPercent: const Value(50.0),
+        targetMaxPercent: const Value(80.0),
+        dueDay: const Value(10),
+        isPrimary: const Value(true),
+        isSynced: const Value(false),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  /// Stream reativa de todos os cartões de crédito ativos (`deletedAt IS NULL`)
+  /// filtrados por conta (`userEmail`), com seed automático do `Cartão Principal`
+  /// (R$ 1.500,00 e faixa ideal 50%–80%) (T029)
+  Stream<List<LocalCreditCard>> watchAllCreditCards({String? userEmail}) {
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : null;
+
+    Future.microtask(() => seedDefaultCreditCardIfEmpty(userEmail: userEmail));
+
+    final query = select(localCreditCards);
+    if (normalizedEmail != null) {
+      query.where((c) => c.userEmail.equals(normalizedEmail));
+    }
+    query.orderBy([
+      (c) => OrderingTerm.desc(c.isPrimary),
+      (c) => OrderingTerm.asc(c.id),
+    ]);
+
+    return query.watch().map((allRows) {
+      final activeRows =
+          allRows.where((row) => row.deletedAt == null).toList();
+      if (activeRows.isNotEmpty) {
+        return activeRows;
+      }
+
+      // Se ainda não há nenhum registro persistido para esta conta (antes do microtask concluir),
+      // retorna o seed padrão em memória para exibição imediata sem flicker
+      if (allRows.isEmpty) {
+        return <LocalCreditCard>[
+          LocalCreditCard(
+            id: -1,
+            clientUuid: '00000000-0000-4000-8000-000000000001',
+            userEmail: normalizedEmail ?? 'marcos.pereira@gastosync.local',
+            name: 'Cartão Principal',
+            limitAmount: 1500.0,
+            targetMinPercent: 50.0,
+            targetMaxPercent: 80.0,
+            dueDay: 10,
+            isPrimary: true,
+            isSynced: false,
+            updatedAt: null,
+            deletedAt: null,
+          ),
+        ];
+      }
+
+      return const <LocalCreditCard>[];
+    });
+  }
+
+  /// Insere ou atualiza um cartão de crédito (`LocalCreditCards`), garantindo unicidade do `isPrimary` (T029)
+  Future<int> upsertCreditCard({
+    int? id,
+    String? clientUuid,
+    required String name,
+    required double limitAmount,
+    double targetMinPercent = 50.0,
+    double targetMaxPercent = 80.0,
+    int dueDay = 10,
+    bool isPrimary = false,
+    String? userEmail,
+  }) async {
+    final normalizedName = name.trim();
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : 'marcos.pereira@gastosync.local';
+    final now = DateTime.now();
+    final safeDueDay = dueDay.clamp(1, 31);
+    final safeMin = targetMinPercent.clamp(0.0, 100.0);
+    final safeMax = targetMaxPercent.clamp(safeMin, 100.0);
+
+    return transaction(() async {
+      await seedDefaultCreditCardIfEmpty(userEmail: normalizedEmail);
+
+      final userCards = await (select(localCreditCards)
+            ..where((c) => c.userEmail.equals(normalizedEmail)))
+          .get();
+
+      LocalCreditCard? existingCard;
+      if (id != null && id > 0) {
+        existingCard = userCards.where((c) => c.id == id).firstOrNull;
+      }
+      if (existingCard == null &&
+          clientUuid != null &&
+          clientUuid.trim().isNotEmpty &&
+          clientUuid != '00000000-0000-4000-8000-000000000001') {
+        existingCard = userCards
+            .where((c) => c.clientUuid == clientUuid.trim())
+            .firstOrNull;
+      }
+      if (existingCard == null && id != null && id < 0) {
+        existingCard =
+            userCards.where((c) => c.isPrimary && c.deletedAt == null).firstOrNull;
+      }
+
+      if (isPrimary) {
+        await (update(localCreditCards)
+              ..where((c) => c.userEmail.equals(normalizedEmail)))
+            .write(
+          const LocalCreditCardsCompanion(
+            isPrimary: Value(false),
+          ),
+        );
+      }
+
+      if (existingCard != null) {
+        await (update(localCreditCards)
+              ..where((c) => c.id.equals(existingCard!.id)))
+            .write(
+          LocalCreditCardsCompanion(
+            name: Value(normalizedName),
+            limitAmount: Value(limitAmount),
+            targetMinPercent: Value(safeMin),
+            targetMaxPercent: Value(safeMax),
+            dueDay: Value(safeDueDay),
+            isPrimary: Value(isPrimary),
+            isSynced: const Value(false),
+            updatedAt: Value(now),
+            deletedAt: const Value(null),
+          ),
+        );
+        return existingCard.id;
+      }
+
+      final resolvedUuid = (clientUuid != null &&
+              clientUuid.trim().isNotEmpty &&
+              clientUuid != '00000000-0000-4000-8000-000000000001')
+          ? clientUuid.trim()
+          : generateClientUuid();
+
+      return into(localCreditCards).insert(
+        LocalCreditCardsCompanion.insert(
+          clientUuid: Value(resolvedUuid),
+          userEmail: Value(normalizedEmail),
+          name: normalizedName,
+          limitAmount: limitAmount,
+          targetMinPercent: Value(safeMin),
+          targetMaxPercent: Value(safeMax),
+          dueDay: Value(safeDueDay),
+          isPrimary: Value(isPrimary),
+          isSynced: const Value(false),
+          updatedAt: Value(now),
+        ),
+      );
+    });
+  }
+
+  /// Exclui um cartão de crédito por ID (soft delete por padrão) (T029)
+  Future<int> deleteCreditCard(
+    int cardId, {
+    bool softDelete = true,
+  }) {
+    if (softDelete) {
+      final now = DateTime.now();
+      return (update(localCreditCards)..where((c) => c.id.equals(cardId)))
+          .write(
+        LocalCreditCardsCompanion(
+          deletedAt: Value(now),
+          updatedAt: Value(now),
+          isSynced: const Value(false),
+        ),
+      );
+    }
+    return (delete(localCreditCards)..where((c) => c.id.equals(cardId))).go();
+  }
+
   /// Inicializa tabelas dinâmicas de contas locais e sessão autenticada (persistência 100% SQLite)
   Future<void> initCustomAuthTables() async {
     await customStatement('''
@@ -843,4 +1104,10 @@ final watchBudgetsProvider = StreamProvider<List<LocalBudget>>((ref) {
 final watchDeletedBudgetCategoriesProvider = StreamProvider<Set<String>>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return db.watchDeletedBudgetCategories();
+});
+
+/// StreamProvider reativo dos cartões de crédito (`LocalCreditCards`) com seed do Cartão Principal (T029)
+final watchCreditCardsProvider = StreamProvider<List<LocalCreditCard>>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return db.watchAllCreditCards();
 });

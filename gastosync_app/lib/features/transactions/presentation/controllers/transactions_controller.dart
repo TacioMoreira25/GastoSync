@@ -161,16 +161,22 @@ class TransactionsController {
     required DateTime date,
     required TransactionType type,
     required String category,
+    String paymentMethod = 'PIX',
+    String? creditCardUuid,
   }) async {
     final email = _currentUserEmail;
     final transaction = Transaction(
+      clientUuid: AppDatabase.generateClientUuid(),
       userEmail: email,
       description: description,
       amount: amount,
       date: date,
       type: type,
       category: category,
+      paymentMethod: paymentMethod,
+      creditCardUuid: creditCardUuid,
       isSynced: false,
+      updatedAt: DateTime.now(),
     );
     final id = await _repository.addTransaction(transaction);
     if (type == TransactionType.expense) {
@@ -180,6 +186,23 @@ class TransactionsController {
       );
     }
     return id;
+  }
+
+  Future<int> updateTransaction(Transaction transaction) async {
+    final email = _currentUserEmail;
+    final updated = transaction.copyWith(
+      userEmail: transaction.userEmail ?? email,
+      isSynced: false,
+      updatedAt: DateTime.now(),
+    );
+    final rows = await _repository.updateTransaction(updated);
+    if (updated.isExpense) {
+      await _db.ensureCategoryBudgetExists(
+        updated.category,
+        userEmail: updated.userEmail ?? email,
+      );
+    }
+    return rows;
   }
 
   Future<int> createAiConfirmedTransaction({
@@ -192,16 +215,22 @@ class TransactionsController {
     required double confidenceScore,
     required String categorySuggested,
     required String budgetTip,
+    String paymentMethod = 'PIX',
+    String? creditCardUuid,
   }) async {
     final email = _currentUserEmail;
     final transaction = Transaction(
+      clientUuid: AppDatabase.generateClientUuid(),
       userEmail: email,
       description: description,
       amount: amount,
       date: date,
       type: type,
       category: category,
+      paymentMethod: paymentMethod,
+      creditCardUuid: creditCardUuid,
       isSynced: false,
+      updatedAt: DateTime.now(),
     );
     final id = await _repository.addTransactionWithAgentInsight(
       transaction: transaction,

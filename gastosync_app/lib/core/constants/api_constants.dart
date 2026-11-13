@@ -7,10 +7,10 @@ class ApiConstants {
     defaultValue: 'https://gastosync-api.onrender.com',
   );
 
-  // URL padrão do serviço satélite de IA (gastosync_agent)
+  // URL padrão do serviço satélite de IA (gastosync_agent no Render)
   static const String defaultBaseUrl = String.fromEnvironment(
     'GASTOSYNC_API_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: 'https://gastosync-agent.onrender.com',
   );
 
   // Timeouts de resiliência (10s texto / 20s OCR / 25s Core API para suportar cold-start do Render Free)
@@ -45,6 +45,7 @@ class ApiConstants {
   static const String agentPredictEndpoint = '/api/v1/agent/predict';
   static const String agentBudgetOptimizationEndpoint = '/api/v1/agent/optimize-budget';
   static const String agentChatEndpoint = '/api/v1/agent/chat';
+  static const String agentStatusEndpoint = '/api/v1/agent/status';
 
   // Endpoints de Transações
   static const String transactionsEndpoint = '/api/v1/transactions';

@@ -145,9 +145,41 @@ class BudgetAgentService {
       );
     }
   }
+  /// Consulta telemetria pública e cotas da IA via `GET /api/v1/agent/status`,
+  /// medindo a latência real em milissegundos via Stopwatch.
+  Future<AgentQuotaStatus> fetchAgentQuotaStatus() async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        ApiConstants.agentStatusEndpoint,
+        options: Options(
+          sendTimeout: ApiConstants.textPredictionTimeout,
+          receiveTimeout: ApiConstants.textPredictionTimeout,
+        ),
+      );
+      stopwatch.stop();
+      final data = response.data;
+      if (data == null) {
+        return AgentQuotaStatus.offline(stopwatch.elapsedMilliseconds);
+      }
+      return AgentQuotaStatus.fromJson(
+        data,
+        latencyMs: stopwatch.elapsedMilliseconds,
+      );
+    } catch (_) {
+      stopwatch.stop();
+      return AgentQuotaStatus.offline(stopwatch.elapsedMilliseconds);
+    }
+  }
 }
 
 final budgetAgentServiceProvider = Provider<BudgetAgentService>((ref) {
   final dio = ref.watch(dioProvider);
   return BudgetAgentService(dio);
+});
+
+final agentQuotaStatusProvider =
+    FutureProvider.autoDispose<AgentQuotaStatus>((ref) async {
+  final service = ref.watch(budgetAgentServiceProvider);
+  return service.fetchAgentQuotaStatus();
 });
