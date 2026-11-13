@@ -175,10 +175,13 @@ final gastoSyncNotificationsProvider =
           .toList();
   final deletedCategories =
       ref.watch(watchDeletedBudgetCategoriesProvider).value ?? const <String>{};
-  final metrics = ref.watch(financialMetricsStreamProvider).value ??
-      FinancialHealthEngine.calculate(transactions);
-  final latestInsight = ref.watch(latestAgentInsightStreamProvider).value;
   final profile = ref.watch(userProfileProvider);
+  final metrics = ref.watch(financialMetricsStreamProvider).value ??
+      FinancialHealthEngine.calculate(
+        transactions,
+        monthlyBaseIncome: profile.monthlyBaseIncome,
+      );
+  final latestInsight = ref.watch(latestAgentInsightStreamProvider).value;
   // Mantém o verificador de janelas 2x/dia ativo enquanto o sino de notificações estiver montado
   ref.watch(billNotificationServiceProvider);
 
@@ -500,26 +503,31 @@ final gastoSyncNotificationsProvider =
   // 6. Card de Status de Saúde Financeira & Motor Local
   const healthId = 'financial_health_overview';
   if (!quickState.dismissedIds.contains(healthId)) {
-    final displayScore =
-        transactions.isEmpty ? 82 : metrics.healthScore.round().clamp(0, 100);
-    final statusLabel = displayScore >= 60 ? 'Saudável' : 'Em atenção';
+    final displayScore = metrics.roundedScore;
+    final statusLabel = metrics.scoreStatusLabel;
+    final severity = !metrics.hasTransactions
+        ? NotificationSeverity.info
+        : (metrics.isScoreHealthy
+            ? NotificationSeverity.success
+            : (metrics.isScoreCritical
+                ? NotificationSeverity.critical
+                : NotificationSeverity.warning));
     items.add(
       GastoSyncNotificationItem(
         id: healthId,
         title: 'Score Financeiro: $displayScore/100 · $statusLabel',
-        message: transactions.isEmpty
+        message: !metrics.hasTransactions
             ? 'Olá, ${profile.firstName}! O motor SQLite Offline-First está pronto. Adicione transações para acompanhar suas 9 métricas em tempo real.'
             : 'Reserva de emergência em ${metrics.emergencyMonths.toStringAsFixed(1)} meses e comprometimento de renda em ${metrics.incomeCommitment.toStringAsFixed(1)}%.',
         timestamp: now.subtract(const Duration(hours: 2)),
-        severity: displayScore >= 60
-            ? NotificationSeverity.success
-            : NotificationSeverity.warning,
+        severity: severity,
         categoryLabel: 'Saúde Financeira',
         icon: Icons.shield_outlined,
         isRead: quickState.readIds.contains(healthId),
-        actionLabel:
-            transactions.isEmpty ? 'Ver Transações' : 'Ver Saúde Financeira',
-        actionType: transactions.isEmpty
+        actionLabel: !metrics.hasTransactions
+            ? 'Ver Transações'
+            : 'Ver Saúde Financeira',
+        actionType: !metrics.hasTransactions
             ? NotificationActionType.goTransactions
             : NotificationActionType.goPlanning,
       ),

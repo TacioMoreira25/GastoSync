@@ -386,9 +386,9 @@ class _ManualTransactionFormModalState
   }
 
   Future<void> _promptNewCreditCard() async {
-    final nameCtrl = TextEditingController(text: 'Cartão Secundário');
-    final limitCtrl = TextEditingController(text: '1500,00');
-    final dueDayCtrl = TextEditingController(text: '15');
+    final nameCtrl = TextEditingController(text: '');
+    final limitCtrl = TextEditingController(text: '');
+    final dueDayCtrl = TextEditingController(text: '10');
 
     final created = await showDialog<bool>(
       context: context,

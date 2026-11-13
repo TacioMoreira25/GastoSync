@@ -281,6 +281,34 @@ void main() {
     );
 
     test(
+      'Contas novas iniciam sem nenhum cartão de crédito por padrão até o usuário cadastrar o seu primeiro',
+      () async {
+        const freshUser = 'novo.usuario@gastosync.local';
+        final initialCards =
+            await db.watchAllCreditCards(userEmail: freshUser).first;
+        expect(initialCards, isEmpty);
+
+        // Usuário cadastra seu primeiro cartão
+        await db.upsertCreditCard(
+          clientUuid: 'card-user-first',
+          userEmail: freshUser,
+          name: 'Meu Nubank',
+          limitAmount: 2500.00,
+          targetMinPercent: 50.0,
+          targetMaxPercent: 80.0,
+          dueDay: 15,
+        );
+
+        final afterInsert =
+            await db.watchAllCreditCards(userEmail: freshUser).first;
+        expect(afterInsert.length, equals(1));
+        expect(afterInsert.first.name, equals('Meu Nubank'));
+        expect(afterInsert.first.limitAmount, equals(2500.00));
+        expect(afterInsert.first.isPrimary, isTrue); // Primeiro cartão torna-se principal automaticamente
+      },
+    );
+
+    test(
       'US3: BillNotificationService dispara alertas 2x/dia nos turnos configurados sem duplicar no mesmo turno',
       () {
         const profile = UserProfile(

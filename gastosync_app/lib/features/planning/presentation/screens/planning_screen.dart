@@ -41,16 +41,18 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final creditCards = (creditCardsAsync.value ?? const <LocalCreditCard>[])
         .map(CreditCard.fromLocal)
         .toList();
-    final metrics =
-        metricsAsync.value ?? FinancialHealthEngine.calculate(transactions);
+    final metrics = metricsAsync.value ??
+        FinancialHealthEngine.calculate(
+          transactions,
+          monthlyBaseIncome: profile.monthlyBaseIncome,
+        );
     final budgets = budgetsAsync.value ?? const <LocalBudget>[];
     final deletedCategories = deletedCategoriesAsync.value ?? const <String>{};
 
-    final displayScore = transactions.isEmpty
-        ? 82
-        : metrics.healthScore.round().clamp(0, 100);
-    final isHealthy = transactions.isEmpty || displayScore >= 60;
-    final scoreStatusLabel = isHealthy ? 'Saudável' : 'Atenção';
+    final displayScore = metrics.roundedScore;
+    final hasData = metrics.hasTransactions;
+    final isHealthy = metrics.isScoreHealthy;
+    final scoreStatusLabel = metrics.scoreStatusLabel;
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
@@ -59,16 +61,18 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           isDesktop ? 28.0 : 16.0,
           isDesktop ? 24.0 : 16.0,
           isDesktop ? 28.0 : 16.0,
-          96.0,
+          116.0,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Cabeçalho PLANEJAMENTO + Badge "Score XX · Saudável"
+            // 1. Cabeçalho PLANEJAMENTO + Badge "Score XX · Status"
             _buildHeader(
               score: displayScore,
               statusLabel: scoreStatusLabel,
+              hasData: hasData,
               isHealthy: isHealthy,
+              isCritical: metrics.isScoreCritical,
               isDesktop: isDesktop,
             ),
             const SizedBox(height: 16),
@@ -122,9 +126,40 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
   Widget _buildHeader({
     required int score,
     required String statusLabel,
+    required bool hasData,
     required bool isHealthy,
+    required bool isCritical,
     required bool isDesktop,
   }) {
+    final BoxDecoration badgeDecoration;
+    final Color badgeColor;
+    final IconData badgeIcon;
+
+    if (!hasData) {
+      badgeDecoration = BoxDecoration(
+        color: AppTheme.subtleSurface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.cardBorder),
+      );
+      badgeColor = AppTheme.textMuted;
+      badgeIcon = Icons.hourglass_empty_rounded;
+    } else if (isHealthy) {
+      badgeDecoration = AppTheme.emeraldBadgeDecoration;
+      badgeColor = AppTheme.emeraldDeep;
+      badgeIcon = Icons.verified_rounded;
+    } else if (isCritical) {
+      badgeDecoration = BoxDecoration(
+        color: AppTheme.errorColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      );
+      badgeColor = AppTheme.errorColor;
+      badgeIcon = Icons.error_outline_rounded;
+    } else {
+      badgeDecoration = AppTheme.warningBadgeDecoration;
+      badgeColor = AppTheme.warningDark;
+      badgeIcon = Icons.warning_amber_rounded;
+    }
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -161,26 +196,20 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
         Container(
           key: const Key('planning_health_score_badge'),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: isHealthy
-              ? AppTheme.emeraldBadgeDecoration
-              : AppTheme.warningBadgeDecoration,
+          decoration: badgeDecoration,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                isHealthy
-                    ? Icons.verified_rounded
-                    : Icons.warning_amber_rounded,
+                badgeIcon,
                 size: 14,
-                color:
-                    isHealthy ? AppTheme.emeraldDeep : AppTheme.warningDark,
+                color: badgeColor,
               ),
               const SizedBox(width: 6),
               Text(
                 'Score $score · $statusLabel',
                 style: TextStyle(
-                  color:
-                      isHealthy ? AppTheme.emeraldDeep : AppTheme.warningDark,
+                  color: badgeColor,
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
@@ -561,6 +590,17 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     required NumberFormat currencyFormatter,
     required bool isDesktop,
   }) {
+    final Color accentColor;
+    if (!metrics.hasTransactions) {
+      accentColor = const Color(0xFF94A3B8);
+    } else if (metrics.isScoreHealthy) {
+      accentColor = AppTheme.emeraldPrimary;
+    } else if (metrics.isScoreCritical) {
+      accentColor = AppTheme.errorColor;
+    } else {
+      accentColor = AppTheme.warningAmber;
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -576,10 +616,10 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 height: 64,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: AppTheme.emeraldPrimary.withValues(alpha: 0.18),
+                  color: accentColor.withValues(alpha: 0.18),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: AppTheme.emeraldPrimary,
+                    color: accentColor,
                     width: 2,
                   ),
                 ),
@@ -606,9 +646,11 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Calculado localmente a partir da sua Taxa de Poupança (30%), Reserva de Emergência (35%) e Comprometimento de Renda (35%).',
-                      style: TextStyle(
+                    Text(
+                      metrics.hasTransactions
+                          ? 'Calculado localmente a partir da sua Taxa de Poupança (30%), Reserva de Emergência (35%) e Comprometimento de Renda (35%).'
+                          : 'Adicione suas primeiras receitas e despesas na aba Transações para calcular seu Score Financeiro real em tempo real.',
+                      style: const TextStyle(
                         color: Color(0xFF94A3B8),
                         fontSize: 12,
                         height: 1.35,
@@ -641,8 +683,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               _HealthMetricRow(
                 label: '1. Renda Mensal',
                 value: currencyFormatter.format(metrics.totalIncome),
-                subtitle:
-                    'Renda base configurada: ${currencyFormatter.format(profile.monthlyBaseIncome)}',
+                subtitle: metrics.usedBaseIncomeFallback
+                    ? 'Renda base configurada (${currencyFormatter.format(profile.monthlyBaseIncome)}) usada nos índices'
+                    : 'Renda base configurada: ${currencyFormatter.format(profile.monthlyBaseIncome)}',
                 icon: Icons.arrow_upward_rounded,
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
@@ -1234,10 +1277,10 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     CreditCard? existing,
   }) async {
     final nameCtrl = TextEditingController(
-      text: existing?.name ?? 'Cartão Secundário',
+      text: existing?.name ?? '',
     );
     final limitCtrl = TextEditingController(
-      text: (existing?.limitAmount ?? 1500.0).toStringAsFixed(2),
+      text: existing != null ? existing.limitAmount.toStringAsFixed(2) : '',
     );
     final minPctCtrl = TextEditingController(
       text: (existing?.targetMinPercent ?? 50.0).toStringAsFixed(0),
@@ -1248,7 +1291,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final dueDayCtrl = TextEditingController(
       text: (existing?.dueDay ?? 10).toString(),
     );
-    var isPrimary = existing?.isPrimary ?? false;
+    var isPrimary = existing?.isPrimary ?? true;
 
     await showDialog<void>(
       context: context,

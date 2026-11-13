@@ -71,6 +71,56 @@ void main() {
       expect(metrics.netWorth, closeTo(18000.0, 0.01));
       expect(metrics.isCommitmentWithin30Percent, isTrue);
       expect(metrics.sixMonthsSeries.length, equals(6));
+      expect(metrics.scoreStatusLabel, equals('Saudável'));
+    });
+
+    test('FinancialHealthEngine retorna score 0 (Sem dados) quando não há transações e usa Renda Base configurada nos índices quando há apenas despesas', () {
+      final refDate = DateTime(2026, 11, 13);
+
+      // Caso 1: Conta vazia (0 transações, mesmo com renda base configurada) -> Score deve ser 0 e Sem dados
+      final emptyMetrics = FinancialHealthEngine.calculate(
+        const <Transaction>[],
+        referenceDate: refDate,
+        monthlyBaseIncome: 5000.0,
+      );
+      expect(emptyMetrics.hasTransactions, isFalse);
+      expect(emptyMetrics.healthScore, equals(0.0));
+      expect(emptyMetrics.roundedScore, equals(0));
+      expect(emptyMetrics.scoreStatusLabel, equals('Sem dados'));
+
+      // Caso 2: Usuário lançou apenas despesa no mês atual, mas configurou Renda Base de R$ 5.000
+      final expenseOnlyTxs = [
+        Transaction(
+          id: 1,
+          description: 'Supermercado',
+          amount: 1000.0,
+          date: DateTime(2026, 11, 10),
+          type: TransactionType.expense,
+          category: 'Alimentação',
+        ),
+      ];
+      final withBaseMetrics = FinancialHealthEngine.calculate(
+        expenseOnlyTxs,
+        referenceDate: refDate,
+        monthlyBaseIncome: 5000.0,
+      );
+      expect(withBaseMetrics.hasTransactions, isTrue);
+      expect(withBaseMetrics.usedBaseIncomeFallback, isTrue);
+      expect(withBaseMetrics.incomeCommitment, closeTo(20.0, 0.01));
+      expect(withBaseMetrics.savingsRate, closeTo(80.0, 0.01));
+      // Score: (80 * 0.3) + 0 + (0.8 * 35) = 24 + 28 = 52
+      expect(withBaseMetrics.healthScore, closeTo(52.0, 0.01));
+      expect(withBaseMetrics.scoreStatusLabel, equals('Atenção'));
+
+      // Caso 3: Apenas despesa sem renda base nem receita -> Score 0 e Crítico (não ganha pontos grátis)
+      final noIncomeMetrics = FinancialHealthEngine.calculate(
+        expenseOnlyTxs,
+        referenceDate: refDate,
+        monthlyBaseIncome: 0.0,
+      );
+      expect(noIncomeMetrics.incomeCommitment, closeTo(100.0, 0.01));
+      expect(noIncomeMetrics.healthScore, closeTo(0.0, 0.01));
+      expect(noIncomeMetrics.scoreStatusLabel, equals('Crítico'));
     });
 
     test('OWASP MASVS sanitiza tentativas de Prompt Injection e InformalExpenseParser extrai forma de pagamento', () {

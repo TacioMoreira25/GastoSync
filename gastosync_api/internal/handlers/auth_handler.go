@@ -997,7 +997,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 			c,
 			"INVALID_PAYLOAD",
 			"Não foi possível processar os dados enviados para atualização do perfil.",
-			nil,
 		)
 	}
 
@@ -1009,7 +1008,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 				c,
 				"INVALID_NAME",
 				"O nome deve conter entre 1 e 120 caracteres.",
-				map[string]string{"name": "Informe um nome válido (1 a 120 caracteres)."},
 			)
 		}
 		normalizedName = &trimmed
@@ -1020,7 +1018,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 			c,
 			"INVALID_MONTHLY_INCOME",
 			"A renda mensal base não pode ser negativa.",
-			map[string]string{"monthly_income": "Informe um valor maior ou igual a zero."},
 		)
 	}
 
@@ -1029,7 +1026,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 			c,
 			"INVALID_SAVINGS_GOAL",
 			"A meta percentual de poupança deve estar entre 0% e 100%.",
-			map[string]string{"savings_goal_percent": "Informe um percentual entre 0 e 100."},
 		)
 	}
 
@@ -1041,7 +1037,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 				c,
 				"INVALID_REMINDER_TIME_1",
 				"O 1º horário de lembrete deve estar no formato HH:MM (ex: 09:00).",
-				map[string]string{"reminder_time_1": "Formato esperado: HH:MM (00:00 a 23:59)."},
 			)
 		}
 		normalizedTime1 = &trimmed
@@ -1055,7 +1050,6 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 				c,
 				"INVALID_REMINDER_TIME_2",
 				"O 2º horário de lembrete deve estar no formato HH:MM (ex: 18:00).",
-				map[string]string{"reminder_time_2": "Formato esperado: HH:MM (00:00 a 23:59)."},
 			)
 		}
 		normalizedTime2 = &trimmed

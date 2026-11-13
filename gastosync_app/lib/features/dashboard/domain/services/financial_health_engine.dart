@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:drift/drift.dart' show Value;
 import '../../../../core/database/app_database.dart';
 import '../../../transactions/domain/models/transaction.dart';
 
@@ -33,6 +34,8 @@ class FinancialMetrics {
     required this.sixMonthsSeries,
     this.fixedExpenses = 0.0,
     this.variableExpenses = 0.0,
+    this.hasTransactions = true,
+    this.usedBaseIncomeFallback = false,
     double? netWorth,
   }) : netWorth = netWorth ?? currentBalance;
 
@@ -70,12 +73,37 @@ class FinancialMetrics {
   final double monthEndProjection;
   final double healthScore;
   final List<MonthlyCashFlowPoint> sixMonthsSeries;
+  final bool hasTransactions;
+  final bool usedBaseIncomeFallback;
+
+  /// Score inteiro consolidado (0 quando não há movimentações)
+  int get roundedScore => hasTransactions ? healthScore.round().clamp(0, 100) : 0;
+
+  /// Rótulo padronizado do Score Financeiro em todo o aplicativo
+  String get scoreStatusLabel {
+    if (!hasTransactions) return 'Sem dados';
+    final s = roundedScore;
+    if (s >= 60) return 'Saudável';
+    if (s >= 40) return 'Atenção';
+    return 'Crítico';
+  }
+
+  bool get isScoreHealthy => hasTransactions && roundedScore >= 60;
+  bool get isScoreWarning =>
+      hasTransactions && roundedScore >= 40 && roundedScore < 60;
+  bool get isScoreCritical => hasTransactions && roundedScore < 40;
 
   /// Indica se o comprometimento de renda respeita a diretriz saudável (< 30%)
   bool get isCommitmentWithin30Percent => incomeCommitment <= 30.0;
 
-  LocalMetricsCompanion toCompanion() {
+  LocalMetricsCompanion toCompanion({String? userEmail}) {
+    final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
+        ? userEmail.trim().toLowerCase()
+        : null;
     return LocalMetricsCompanion.insert(
+      userEmail: normalizedEmail != null
+          ? Value(normalizedEmail)
+          : const Value.absent(),
       calculatedAt: calculatedAt,
       currentBalance: currentBalance,
       totalIncome: totalIncome,
@@ -168,10 +196,12 @@ class FinancialHealthEngine {
   static FinancialMetrics calculate(
     List<Transaction> transactions, {
     DateTime? referenceDate,
+    double monthlyBaseIncome = 0.0,
   }) {
     final now = referenceDate ?? DateTime.now();
     final currentMonth = now.month;
     final currentYear = now.year;
+    final hasTransactions = transactions.isNotEmpty;
 
     // 3. Saldo Atual (Líquido Acumulado) = sum(Receitas) - sum(Despesas)
     final currentBalance =
@@ -182,7 +212,7 @@ class FinancialHealthEngine {
         .where((t) => t.date.year == currentYear && t.date.month == currentMonth)
         .toList();
 
-    // 1. Renda Mensal Total
+    // 1. Renda Mensal Total (Receitas lançadas no mês)
     final totalIncome =
         TransactionCalculations.calculateTotalIncome(currentMonthTxs);
 
@@ -190,9 +220,15 @@ class FinancialHealthEngine {
     final totalExpense =
         TransactionCalculations.calculateTotalExpense(currentMonthTxs);
 
-    // 4. Taxa de Poupança (%) = (Receita Mensal - Despesa Mensal) / Receita Mensal * 100
-    final double savingsRate = totalIncome > 0
-        ? ((totalIncome - totalExpense) / totalIncome) * 100.0
+    final safeBaseIncome = math.max(0.0, monthlyBaseIncome);
+    final usedBaseIncomeFallback =
+        hasTransactions && totalIncome <= 0 && safeBaseIncome > 0;
+    final effectiveIncome =
+        totalIncome > 0 ? totalIncome : safeBaseIncome;
+
+    // 4. Taxa de Poupança (%) = (Renda Efetiva - Despesa Mensal) / Renda Efetiva * 100
+    final double savingsRate = (hasTransactions && effectiveIncome > 0)
+        ? ((effectiveIncome - totalExpense) / effectiveIncome) * 100.0
         : 0.0;
 
     // 5. Gastos Fixos & 6. Gastos Variáveis
@@ -213,10 +249,12 @@ class FinancialHealthEngine {
             ? (currentBalance / avgExpense3Months)
             : 0.0;
 
-    // 7. Comprometimento da Renda (%) = Despesa Mensal / Receita Mensal * 100 (Referência < 30%)
-    final double incomeCommitment = totalIncome > 0
-        ? (totalExpense / totalIncome) * 100.0
-        : (totalExpense > 0 ? 100.0 : 0.0);
+    // 7. Comprometimento da Renda (%) = Despesa Mensal / Renda Efetiva * 100 (Referência < 30%)
+    final double incomeCommitment = !hasTransactions
+        ? 0.0
+        : (effectiveIncome > 0
+            ? (totalExpense / effectiveIncome) * 100.0
+            : (totalExpense > 0 ? 100.0 : 0.0));
 
     // 9. Patrimônio Líquido = Saldo Atual + aportes em Investimentos registrados como saída
     final double investedAllocations = transactions
@@ -238,11 +276,11 @@ class FinancialHealthEngine {
     final clampedSavings = savingsRate.clamp(0.0, 100.0);
     final reserveFactor = math.min(emergencyMonths / 6.0, 1.0).clamp(0.0, 1.0);
     final commitmentRatio = (incomeCommitment / 100.0).clamp(0.0, 1.0);
-    final double rawScore = (transactions.isEmpty)
+    final double commitmentScore =
+        effectiveIncome > 0 ? ((1.0 - commitmentRatio) * 35.0) : 0.0;
+    final double rawScore = !hasTransactions
         ? 0.0
-        : (clampedSavings * 0.3) +
-            (reserveFactor * 35.0) +
-            ((1.0 - commitmentRatio) * 35.0);
+        : (clampedSavings * 0.3) + (reserveFactor * 35.0) + commitmentScore;
     final healthScore = rawScore.clamp(0.0, 100.0);
 
     // Série histórica dos últimos 6 meses para o LineChart
@@ -263,6 +301,8 @@ class FinancialHealthEngine {
       monthEndProjection: monthEndProjection,
       healthScore: healthScore,
       sixMonthsSeries: sixMonthsSeries,
+      hasTransactions: hasTransactions,
+      usedBaseIncomeFallback: usedBaseIncomeFallback,
     );
   }
 

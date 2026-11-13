@@ -168,3 +168,91 @@ func TestIsValidReminderTime(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateProfileValidationErrors(t *testing.T) {
+	app := fiber.New()
+	handler := NewAuthHandler(nil, &config.Config{
+		AppEnv:             "test",
+		JWTSecret:          "test-jwt-secret-key-2026",
+		JWTExpirationHours: 24,
+	})
+
+	app.Put("/api/v1/auth/profile-unauth", handler.UpdateProfile)
+	app.Put("/api/v1/auth/profile", func(c *fiber.Ctx) error {
+		c.Locals(middleware.UserIDKey, "00000000-0000-0000-0000-000000000001")
+		return c.Next()
+	}, handler.UpdateProfile)
+
+	unauthReq := httptest.NewRequest(http.MethodPut, "/api/v1/auth/profile-unauth", strings.NewReader(`{}`))
+	unauthReq.Header.Set("Content-Type", "application/json")
+	unauthResp, err := app.Test(unauthReq)
+	if err != nil {
+		t.Fatalf("unexpected error testing unauthorized UpdateProfile: %v", err)
+	}
+	defer unauthResp.Body.Close()
+	if unauthResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 when userID missing, got %d", unauthResp.StatusCode)
+	}
+
+	tests := []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{
+			name:     "invalid JSON payload",
+			body:     `{invalid-json`,
+			wantCode: "INVALID_PAYLOAD",
+		},
+		{
+			name:     "empty name",
+			body:     `{"name":"   "}`,
+			wantCode: "INVALID_NAME",
+		},
+		{
+			name:     "negative monthly income",
+			body:     `{"monthly_income":-10}`,
+			wantCode: "INVALID_MONTHLY_INCOME",
+		},
+		{
+			name:     "savings goal out of bounds",
+			body:     `{"savings_goal_percent":120}`,
+			wantCode: "INVALID_SAVINGS_GOAL",
+		},
+		{
+			name:     "invalid reminder_time_1",
+			body:     `{"reminder_time_1":"25:00"}`,
+			wantCode: "INVALID_REMINDER_TIME_1",
+		},
+		{
+			name:     "invalid reminder_time_2",
+			body:     `{"reminder_time_2":"18:60"}`,
+			wantCode: "INVALID_REMINDER_TIME_2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/auth/profile", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("unexpected error testing UpdateProfile (%s): %v", tc.name, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected status 400 for %s, got %d", tc.name, resp.StatusCode)
+			}
+			var payload struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode error payload for %s: %v", tc.name, err)
+			}
+			if payload.Code != tc.wantCode {
+				t.Errorf("expected error code %q, got %q", tc.wantCode, payload.Code)
+			}
+		})
+	}
+}

@@ -45,10 +45,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final creditCardsAsync = ref.watch(watchCreditCardsProvider);
     final profile = ref.watch(userProfileProvider);
 
-    final metrics = metricsAsync.value ??
-        FinancialHealthEngine.calculate(const []);
-    final latestInsight = latestInsightAsync.value;
     final transactions = transactionsAsync.value ?? const <Transaction>[];
+    final metrics = metricsAsync.value ??
+        FinancialHealthEngine.calculate(
+          transactions,
+          monthlyBaseIncome: profile.monthlyBaseIncome,
+        );
+    final latestInsight = latestInsightAsync.value;
     final bills =
         (billsAsync.value ?? const <Bill>[]).where((b) => !b.isDeleted).toList();
     final creditCards = (creditCardsAsync.value ?? const <LocalCreditCard>[])
@@ -455,7 +458,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final emergencyProgress = (metrics.emergencyMonths / 6.0).clamp(0.0, 1.0);
     final commitmentProgress =
         (metrics.incomeCommitment / 100.0).clamp(0.0, 1.0);
-    final scoreProgress = (metrics.healthScore / 100.0).clamp(0.0, 1.0);
+    final scoreProgress = (metrics.roundedScore / 100.0).clamp(0.0, 1.0);
+    final Color scoreColor;
+    final Color scoreBadgeBg;
+    final Color scoreBadgeTextColor;
+
+    if (!metrics.hasTransactions) {
+      scoreColor = AppTheme.textMuted;
+      scoreBadgeBg = AppTheme.subtleSurface;
+      scoreBadgeTextColor = AppTheme.textMuted;
+    } else if (metrics.isScoreHealthy) {
+      scoreColor = AppTheme.emeraldPrimary;
+      scoreBadgeBg = AppTheme.emeraldBadgeBg;
+      scoreBadgeTextColor = AppTheme.emeraldDeep;
+    } else if (metrics.isScoreCritical) {
+      scoreColor = AppTheme.errorColor;
+      scoreBadgeBg = AppTheme.errorColor.withValues(alpha: 0.12);
+      scoreBadgeTextColor = AppTheme.errorColor;
+    } else {
+      scoreColor = AppTheme.warningAmber;
+      scoreBadgeBg = AppTheme.warningBadgeBg;
+      scoreBadgeTextColor = AppTheme.warningDark;
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -526,13 +550,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
             _SummaryGridCard(
               title: 'Score Financeiro',
-              mainValue: '${metrics.healthScore.toStringAsFixed(0)}/100',
-              subtitle: metrics.healthScore >= 70
-                  ? 'Status: Saudável'
-                  : 'Status: Em evolução',
+              mainValue: '${metrics.roundedScore}/100',
+              subtitle: !metrics.hasTransactions
+                  ? 'Aguardando lançamentos'
+                  : 'Status: ${metrics.scoreStatusLabel}',
               progress: scoreProgress,
-              progressColor: AppTheme.emeraldPrimary,
-              badgeText: metrics.healthScore >= 70 ? 'Saudável' : 'Ativo',
+              progressColor: scoreColor,
+              badgeText: metrics.scoreStatusLabel,
+              badgeBackgroundColor: scoreBadgeBg,
+              badgeTextColor: scoreBadgeTextColor,
             ),
           ],
         ),
@@ -1730,6 +1756,8 @@ class _SummaryGridCard extends StatelessWidget {
     required this.progress,
     required this.progressColor,
     this.badgeText,
+    this.badgeBackgroundColor,
+    this.badgeTextColor,
   });
 
   final String title;
@@ -1738,6 +1766,8 @@ class _SummaryGridCard extends StatelessWidget {
   final double progress;
   final Color progressColor;
   final String? badgeText;
+  final Color? badgeBackgroundColor;
+  final Color? badgeTextColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1769,11 +1799,14 @@ class _SummaryGridCard extends StatelessWidget {
                     horizontal: 8,
                     vertical: 2,
                   ),
-                  decoration: AppTheme.emeraldBadgeDecoration,
+                  decoration: BoxDecoration(
+                    color: badgeBackgroundColor ?? AppTheme.emeraldBadgeBg,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                   child: Text(
                     badgeText!,
-                    style: const TextStyle(
-                      color: AppTheme.emeraldDeep,
+                    style: TextStyle(
+                      color: badgeTextColor ?? AppTheme.emeraldDeep,
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                     ),

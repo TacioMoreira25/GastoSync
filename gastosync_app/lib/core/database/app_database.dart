@@ -841,14 +841,11 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Stream reativa de todos os cartões de crédito ativos (`deletedAt IS NULL`)
-  /// filtrados por conta (`userEmail`), com seed automático do `Cartão Principal`
-  /// (R$ 1.500,00 e faixa ideal 50%–80%) (T029)
+  /// filtrados por conta (`userEmail`) (T029)
   Stream<List<LocalCreditCard>> watchAllCreditCards({String? userEmail}) {
     final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
         ? userEmail.trim().toLowerCase()
         : null;
-
-    Future.microtask(() => seedDefaultCreditCardIfEmpty(userEmail: userEmail));
 
     final query = select(localCreditCards);
     if (normalizedEmail != null) {
@@ -860,34 +857,7 @@ class AppDatabase extends _$AppDatabase {
     ]);
 
     return query.watch().map((allRows) {
-      final activeRows =
-          allRows.where((row) => row.deletedAt == null).toList();
-      if (activeRows.isNotEmpty) {
-        return activeRows;
-      }
-
-      // Se ainda não há nenhum registro persistido para esta conta (antes do microtask concluir),
-      // retorna o seed padrão em memória para exibição imediata sem flicker
-      if (allRows.isEmpty) {
-        return <LocalCreditCard>[
-          LocalCreditCard(
-            id: -1,
-            clientUuid: '00000000-0000-4000-8000-000000000001',
-            userEmail: normalizedEmail ?? 'marcos.pereira@gastosync.local',
-            name: 'Cartão Principal',
-            limitAmount: 1500.0,
-            targetMinPercent: 50.0,
-            targetMaxPercent: 80.0,
-            dueDay: 10,
-            isPrimary: true,
-            isSynced: false,
-            updatedAt: null,
-            deletedAt: null,
-          ),
-        ];
-      }
-
-      return const <LocalCreditCard>[];
+      return allRows.where((row) => row.deletedAt == null).toList();
     });
   }
 
@@ -913,11 +883,15 @@ class AppDatabase extends _$AppDatabase {
     final safeMax = targetMaxPercent.clamp(safeMin, 100.0);
 
     return transaction(() async {
-      await seedDefaultCreditCardIfEmpty(userEmail: normalizedEmail);
-
       final userCards = await (select(localCreditCards)
             ..where((c) => c.userEmail.equals(normalizedEmail)))
           .get();
+
+      final activeUserCards =
+          userCards.where((c) => c.deletedAt == null).toList();
+
+      // Se for o primeiro cartão ativo cadastrado pelo usuário, torna-o Cartão Principal automaticamente
+      final effectiveIsPrimary = isPrimary || activeUserCards.isEmpty;
 
       LocalCreditCard? existingCard;
       if (id != null && id > 0) {
@@ -936,7 +910,7 @@ class AppDatabase extends _$AppDatabase {
             userCards.where((c) => c.isPrimary && c.deletedAt == null).firstOrNull;
       }
 
-      if (isPrimary) {
+      if (effectiveIsPrimary) {
         await (update(localCreditCards)
               ..where((c) => c.userEmail.equals(normalizedEmail)))
             .write(
@@ -956,7 +930,7 @@ class AppDatabase extends _$AppDatabase {
             targetMinPercent: Value(safeMin),
             targetMaxPercent: Value(safeMax),
             dueDay: Value(safeDueDay),
-            isPrimary: Value(isPrimary),
+            isPrimary: Value(effectiveIsPrimary),
             isSynced: const Value(false),
             updatedAt: Value(now),
             deletedAt: const Value(null),
@@ -980,7 +954,7 @@ class AppDatabase extends _$AppDatabase {
           targetMinPercent: Value(safeMin),
           targetMaxPercent: Value(safeMax),
           dueDay: Value(safeDueDay),
-          isPrimary: Value(isPrimary),
+          isPrimary: Value(effectiveIsPrimary),
           isSynced: const Value(false),
           updatedAt: Value(now),
         ),
