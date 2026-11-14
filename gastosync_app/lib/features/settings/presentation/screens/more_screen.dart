@@ -1067,10 +1067,171 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                   ref.read(authProvider.notifier).logout();
                 },
               ),
+              const Divider(color: AppTheme.cardBorder, height: 1),
+              _SettingsTile(
+                key: const Key('more_delete_account_button'),
+                icon: Icons.delete_forever_rounded,
+                title: 'Encerrar e excluir conta',
+                subtitle:
+                    'Apagar permanentemente sua conta e todos os dados financeiros',
+                isDestructive: true,
+                onTap: () => _showDeleteAccountDialog(context, profile),
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _showDeleteAccountDialog(
+    BuildContext context,
+    UserProfile profile,
+  ) async {
+    final passwordController = TextEditingController();
+    var obscurePassword = true;
+    var isDeleting = false;
+    String? errorText;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.cardSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.warning_amber_rounded,
+                      color: AppTheme.errorColor,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Encerrar e Excluir Conta',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Esta ação é irreversível. Sua conta (${profile.email}) e todas as suas transações, boletos, cartões e metas serão excluídos permanentemente da nuvem e deste dispositivo.',
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 13.5,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    key: const Key('delete_account_password_field'),
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    enabled: !isDeleting,
+                    decoration: InputDecoration(
+                      labelText: 'Confirme sua senha atual',
+                      errorText: errorText,
+                      prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setDialogState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                        icon: Icon(
+                          obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isDeleting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton.icon(
+                  key: const Key('confirm_delete_account_button'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.errorColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: isDeleting
+                      ? null
+                      : () async {
+                          final pwd = passwordController.text.trim();
+                          if (pwd.isEmpty) {
+                            setDialogState(() {
+                              errorText =
+                                  'Digite sua senha para confirmar a exclusão.';
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            isDeleting = true;
+                            errorText = null;
+                          });
+                          final err = await ref
+                              .read(authProvider.notifier)
+                              .deleteAccount(password: pwd);
+                          if (!dialogContext.mounted) return;
+                          if (err != null) {
+                            setDialogState(() {
+                              isDeleting = false;
+                              errorText = err;
+                            });
+                            return;
+                          }
+                          Navigator.of(dialogContext).pop();
+                          if (context.mounted) {
+                            context.go('/dashboard');
+                          }
+                        },
+                  icon: isDeleting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.delete_forever_rounded, size: 18),
+                  label: Text(
+                    isDeleting ? 'Excluindo...' : 'Excluir permanentemente',
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1251,6 +1412,7 @@ class _SettingsTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.isDestructive = false,
     super.key,
   });
 
@@ -1258,9 +1420,18 @@ class _SettingsTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final bool isDestructive;
 
   @override
   Widget build(BuildContext context) {
+    final accentColor =
+        isDestructive ? AppTheme.errorColor : AppTheme.textSecondary;
+    final titleColor =
+        isDestructive ? AppTheme.errorColor : AppTheme.textPrimary;
+    final iconBgColor = isDestructive
+        ? AppTheme.errorColor.withValues(alpha: 0.1)
+        : AppTheme.subtleSurface;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -1272,12 +1443,12 @@ class _SettingsTile extends StatelessWidget {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppTheme.subtleSurface,
+                color: iconBgColor,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 icon,
-                color: AppTheme.textSecondary,
+                color: accentColor,
                 size: 20,
               ),
             ),
@@ -1288,8 +1459,8 @@ class _SettingsTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
+                    style: TextStyle(
+                      color: titleColor,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
@@ -1305,9 +1476,9 @@ class _SettingsTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               Icons.chevron_right_rounded,
-              color: AppTheme.textMuted,
+              color: isDestructive ? AppTheme.errorColor : AppTheme.textMuted,
               size: 20,
             ),
           ],

@@ -33,6 +33,7 @@ class ApiConstants {
   static const String authResendVerificationEndpoint = '/api/v1/auth/resend-verification';
   static const String authMeEndpoint = '/api/v1/auth/me';
   static const String authProfileEndpoint = '/api/v1/auth/profile';
+  static const String authDeleteAccountEndpoint = '/api/v1/auth/account';
   static const String syncPushEndpoint = '/api/v1/sync/push';
   static const String syncPullEndpoint = '/api/v1/sync/pull';
 

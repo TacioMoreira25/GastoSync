@@ -526,6 +526,53 @@ class AuthService {
     }
   }
 
+  /// Exclui permanentemente a conta do usuário e todos os seus dados na nuvem (`DELETE /api/v1/auth/account`)
+  Future<AuthResult> deleteAccount({
+    required String token,
+    String? password,
+  }) async {
+    final payload = <String, dynamic>{
+      if (password != null && password.trim().isNotEmpty)
+        'password': password.trim(),
+    };
+    final options = Options(
+      headers: {
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    try {
+      try {
+        await _dio.delete<Map<String, dynamic>>(
+          ApiConstants.authDeleteAccountEndpoint,
+          data: payload,
+          options: options,
+        );
+      } on DioException catch (e) {
+        if ((_isNetworkError(e) || _isRouteMissingOnServer(e)) &&
+            _dio.options.baseUrl != 'http://localhost:8080') {
+          await _localFallbackDio.delete<Map<String, dynamic>>(
+            ApiConstants.authDeleteAccountEndpoint,
+            data: payload,
+            options: options,
+          );
+        } else {
+          rethrow;
+        }
+      }
+      return const AuthResult();
+    } on DioException catch (e) {
+      if (_isNetworkError(e) || _isRouteMissingOnServer(e)) {
+        return const AuthResult(isOffline: true);
+      }
+      final msg =
+          _extractErrorMessage(e) ?? 'Não foi possível encerrar a conta.';
+      return AuthResult(error: msg);
+    } catch (_) {
+      return const AuthResult(isOffline: true);
+    }
+  }
+
   bool _isNetworkError(DioException e) {
     return e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.sendTimeout ||

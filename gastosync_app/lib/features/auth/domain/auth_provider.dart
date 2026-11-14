@@ -1248,6 +1248,79 @@ class AuthNotifier extends Notifier<AuthState> {
     state = const AuthState(isAuthenticated: false);
   }
 
+  /// Exclui permanentemente a conta atual na nuvem e remove os registros locais (LGPD)
+  Future<String?> deleteAccount({
+    required String password,
+  }) async {
+    final trimmedPassword = password.trim();
+    if (trimmedPassword.isEmpty) {
+      return 'Informe sua senha atual para confirmar o encerramento da conta.';
+    }
+
+    final email = (state.currentEmail ??
+            ref.read(userProfileProvider).email)
+        .trim()
+        .toLowerCase();
+
+    final localAccount = _accounts[email];
+    final token = state.token;
+
+    // 1. Se houver sessão JWT em nuvem, exclui no servidor Go/PostgreSQL
+    if (token != null && token.isNotEmpty) {
+      final remoteResult = await ref.read(authServiceProvider).deleteAccount(
+            token: token,
+            password: trimmedPassword,
+          );
+      if (!remoteResult.isOffline && !remoteResult.isSuccess) {
+        return remoteResult.error ??
+            'Não foi possível encerrar sua conta. Verifique sua senha.';
+      }
+      if (remoteResult.isOffline && localAccount != null) {
+        final candidateHash = PasswordHasher.hashPassword(
+          trimmedPassword,
+          localAccount.salt,
+        );
+        if (!PasswordHasher.constantTimeEquals(
+          candidateHash,
+          localAccount.passwordHash,
+        )) {
+          return 'Senha incorreta. Confirme sua senha atual para excluir a conta.';
+        }
+      }
+    } else if (localAccount != null) {
+      // 2. Validação criptográfica local quando operando 100% offline/local
+      final candidateHash = PasswordHasher.hashPassword(
+        trimmedPassword,
+        localAccount.salt,
+      );
+      if (!PasswordHasher.constantTimeEquals(
+        candidateHash,
+        localAccount.passwordHash,
+      )) {
+        return 'Senha incorreta. Confirme sua senha atual para excluir a conta.';
+      }
+    }
+
+    _accounts.remove(email);
+    _resetTickets.remove(email);
+    _verificationTickets.remove(email);
+
+    try {
+      await ref
+          .read(appDatabaseProvider)
+          .deleteAuthAccountAndLocalData(email);
+    } catch (_) {}
+
+    ref.read(userProfileProvider.notifier).clearSessionToken();
+    ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
+    state = const AuthState(
+      isAuthenticated: false,
+      successMessage:
+          'Sua conta e todos os seus dados foram encerrados e excluídos permanentemente.',
+    );
+    return null;
+  }
+
   bool _registerFailedAttempt(String message) {
     final attempts = state.failedAttempts + 1;
     if (attempts >= maxFailedAttempts) {

@@ -1044,6 +1044,21 @@ class AppDatabase extends _$AppDatabase {
     await customStatement('DELETE FROM local_auth_session;');
   }
 
+  /// Remove a conta local e apaga todos os registros financeiros armazenados localmente (LGPD)
+  Future<void> deleteAuthAccountAndLocalData(String email) async {
+    await initCustomAuthTables();
+    final normalized = email.trim().toLowerCase();
+    await customStatement(
+      'DELETE FROM local_auth_accounts WHERE email = ?;',
+      [normalized],
+    );
+    await customStatement('DELETE FROM local_auth_session;');
+    await delete(localTransactions).go();
+    await delete(localBills).go();
+    await delete(localCreditCards).go();
+    await delete(localBudgets).go();
+  }
+
   Future<void> saveAuthSession({
     required String? currentEmail,
     required bool isAuthenticated,

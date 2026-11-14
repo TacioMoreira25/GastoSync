@@ -95,6 +95,11 @@ type UpdateProfileRequest struct {
 	EmailBillNotifications *bool    `json:"email_bill_notifications,omitempty"`
 }
 
+// DeleteAccountRequest defines the optional password confirmation payload to permanently delete a user account.
+type DeleteAccountRequest struct {
+	Password string `json:"password,omitempty"`
+}
+
 // TransactionDTO represents a financial transaction exchanged during synchronization.
 // Supports both canonical (`date`, `type`) and legacy/alias (`tx_date`, `tx_type`) JSON keys.
 type TransactionDTO struct {

@@ -97,6 +97,8 @@ func main() {
 	authGroup.Post("/reset-password", middleware.AuthRateLimiter(), authHandler.ResetPassword)
 	authGroup.Get("/me", middleware.RequireAuth(cfg.JWTSecret), authHandler.Me)
 	authGroup.Put("/profile", middleware.RequireAuth(cfg.JWTSecret), authHandler.UpdateProfile)
+	authGroup.Delete("/account", middleware.RequireAuth(cfg.JWTSecret), authHandler.DeleteAccount)
+	authGroup.Post("/delete-account", middleware.RequireAuth(cfg.JWTSecret), authHandler.DeleteAccount)
 
 	syncGroup := apiV1.Group("/sync", middleware.RequireAuth(cfg.JWTSecret))
 	syncGroup.Post("/push", syncHandler.Push)

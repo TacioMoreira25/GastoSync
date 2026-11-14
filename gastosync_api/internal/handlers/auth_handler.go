@@ -1112,6 +1112,92 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(user)
 }
 
+// DeleteAccount permanently deletes the authenticated user's account and all cascading financial records (DELETE /api/v1/auth/account).
+func (h *AuthHandler) DeleteAccount(c *fiber.Ctx) error {
+	userID, _ := c.Locals(middleware.UserIDKey).(string)
+	if strings.TrimSpace(userID) == "" {
+		return response.Unauthorized(
+			c,
+			"UNAUTHORIZED",
+			"Sessão inválida ou expirada.",
+		)
+	}
+
+	var req models.DeleteAccountRequest
+	if len(c.Body()) > 0 {
+		_ = c.BodyParser(&req)
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+
+	var email, passwordHash string
+	err := h.pool.QueryRow(
+		ctx,
+		`SELECT email, password_hash FROM users WHERE id = $1`,
+		userID,
+	).Scan(&email, &passwordHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return response.NotFound(
+				c,
+				"USER_NOT_FOUND",
+				"Conta de usuário não encontrada no servidor.",
+			)
+		}
+		return response.InternalError(
+			c,
+			"ACCOUNT_LOOKUP_FAILED",
+			"Não foi possível localizar sua conta no momento.",
+		)
+	}
+
+	if strings.TrimSpace(req.Password) != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+			return response.Unauthorized(
+				c,
+				"INVALID_CREDENTIALS",
+				"Senha incorreta. Confirme sua senha atual para encerrar a conta.",
+			)
+		}
+	}
+
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		return response.InternalError(
+			c,
+			"ACCOUNT_DELETE_TX_FAILED",
+			"Não foi possível iniciar o encerramento da conta.",
+		)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, _ = tx.Exec(ctx, `DELETE FROM email_verification_tokens WHERE email = $1`, email)
+	_, _ = tx.Exec(ctx, `DELETE FROM password_reset_tokens WHERE email = $1`, email)
+
+	cmdTag, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil || cmdTag.RowsAffected() == 0 {
+		return response.InternalError(
+			c,
+			"ACCOUNT_DELETE_FAILED",
+			"Não foi possível encerrar sua conta no momento. Tente novamente.",
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return response.InternalError(
+			c,
+			"ACCOUNT_DELETE_COMMIT_FAILED",
+			"Falha ao concluir a exclusão permanente dos dados.",
+		)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"deleted": true,
+		"message": "Sua conta e todos os seus dados financeiros foram encerrados e excluídos permanentemente.",
+	})
+}
+
 func (h *AuthHandler) generateJWT(userID, email string) (string, error) {
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
