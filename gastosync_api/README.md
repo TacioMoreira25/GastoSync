@@ -49,11 +49,16 @@ gastosync_api/
 | Método | Rota | Autenticação | Descrição |
 | :--- | :--- | :---: | :--- |
 | `GET` | `/health` | Pública | Verificação de integridade do serviço |
-| `POST` | `/api/v1/auth/register` | Pública | Cadastro de usuário e emissão de JWT |
+| `POST` | `/api/v1/auth/register` | Pública | Cadastro de usuário e emissão de código OTP |
 | `POST` | `/api/v1/auth/login` | Pública | Autenticação de usuário e emissão de JWT |
+| `POST` | `/api/v1/auth/verify-email` | Pública | Validação de e-mail via código OTP de 6 dígitos |
+| `POST` | `/api/v1/auth/forgot-password` | Pública | Solicitação de código de redefinição de senha |
+| `POST` | `/api/v1/auth/reset-password` | Pública | Redefinição de senha após validação do código |
 | `GET` | `/api/v1/auth/me` | Bearer JWT | Dados do perfil autenticado |
-| `POST` | `/api/v1/sync/push` | Bearer JWT | Envio de transações e metas locais para o banco central |
-| `GET` | `/api/v1/sync/pull` | Bearer JWT | Consulta de transações e metas do usuário autenticado |
+| `PUT` | `/api/v1/auth/profile` | Bearer JWT | Atualização de renda base, meta de economia e lembretes |
+| `DELETE` | `/api/v1/auth/account` | Bearer JWT | Exclusão permanente da conta e dados (LGPD) |
+| `POST` | `/api/v1/sync/push` | Bearer JWT | Envio de transações, boletos, cartões e metas locais |
+| `GET` | `/api/v1/sync/pull` | Bearer JWT | Consulta consolidada dos dados do usuário autenticado |
 
 ---
 
