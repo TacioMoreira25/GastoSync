@@ -146,12 +146,12 @@ description: "Task list for feature 002-pro-security-db-boletos implementation"
 
 ---
 
-## Phase 9: Polish, Regression Testing & Cloudflare Security Audit
+## Phase 9: Polish, AI Agent Integration, Regression Testing & Cloudflare Security Audit
 
-**Purpose**: Testes automatizados de ponta a ponta e execução da auditoria de segurança em 6 fases com a skill `cloudflare/security-audit-skill`
+**Purpose**: Integração completa do App Flutter com `gastosync_agent` (histórico do Fibo + card de limites/cota Groq na aba `Mais`), testes automatizados de ponta a ponta e execução da auditoria de segurança em 6 fases com a skill `cloudflare/security-audit-skill`
 
-- [x] T034 [P] Write comprehensive Flutter unit and widget tests for `LocalBills`, `LocalCreditCards` (healthy 50%–80% utilization math, Fixed vs Variable breakdown), recurrence, 2x/day notifications, `paymentMethod` persistence, and CSV export in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
-- [x] T035 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/` and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
+- [x] T034 [P] Integrate persistent Fibo chat conversation state (`fiboChatProvider` with `history` and `financial_context` in `gastosync_app/lib/core/widgets/gastosync_top_header.dart`), `AgentQuotaStatus` model + `fetchAgentQuotaStatus()` (`gastosync_app/lib/features/budget_agent/`), and the didactic Groq Quota & Render Status card in `MoreScreen` (`gastosync_app/lib/features/settings/presentation/screens/more_screen.dart`), plus comprehensive unit/widget tests in `gastosync_app/test/features/transactions/bills_and_sync_test.dart`
+- [x] T035 Run full validation suite (`go vet ./...`, `go test ./...` in `gastosync_api/`, `pytest` in `gastosync_agent/app/`, and `flutter analyze`, `flutter test` in `gastosync_app/`) per `quickstart.md`
 - [x] T036 Execute the 6-phase security audit workflow using `.agents/skills/security-audit/SKILL.md` across `gastosync_api`, `gastosync_app`, and `gastosync_agent`, remediate any verified findings, and generate `.specs/002-pro-security-db-boletos/security-audit-report.md`
 
 ---

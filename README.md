@@ -26,9 +26,10 @@ gasto-sync/
 ```
 
 - **Cliente (`gastosync_app`)**: Opera 100% offline no Mobile via SQLite nativo (`Drift`) com sincronização em background, e online direto via API REST na Web.
-- **API Core (`gastosync_api`)**: Microsserviço em Go (`Fiber v2` + `pgx/v5`) conectado ao Neon PostgreSQL.
-  - **Produção**: [`https://gastosync-api.onrender.com`](https://gastosync-api.onrender.com/health)
-- **Agente IA (`gastosync_agent`)**: Serviço independente em Python (`FastAPI` + `Groq`) para categorização em linguagem natural, OCR de comprovantes e assistente conversacional com validação *Human-in-the-Loop*.
+- **API Core (`gastosync_api`)**: Microsserviço em Go (`Fiber v2` + `pgx/v5`) conectado ao Neon PostgreSQL (Auth OTP 6 dígitos, Boletos 2x/dia, Cartões 50%–80% e Sync).
+  - **Produção**: [`https://gastosync-api.onrender.com/health`](https://gastosync-api.onrender.com/health)
+- **Agente IA (`gastosync_agent/app`)**: Serviço satélite em Python (`FastAPI` + `Groq`) para categorização em linguagem natural, OCR de comprovantes/boletos (`qwen/qwen3.8-27b`), assistente conversacional **Fibo** com histórico e monitor de cota.
+  - **Produção**: [`https://gastosync-agent.onrender.com/health`](https://gastosync-agent.onrender.com/health)
 
 ---
 
@@ -57,11 +58,11 @@ flutter run -d web-server --web-hostname=localhost --web-port=3000
 flutter run
 ```
 
-### 3. Serviço de IA (`gastosync_agent`)
+### 3. Serviço de IA (`gastosync_agent/app`)
 
 ```bash
-cd gastosync_agent
-python -m venv .venv && source .venv/bin/activate
+cd gastosync_agent/app
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env # Preencha API_KEY_GROQ no arquivo .env
 uvicorn main:app --reload --port 8000
@@ -73,7 +74,9 @@ uvicorn main:app --reload --port 8000
 
 - **App Flutter**: [`gastosync_app/README.md`](gastosync_app/README.md)
 - **API Core (Go)**: [`gastosync_api/README.md`](gastosync_api/README.md)
+- **Agente IA (Python)**: [`gastosync_agent/app/README.md`](gastosync_agent/app/README.md)
 - **Constituição do Projeto**: [`.specify/memory/constitution.md`](.specify/memory/constitution.md)
-- **Especificação Funcional**: [`.specs/001-fluxos-operacao-gastosync/spec.md`](.specs/001-fluxos-operacao-gastosync/spec.md)
-- **Plano Técnico e Contratos**: [`.specs/001-fluxos-operacao-gastosync/plan.md`](.specs/001-fluxos-operacao-gastosync/plan.md)
-- **Backlog de Tarefas**: [`.specs/001-fluxos-operacao-gastosync/tasks.md`](.specs/001-fluxos-operacao-gastosync/tasks.md)
+- **Especificação Funcional Pro (002)**: [`.specs/002-pro-security-db-boletos/spec.md`](.specs/002-pro-security-db-boletos/spec.md)
+- **Plano Técnico e Contratos (002)**: [`.specs/002-pro-security-db-boletos/plan.md`](.specs/002-pro-security-db-boletos/plan.md)
+- **Backlog de Tarefas (002)**: [`.specs/002-pro-security-db-boletos/tasks.md`](.specs/002-pro-security-db-boletos/tasks.md)
+- **Relatório de Auditoria de Segurança**: [`.specs/002-pro-security-db-boletos/security-audit-report.md`](.specs/002-pro-security-db-boletos/security-audit-report.md)

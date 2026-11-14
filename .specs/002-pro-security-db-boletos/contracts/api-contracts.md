@@ -224,3 +224,42 @@ Retorna todas as transações ativas (`deleted_at IS NULL`), boletos ativos (`de
     "synced_at": "2026-11-06T20:05:00Z"
   }
   ```
+
+---
+
+## 3. Serviço Satélite de IA (`gastosync_agent` — FastAPI + Groq)
+
+### 3.1 `POST /api/v1/agent/chat`
+Processa dúvidas financeiras no assistente **Fibo** com classificador prévio de contexto (`system_prompt.txt`), histórico de conversa (`history`, até 10 turnos) e resumo financeiro (`financial_context`).
+
+- **Rate Limit**: 15 req/min por IP real (`X-Forwarded-For`)
+- **Max Payload**: 32 KB (HTTP 413 acima do limite)
+- **Request Body**:
+  ```json
+  {
+    "message": "E se eu gastar R$ 900 no mês, ainda fica saudável?",
+    "history": [
+      {"role": "user", "content": "Tenho R$ 1500 de limite no cartão principal."},
+      {"role": "assistant", "content": "O ideal é manter o uso entre 50% (R$ 750) e 80% (R$ 1200) do limite."}
+    ],
+    "financial_context": "Renda mensal: R$ 4500.00 | Despesas no mês: R$ 1800.00 | Saldo disponível: R$ 2700.00"
+  }
+  ```
+- **Response `200 OK`**:
+  ```json
+  {
+    "reply": "Sim! Gastando R$ 900 você utiliza exatamente 60% do seu limite de R$ 1.500, permanecendo dentro da faixa saudável de 50% a 80%.",
+    "response": "Sim! Gastando R$ 900 você utiliza exatamente 60% do seu limite de R$ 1.500, permanecendo dentro da faixa saudável de 50% a 80%.",
+    "message": "Mensagem dentro do contexto!",
+    "erro": "0"
+  }
+  ```
+
+### 3.2 `POST /api/v1/predict/categorize`
+Categoriza despesas em linguagem natural com inferência de `payment_method` (`PIX`, `Crédito`, `Débito`, `Boleto`, `Dinheiro`, `Transferência`) e suporte às 8 categorias (`Alimentação`, `Transporte`, `Moradia`, `Saúde`, `Lazer`, `Educação`, `Investimentos`, `Outros`).
+
+### 3.3 `POST /api/v1/predict/ocr`
+Extrai `merchant`, `amount`, `date` (ISO-8601 ou `DD/MM/YYYY`), `category`, `confidence`, `budget_tip` e `payment_method` de comprovantes e boletos via modelo multimodal `qwen/qwen3.8-27b` com validação de *magic bytes* (`JPEG`, `PNG`, `WebP`, máx. 5 MiB).
+
+### 3.4 `GET /api/v1/agent/status`
+Retorna telemetria anônima da sessão e limites da cota Groq (`active_text_model`, `fallback_text_models`, `active_ocr_model`, `total_requests`, `total_tokens_used`, `fallback_triggers`, `daily_request_limit`, `minute_token_limit`) para exibição no card didático da tela `Mais`.
