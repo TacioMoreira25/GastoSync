@@ -134,6 +134,27 @@ void main() {
       expect(parsed.extractedAmount, closeTo(45.0, 0.01));
       expect(parsed.inferredCategory, equals('Alimentação'));
       expect(parsed.inferredPaymentMethod, equals('Débito'));
+      expect(parsed.inferredType, equals('expense'));
+
+      // Caso Receita: "Salario de 1500" deve ir direto para Receita / Renda com descrição limpa "Salário"
+      final parsedSalary = InformalExpenseParser.parse('Salario de 1500');
+      expect(parsedSalary.inferredType, equals('income'));
+      expect(parsedSalary.inferredCategory, equals('Renda'));
+      expect(parsedSalary.extractedAmount, closeTo(1500.0, 0.01));
+      expect(parsedSalary.cleanDescription, equals('Salário'));
+
+      // Caso Receita formatada em Real com milhar: "Salário R$ 2.500,50"
+      final parsedBrlSalary = InformalExpenseParser.parse('Salário R\$ 2.500,50');
+      expect(parsedBrlSalary.inferredType, equals('income'));
+      expect(parsedBrlSalary.inferredCategory, equals('Renda'));
+      expect(parsedBrlSalary.extractedAmount, closeTo(2500.50, 0.01));
+
+      // Caso Boleto / Conta com dia de vencimento: "Boleto de luz 180 vence dia 20"
+      final parsedBill = InformalExpenseParser.parse('Boleto de luz 180 vence dia 20');
+      expect(parsedBill.inferredType, equals('bill'));
+      expect(parsedBill.inferredCategory, equals('Moradia'));
+      expect(parsedBill.extractedAmount, closeTo(180.0, 0.01));
+      expect(parsedBill.inferredDate?.day, equals(20));
     });
 
     testWidgets(
@@ -236,13 +257,9 @@ void main() {
         expect(savedList.first.description, equals('Supermercado Modo Avião'));
         expect(savedList.first.isSynced, isFalse);
 
-        // Valida seed padrão e upsertBudget em LocalBudgets (T044)
+        // Valida que contas vêm sem predefinições por padrão e que upsertBudget persiste em LocalBudgets (T044)
         final initialBudgets = await db.watchAllBudgets(month: 10, year: 2026).first;
-        expect(initialBudgets.length, equals(4));
-        expect(
-          initialBudgets.map((b) => b.category),
-          containsAll(['Alimentação', 'Moradia', 'Transporte', 'Lazer']),
-        );
+        expect(initialBudgets, isEmpty);
 
         await db.upsertBudget(
           category: 'Alimentação',

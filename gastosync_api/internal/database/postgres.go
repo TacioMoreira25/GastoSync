@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified BOOLEAN NOT NULL DEFAULT TRUE,
     email_verified_at TIMESTAMPTZ,
     monthly_income NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    savings_goal_percent NUMERIC(5, 2) NOT NULL DEFAULT 20.00,
+    savings_goal_percent NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
     reminder_time_1 VARCHAR(5) NOT NULL DEFAULT '09:00',
     reminder_time_2 VARCHAR(5) NOT NULL DEFAULT '18:00',
     email_bill_notifications BOOLEAN NOT NULL DEFAULT TRUE,
@@ -70,7 +70,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_bill_notifications BOOLEAN NOT 
 
 ALTER TABLE users
     ALTER COLUMN monthly_income TYPE NUMERIC(14, 2) USING ROUND(monthly_income::numeric, 2),
-    ALTER COLUMN savings_goal_percent TYPE NUMERIC(5, 2) USING ROUND(savings_goal_percent::numeric, 2);
+    ALTER COLUMN savings_goal_percent TYPE NUMERIC(5, 2) USING ROUND(savings_goal_percent::numeric, 2),
+    ALTER COLUMN savings_goal_percent SET DEFAULT 0.00;
 
 -- 2. Tabela transactions com client_uuid, credit_card_uuid, deleted_at e NUMERIC(14, 2)
 CREATE TABLE IF NOT EXISTS transactions (
@@ -88,14 +89,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ,
-    UNIQUE (user_id, client_uuid),
-    UNIQUE (user_id, local_id)
+    UNIQUE (user_id, client_uuid)
 );
 
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS client_uuid UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS credit_card_uuid UUID;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE transactions ALTER COLUMN amount TYPE NUMERIC(14, 2) USING ROUND(amount::numeric, 2);
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_user_id_local_id_key;
 
 DO $$
 BEGIN

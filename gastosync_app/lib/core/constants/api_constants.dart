@@ -13,13 +13,14 @@ class ApiConstants {
     defaultValue: 'https://gastosync-agent.onrender.com',
   );
 
-  // Timeouts de resiliência (10s texto / 20s OCR / 25s Core API para suportar cold-start do Render Free)
-  static const Duration connectTimeout = Duration(seconds: 10);
-  static const Duration receiveTimeout = Duration(seconds: 10);
-  static const Duration sendTimeout = Duration(seconds: 10);
-  static const Duration coreApiTimeout = Duration(seconds: 25);
-  static const Duration textPredictionTimeout = Duration(seconds: 10);
-  static const Duration ocrPredictionTimeout = Duration(seconds: 20);
+  // Timeouts de resiliência ampliados para suportar cold-start do Render Free e chamadas duplas LLM no Mobile
+  static const Duration connectTimeout = Duration(seconds: 25);
+  static const Duration receiveTimeout = Duration(seconds: 30);
+  static const Duration sendTimeout = Duration(seconds: 25);
+  static const Duration coreApiTimeout = Duration(seconds: 30);
+  static const Duration textPredictionTimeout = Duration(seconds: 25);
+  static const Duration agentChatTimeout = Duration(seconds: 35);
+  static const Duration ocrPredictionTimeout = Duration(seconds: 35);
 
   // Endpoints da Core API em Go (https://gastosync-api.onrender.com)
   static const String healthEndpoint = '/health';

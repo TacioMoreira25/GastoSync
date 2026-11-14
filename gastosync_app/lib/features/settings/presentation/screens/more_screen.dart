@@ -6,7 +6,6 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/services/bill_notification_service.dart';
 import '../../../../core/services/csv_export_service.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../auth/domain/auth_provider.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../planning/domain/models/credit_card_model.dart';
@@ -36,12 +35,14 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
       final authState = ref.read(authProvider);
       final db = ref.read(appDatabaseProvider);
       final syncService = ref.read(cloudSyncServiceProvider);
-      final budgets = await db.watchAllBudgets().first;
+      final currentEmail = authState.currentEmail?.trim().toLowerCase();
+      final budgets = await db.watchAllBudgets(userEmail: currentEmail).first;
 
       final pushResult = await syncService.pushPendingTransactions(
         pendingTransactions: pendingList,
         jwtToken: authState.token,
         budgets: budgets,
+        userEmail: currentEmail,
       );
 
       if (authState.token != null &&
@@ -215,11 +216,6 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
       decoration: AppTheme.whiteCardDecoration,
       child: Row(
         children: [
-          GastoSyncUserAvatar(
-            initials: profile.initials,
-            size: 52,
-          ),
-          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -708,33 +704,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 3. Chips de Modelos e Fallback
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildQuotaChip(
-                icon: Icons.chat_bubble_outline_rounded,
-                label: 'Texto: ${status.activeTextModel}',
-              ),
-              _buildQuotaChip(
-                icon: Icons.document_scanner_outlined,
-                label: 'OCR: ${status.activeOcrModel}',
-              ),
-              if (status.lastModelUsed.isNotEmpty)
-                _buildQuotaChip(
-                  icon: Icons.history_rounded,
-                  label: 'Último: ${status.lastModelUsed}',
-                ),
-              _buildQuotaChip(
-                icon: Icons.alt_route_rounded,
-                label: 'Fallbacks ativados: ${status.fallbackTriggers}',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // 4. Botão "Atualizar Status da IA"
+          // 3. Botão "Atualizar Status da IA"
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -762,39 +732,6 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuotaChip({
-    required IconData icon,
-    required String label,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppTheme.subtleSurface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: AppTheme.textMuted),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textPrimary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -1027,7 +964,9 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 key: const Key('more_setting_base_income'),
                 icon: Icons.payments_outlined,
                 title: 'Renda Base Mensal',
-                subtitle: currencyFormatter.format(profile.monthlyBaseIncome),
+                subtitle: profile.monthlyBaseIncome > 0
+                    ? currencyFormatter.format(profile.monthlyBaseIncome)
+                    : 'Não definida (${currencyFormatter.format(0)})',
                 onTap: () => _showEditBaseIncomeDialog(context, profile),
               ),
               const Divider(color: AppTheme.cardBorder, height: 1),
@@ -1035,8 +974,9 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 key: const Key('more_setting_savings_target'),
                 icon: Icons.savings_outlined,
                 title: 'Meta de Taxa de Poupança',
-                subtitle:
-                    '${profile.savingsRateTarget.toStringAsFixed(0)}% da renda mensal',
+                subtitle: profile.savingsRateTarget > 0
+                    ? '${profile.savingsRateTarget.toStringAsFixed(0)}% da renda mensal'
+                    : 'Não definida (0% da renda mensal)',
                 onTap: () => _showEditSavingsTargetDialog(context, profile),
               ),
               const Divider(color: AppTheme.cardBorder, height: 1),
@@ -1320,7 +1260,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 final parsed = double.tryParse(
                   controller.text.trim().replaceAll(',', '.'),
                 );
-                if (parsed != null && parsed > 0) {
+                if (parsed != null && parsed >= 0) {
                   ref.read(userProfileProvider.notifier).updateProfile(
                         monthlyBaseIncome: parsed,
                       );
@@ -1368,7 +1308,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 final parsed = double.tryParse(
                   controller.text.trim().replaceAll(',', '.'),
                 );
-                if (parsed != null && parsed > 0 && parsed <= 90) {
+                if (parsed != null && parsed >= 0 && parsed <= 90) {
                   ref.read(userProfileProvider.notifier).updateProfile(
                         savingsRateTarget: parsed,
                       );

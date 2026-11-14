@@ -71,7 +71,10 @@ void main() {
       expect(find.byKey(const Key('planning_health_score_badge')), findsOneWidget);
       expect(find.text('Score 0 · Sem dados'), findsOneWidget);
       expect(find.text('+ Nova Categoria / Meta'), findsOneWidget);
-      expect(find.text('Alimentação'), findsOneWidget);
+      expect(
+        find.text('Nenhuma meta configurada. Adicione uma categoria acima.'),
+        findsOneWidget,
+      );
 
       // 4. Navega para a Aba 4: Mais
       await tester.tap(find.text('Mais'));

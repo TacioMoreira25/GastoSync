@@ -199,13 +199,6 @@ class GastoSyncMobileHeader extends ConsumerWidget {
                   backgroundColor: AppTheme.navySurface,
                   onTap: onNotificationTap,
                 ),
-                const SizedBox(width: 10),
-                GastoSyncUserAvatar(
-                  key: const Key('mobile_header_user_avatar'),
-                  initials: profile.initials,
-                  size: 36,
-                  onTap: onAvatarTap,
-                ),
               ],
             ),
           ],
@@ -215,7 +208,7 @@ class GastoSyncMobileHeader extends ConsumerWidget {
   }
 }
 
-/// Barra superior clara para Web / Desktop (>= 800dp) com badge "Local sincronizado", sino e avatar dinâmico (FR-013)
+/// Barra superior clara para Web / Desktop (>= 800dp) com badge "Local sincronizado" e sino (FR-013)
 class GastoSyncWebTopBar extends ConsumerWidget {
   const GastoSyncWebTopBar({
     this.title,
@@ -308,13 +301,6 @@ class GastoSyncWebTopBar extends ConsumerWidget {
             iconColor: AppTheme.textSecondary,
             backgroundColor: AppTheme.subtleSurface,
             onTap: onNotificationTap,
-          ),
-          const SizedBox(width: 12),
-          GastoSyncUserAvatar(
-            key: const Key('web_top_bar_user_avatar'),
-            initials: profile.initials,
-            size: 38,
-            onTap: onAvatarTap,
           ),
         ],
       ),
@@ -755,6 +741,14 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
       'Olá! Sou o assistente financeiro do GastoSync.\n\n'
       'Posso ajudar você a acompanhar seus gastos do mês, planejar sua meta de poupança e avaliar sua reserva de emergência.';
 
+  static const String _clearedGreeting =
+      'Conversa reiniciada. Como posso ajudar com suas finanças hoje?';
+
+  static const List<String> _fallbackAgentBaseUrls = <String>[
+    'http://10.0.2.2:8000',
+    'http://localhost:8000',
+  ];
+
   @override
   FiboChatState build() {
     return FiboChatState(
@@ -772,14 +766,102 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
     state = FiboChatState(
       messages: [
         ChatMessage(
-          text: 'Conversa reiniciada. Como posso ajudar com suas finanças hoje?',
+          text: _clearedGreeting,
           isUser: false,
           timestamp: DateTime.now(),
         ),
       ],
       isSending: false,
-      isAgentOnline: state.isAgentOnline,
+      isAgentOnline: true,
     );
+    checkAgentStatus();
+  }
+
+  /// Verifica se o serviço de IA está acessível (nuvem Render ou servidor local emulador/host)
+  /// e atualiza o indicador Online/Offline do cabeçalho do chat.
+  Future<bool> checkAgentStatus() async {
+    final dio = ref.read(dioProvider);
+    final candidateUrls = <String>[
+      dio.options.baseUrl,
+      for (final fallback in _fallbackAgentBaseUrls)
+        if (fallback != dio.options.baseUrl) fallback,
+    ];
+
+    for (final baseUrl in candidateUrls) {
+      if (baseUrl.trim().isEmpty) continue;
+      try {
+        final response = await dio.get<Map<String, dynamic>>(
+          '$baseUrl${ApiConstants.agentStatusEndpoint}',
+          options: Options(
+            sendTimeout: ApiConstants.connectTimeout,
+            receiveTimeout: ApiConstants.connectTimeout,
+          ),
+        );
+        if (response.statusCode != null && response.statusCode! < 300) {
+          state = state.copyWith(isAgentOnline: true);
+          return true;
+        }
+      } catch (_) {
+        try {
+          final healthRes = await dio.get<dynamic>(
+            '$baseUrl${ApiConstants.healthEndpoint}',
+            options: Options(
+              sendTimeout: ApiConstants.connectTimeout,
+              receiveTimeout: ApiConstants.connectTimeout,
+            ),
+          );
+          if (healthRes.statusCode != null && healthRes.statusCode! < 300) {
+            state = state.copyWith(isAgentOnline: true);
+            return true;
+          }
+        } catch (_) {}
+      }
+    }
+
+    return state.isAgentOnline;
+  }
+
+  Future<String?> _postAgentChatWithFallback({
+    required String message,
+    required List<Map<String, String>> historyPayload,
+    required String? financialContext,
+  }) async {
+    final dio = ref.read(dioProvider);
+    final payload = <String, dynamic>{
+      'message': message,
+      'history': historyPayload,
+      'financial_context': ?financialContext,
+    };
+
+    final candidateUrls = <String>[
+      dio.options.baseUrl,
+      dio.options.baseUrl, // 2ª tentativa na URL oficial (suporta wake-up / cold start do Render no Mobile)
+      for (final fallback in _fallbackAgentBaseUrls)
+        if (fallback != dio.options.baseUrl) fallback,
+    ];
+
+    for (final baseUrl in candidateUrls) {
+      if (baseUrl.trim().isEmpty) continue;
+      try {
+        final response = await dio.post<Map<String, dynamic>>(
+          '$baseUrl${ApiConstants.agentChatEndpoint}',
+          data: payload,
+          options: Options(
+            sendTimeout: ApiConstants.agentChatTimeout,
+            receiveTimeout: ApiConstants.agentChatTimeout,
+          ),
+        );
+        final data = response.data;
+        final remoteReply =
+            data?['reply'] ?? data?['response'] ?? data?['recommendation'];
+        if (remoteReply != null && remoteReply.toString().trim().isNotEmpty) {
+          return remoteReply.toString().trim();
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
   }
 
   Future<void> sendMessage(String rawText) async {
@@ -788,6 +870,25 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
 
     final hasInjection = OwaspPromptSanitizer.containsInjectionAttempt(trimmed);
     final sanitizedText = OwaspPromptSanitizer.sanitize(trimmed);
+
+    // Prepara payload de histórico com até as últimas 8 mensagens anteriores (sem saudação estática nem duplicar a mensagem atual)
+    final priorMessages = state.messages
+        .where(
+          (m) =>
+              m.text.isNotEmpty &&
+              m.text != _initialGreeting &&
+              m.text != _clearedGreeting,
+        )
+        .toList();
+    final recent = priorMessages.length > 8
+        ? priorMessages.sublist(priorMessages.length - 8)
+        : priorMessages;
+    final historyPayload = recent
+        .map((m) => <String, String>{
+              'role': m.isUser ? 'user' : 'assistant',
+              'content': m.text,
+            })
+        .toList();
 
     state = state.copyWith(
       messages: [
@@ -817,62 +918,31 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
       return;
     }
 
-    // Prepara payload de histórico com até as últimas 8 mensagens
-    final validMessages =
-        state.messages.where((m) => m.text.isNotEmpty).toList();
-    final recent = validMessages.length > 8
-        ? validMessages.sublist(validMessages.length - 8)
-        : validMessages;
-    final historyPayload = recent
-        .map((m) => {
-              'role': m.isUser ? 'user' : 'assistant',
-              'content': m.text,
-            })
-        .toList();
-
     // Contexto financeiro do usuário local (Renda, Despesas, Poupança, Ritmo)
     final metrics = ref.read(financialMetricsStreamProvider).value;
     final profile = ref.read(userProfileProvider);
+    final effectiveIncome = (metrics != null && metrics.totalIncome > 0)
+        ? metrics.totalIncome
+        : profile.monthlyBaseIncome;
     String? financialContext;
     if (metrics != null) {
       financialContext =
-          'Renda mensal: R\$ ${profile.monthlyBaseIncome.toStringAsFixed(2)} | '
+          'Renda mensal: R\$ ${effectiveIncome.toStringAsFixed(2)} | '
           'Despesas no mês: R\$ ${metrics.totalExpense.toStringAsFixed(2)} | '
           'Saldo disponível: R\$ ${metrics.currentBalance.toStringAsFixed(2)} | '
           'Meta de poupança: ${profile.savingsRateTarget.toStringAsFixed(0)}% | '
           'Ritmo diário: R\$ ${metrics.dailyBurnRate.toStringAsFixed(2)}/dia';
     }
 
-    String replyText;
-    bool isOnline = state.isAgentOnline;
-    try {
-      final dio = ref.read(dioProvider);
-      final response = await dio.post<Map<String, dynamic>>(
-        ApiConstants.agentChatEndpoint,
-        data: {
-          'message': sanitizedText,
-          'history': historyPayload,
-          'financial_context': ?financialContext,
-        },
-        options: Options(
-          sendTimeout: ApiConstants.textPredictionTimeout,
-          receiveTimeout: ApiConstants.textPredictionTimeout,
-        ),
-      );
-      final data = response.data;
-      final remoteReply =
-          data?['reply'] ?? data?['response'] ?? data?['recommendation'];
-      if (remoteReply != null && remoteReply.toString().trim().isNotEmpty) {
-        isOnline = true;
-        replyText = remoteReply.toString().trim();
-      } else {
-        isOnline = false;
-        replyText = _buildLocalFallbackReply(sanitizedText, metrics, profile);
-      }
-    } catch (_) {
-      isOnline = false;
-      replyText = _buildLocalFallbackReply(sanitizedText, metrics, profile);
-    }
+    final remoteReply = await _postAgentChatWithFallback(
+      message: sanitizedText,
+      historyPayload: historyPayload,
+      financialContext: financialContext,
+    );
+
+    final bool isOnline = remoteReply != null;
+    final String replyText =
+        remoteReply ?? _buildLocalFallbackReply(sanitizedText, metrics, profile);
 
     state = state.copyWith(
       messages: [
@@ -989,6 +1059,10 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
   void initState() {
     super.initState();
     _inputFocusNode.addListener(_onFocusChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(fiboChatControllerProvider.notifier).checkAgentStatus();
+    });
   }
 
   @override

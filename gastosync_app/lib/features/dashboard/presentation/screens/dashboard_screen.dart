@@ -82,6 +82,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       context,
                       currencyFormatter,
                       metrics,
+                      profile,
                     ),
                   ),
                   const SizedBox(width: 20),
@@ -144,6 +145,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 context,
                 currencyFormatter,
                 metrics,
+                profile,
               ),
               const SizedBox(height: 22),
               _buildMonthSummarySection(
@@ -252,8 +254,38 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     BuildContext context,
     NumberFormat formatter,
     FinancialMetrics metrics,
+    UserProfile profile,
   ) {
     final isPositive = metrics.currentBalance >= 0;
+    final effectiveIncome = metrics.totalIncome > 0
+        ? metrics.totalIncome
+        : profile.monthlyBaseIncome;
+    final isUsingBaseIncome =
+        metrics.totalIncome <= 0 && profile.monthlyBaseIncome > 0;
+
+    String heroBadgeLabel;
+    if (!metrics.hasTransactions) {
+      heroBadgeLabel = 'Sem movimentações registradas';
+    } else {
+      final series = metrics.sixMonthsSeries;
+      final prevPoint = series.length >= 2 ? series[series.length - 2] : null;
+      final currPoint = series.isNotEmpty ? series.last : null;
+      final prevNet =
+          prevPoint != null ? (prevPoint.income - prevPoint.expense) : 0.0;
+      final currNet =
+          currPoint != null ? (currPoint.income - currPoint.expense) : 0.0;
+
+      if (prevNet.abs() > 0.01) {
+        final pctChange = ((currNet - prevNet) / prevNet.abs()) * 100.0;
+        final sign = pctChange >= 0 ? '+' : '';
+        heroBadgeLabel =
+            '$sign${pctChange.toStringAsFixed(1).replaceAll('.', ',')}% vs. mês anterior';
+      } else {
+        heroBadgeLabel = isPositive
+            ? 'Fluxo positivo no mês'
+            : 'Atenção ao fluxo negativo';
+      }
+    }
 
     return Container(
       key: const Key('hero_balance_card'),
@@ -334,15 +366,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppTheme.emeraldPrimary.withValues(alpha: 0.18),
+                  color: !metrics.hasTransactions
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : AppTheme.emeraldPrimary.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  isPositive
-                      ? '+12,4% vs. mês anterior'
-                      : 'Atenção ao fluxo negativo',
-                  style: const TextStyle(
-                    color: AppTheme.emeraldPrimary,
+                  heroBadgeLabel,
+                  style: TextStyle(
+                    color: !metrics.hasTransactions
+                        ? const Color(0xFFCBD5E1)
+                        : AppTheme.emeraldPrimary,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -376,8 +410,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             children: [
               Expanded(
                 child: _HeroSubMetric(
-                  label: 'Renda mensal',
-                  value: _formatValue(formatter, metrics.totalIncome),
+                  label: isUsingBaseIncome
+                      ? 'Renda mensal (base)'
+                      : 'Renda mensal',
+                  value: _formatValue(formatter, effectiveIncome),
                   icon: Icons.arrow_upward_rounded,
                   iconColor: AppTheme.emeraldPrimary,
                 ),
@@ -452,9 +488,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     UserProfile profile, {
     required bool isDesktop,
   }) {
-    final savingsProgress =
-        (metrics.savingsRate / math.max(1.0, profile.savingsRateTarget))
-            .clamp(0.0, 1.0);
+    final savingsProgress = profile.savingsRateTarget > 0
+        ? (metrics.savingsRate / profile.savingsRateTarget).clamp(0.0, 1.0)
+        : (metrics.savingsRate / 100.0).clamp(0.0, 1.0);
     final emergencyProgress = (metrics.emergencyMonths / 6.0).clamp(0.0, 1.0);
     final commitmentProgress =
         (metrics.incomeCommitment / 100.0).clamp(0.0, 1.0);
@@ -527,8 +563,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             _SummaryGridCard(
               title: 'Taxa de Poupança',
               mainValue: '${metrics.savingsRate.toStringAsFixed(1)}%',
-              subtitle:
-                  'Meta: ${profile.savingsRateTarget.toStringAsFixed(0)}%',
+              subtitle: profile.savingsRateTarget > 0
+                  ? 'Meta: ${profile.savingsRateTarget.toStringAsFixed(0)}%'
+                  : 'Meta não definida',
               progress: savingsProgress,
               progressColor: AppTheme.emeraldPrimary,
             ),
@@ -748,7 +785,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Mantenha o gasto médio em até ${formatter.format(suggestedDailyMax)}/dia nos próximos $remainingDays dias para respeitar o teto mensal (${formatter.format(monthlyCeiling)}).',
+                    effectiveIncome <= 0
+                        ? (!metrics.hasTransactions
+                            ? 'Registre suas receitas/despesas ou defina sua Renda Base Mensal na aba Mais para calcular seu teto diário.'
+                            : 'Você gastou ${formatter.format(metrics.totalExpense)} neste mês. Registre uma receita ou defina sua Renda Base na aba Mais para acompanhar seu teto.')
+                        : 'Mantenha o gasto médio em até ${formatter.format(suggestedDailyMax)}/dia nos próximos $remainingDays dias para respeitar o teto mensal (${formatter.format(monthlyCeiling)}).',
                     style: const TextStyle(
                       color: AppTheme.warningDark,
                       fontSize: 12,
@@ -923,7 +964,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   ) {
     final tipText = latestInsight != null
         ? '[Categoria: ${latestInsight.categorySuggested} • Confiança ${(latestInsight.confidenceScore * 100).round()}%] ${latestInsight.budgetTip}'
-        : 'Sua reserva de emergência atual cobre ${metrics.emergencyMonths.toStringAsFixed(1)} meses de despesas e seu Score Financeiro está em ${metrics.healthScore.toStringAsFixed(0)}/100.';
+        : (!metrics.hasTransactions
+            ? 'Registre suas primeiras transações ou use o preenchimento inteligente para receber insights sobre seus gastos.'
+            : 'Sua reserva de emergência atual cobre ${metrics.emergencyMonths.toStringAsFixed(1)} meses de despesas e seu Score Financeiro está em ${metrics.roundedScore}/100 (${metrics.scoreStatusLabel}).');
 
     final recentFour = transactions.take(4).toList();
     final dateFmt = DateFormat('dd/MM');

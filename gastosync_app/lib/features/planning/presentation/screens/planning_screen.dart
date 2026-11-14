@@ -565,9 +565,11 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 tooltip: 'Apagar categoria / meta',
                 visualDensity: VisualDensity.compact,
                 onPressed: () async {
-                  await ref
-                      .read(appDatabaseProvider)
-                      .deleteBudgetByCategory(budget.category);
+                  final userEmail = ref.read(userProfileProvider).email;
+                  await ref.read(appDatabaseProvider).deleteBudgetByCategory(
+                        budget.category,
+                        userEmail: userEmail,
+                      );
                 },
                 icon: const Icon(
                   Icons.delete_outline_rounded,
@@ -685,7 +687,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 value: currencyFormatter.format(metrics.totalIncome),
                 subtitle: metrics.usedBaseIncomeFallback
                     ? 'Renda base configurada (${currencyFormatter.format(profile.monthlyBaseIncome)}) usada nos índices'
-                    : 'Renda base configurada: ${currencyFormatter.format(profile.monthlyBaseIncome)}',
+                    : (profile.monthlyBaseIncome > 0
+                        ? 'Renda base configurada: ${currencyFormatter.format(profile.monthlyBaseIncome)}'
+                        : 'Renda base não definida'),
                 icon: Icons.arrow_upward_rounded,
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
@@ -707,8 +711,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               _HealthMetricRow(
                 label: '4. Taxa de Poupança',
                 value: '${metrics.savingsRate.toStringAsFixed(1)}%',
-                subtitle:
-                    'Meta configurada: ${profile.savingsRateTarget.toStringAsFixed(0)}% da renda',
+                subtitle: profile.savingsRateTarget > 0
+                    ? 'Meta configurada: ${profile.savingsRateTarget.toStringAsFixed(0)}% da renda'
+                    : 'Meta de poupança não definida',
                 icon: Icons.savings_outlined,
               ),
               const Divider(color: AppTheme.cardBorder, height: 22),
@@ -816,9 +821,11 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               TextButton.icon(
                 key: const Key('budget_dialog_delete_button'),
                 onPressed: () async {
-                  await ref
-                      .read(appDatabaseProvider)
-                      .deleteBudgetByCategory(initialCategory);
+                  final userEmail = ref.read(userProfileProvider).email;
+                  await ref.read(appDatabaseProvider).deleteBudgetByCategory(
+                        initialCategory,
+                        userEmail: userEmail,
+                      );
                   if (dialogContext.mounted) {
                     Navigator.of(dialogContext).pop();
                   }
@@ -855,9 +862,11 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                   return;
                 }
 
+                final userEmail = ref.read(userProfileProvider).email;
                 await ref.read(appDatabaseProvider).upsertBudget(
                       category: category,
                       limitAmount: parsedLimit,
+                      userEmail: userEmail,
                     );
 
                 if (dialogContext.mounted) {
@@ -1404,9 +1413,11 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
 
                     if (name.isEmpty || limit == null || limit <= 0) return;
 
+                    final userEmail = ref.read(userProfileProvider).email;
                     await ref.read(appDatabaseProvider).upsertCreditCard(
                           id: existing?.id,
                           clientUuid: existing?.clientUuid,
+                          userEmail: userEmail,
                           name: name,
                           limitAmount: limit,
                           targetMinPercent: minPct,

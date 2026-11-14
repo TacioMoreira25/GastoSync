@@ -803,7 +803,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Cadastre receitas ou despesas mesmo sem internet. Os dados são salvos instantaneamente no SQLite local.',
+              'Cadastre receitas ou despesas mesmo sem internet.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: AppTheme.textMuted,

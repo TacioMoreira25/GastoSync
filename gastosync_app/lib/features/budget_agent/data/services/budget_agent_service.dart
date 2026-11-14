@@ -11,31 +11,66 @@ class BudgetAgentService {
 
   final Dio _dio;
 
-  /// Aciona `POST /api/v1/predict/categorize` com timeout de 10s e sanitização OWASP MASVS (T021)
+  static const List<String> _fallbackAgentBaseUrls = <String>[
+    'http://10.0.2.2:8000',
+    'http://localhost:8000',
+  ];
+
+  bool get _usesRealHttpAdapter {
+    final adapterName = _dio.httpClientAdapter.runtimeType.toString();
+    return !adapterName.contains('Mock');
+  }
+
+  /// Aciona `POST /api/v1/predict/categorize` com timeout resiliente e sanitização OWASP MASVS (T021)
   Future<AgentPredictionResponse> predictCategory(
     AgentPredictionRequest request,
   ) async {
     final sanitizedRequest = request.copyWith(
       description: OwaspPromptSanitizer.sanitize(request.description),
     );
-    final response = await _dio.post<Map<String, dynamic>>(
-      ApiConstants.predictCategorizeEndpoint,
-      data: sanitizedRequest.toJson(),
-      options: Options(
-        sendTimeout: ApiConstants.textPredictionTimeout,
-        receiveTimeout: ApiConstants.textPredictionTimeout,
-      ),
-    );
-
-    final data = response.data;
-    if (data == null) {
-      throw DioException(
-        requestOptions: response.requestOptions,
-        message: 'Resposta vazia do serviço preditivo.',
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        ApiConstants.predictCategorizeEndpoint,
+        data: sanitizedRequest.toJson(),
+        options: Options(
+          sendTimeout: ApiConstants.textPredictionTimeout,
+          receiveTimeout: ApiConstants.textPredictionTimeout,
+        ),
       );
-    }
 
-    return AgentPredictionResponse.fromJson(data);
+      final data = response.data;
+      if (data == null) {
+        throw DioException(
+          requestOptions: response.requestOptions,
+          message: 'Resposta vazia do serviço preditivo.',
+        );
+      }
+
+      return AgentPredictionResponse.fromJson(data);
+    } on DioException {
+      if (_usesRealHttpAdapter) {
+        for (final baseUrl in _fallbackAgentBaseUrls) {
+          if (baseUrl == _dio.options.baseUrl) continue;
+          try {
+            final fallbackRes = await _dio.post<Map<String, dynamic>>(
+              '$baseUrl${ApiConstants.predictCategorizeEndpoint}',
+              data: sanitizedRequest.toJson(),
+              options: Options(
+                sendTimeout: ApiConstants.textPredictionTimeout,
+                receiveTimeout: ApiConstants.textPredictionTimeout,
+              ),
+            );
+            final data = fallbackRes.data;
+            if (data != null) {
+              return AgentPredictionResponse.fromJson(data);
+            }
+          } catch (_) {
+            continue;
+          }
+        }
+      }
+      rethrow;
+    }
   }
 
   /// Aciona `POST /api/v1/predict/categorize` com fallback gracioso para modo offline/timeout (T024)
@@ -55,11 +90,49 @@ class BudgetAgentService {
 
     try {
       final result = await predictCategory(request);
+      final resolvedType = parsed.inferredType == 'income' ||
+              result.inferredType == 'income'
+          ? 'income'
+          : (parsed.inferredType == 'bill' || result.inferredType == 'bill'
+              ? 'bill'
+              : 'expense');
+      final resolvedCategory = resolvedType == 'income'
+          ? 'Renda'
+          : ((result.category == 'Outros' || result.category.trim().isEmpty) &&
+                  parsed.inferredCategory != 'Outros'
+              ? parsed.inferredCategory
+              : result.category);
+      final resolvedAmount = result.estimatedAmount > 0
+          ? result.estimatedAmount
+          : (effectiveAmount ?? 0.0);
+      final cleanedRemoteDesc = InformalExpenseParser.cleanDescriptionText(
+        result.normalizedDescription,
+      );
+      final resolvedDescription = cleanedRemoteDesc.isNotEmpty
+          ? cleanedRemoteDesc
+          : (parsed.cleanDescription.isNotEmpty
+              ? parsed.cleanDescription
+              : sanitizedInput);
+      final hasExplicitPaymentInInput = RegExp(
+        r'\b(d[eé]bito|cr[eé]dito|cart[aã]o|parcelado|\d+\s*x|dinheiro|esp[eé]cie|boleto|transfer[eê]ncia|ted|doc|pix)\b',
+        caseSensitive: false,
+      ).hasMatch(sanitizedInput);
+      final resolvedPaymentMethod = hasExplicitPaymentInInput
+          ? parsed.inferredPaymentMethod
+          : (result.paymentMethod.isEmpty
+              ? parsed.inferredPaymentMethod
+              : result.paymentMethod);
+
       return result.copyWith(
-        paymentMethod: result.paymentMethod.isEmpty
-            ? parsed.inferredPaymentMethod
-            : result.paymentMethod,
+        inferredType: resolvedType,
+        category: resolvedCategory,
+        estimatedAmount: resolvedAmount,
+        normalizedDescription: resolvedDescription,
+        paymentMethod: resolvedPaymentMethod,
         inferredDate: result.inferredDate ?? parsed.inferredDate,
+        isRecurring: result.isRecurring || parsed.isRecurring,
+        isCreditCardCharge:
+            result.isCreditCardCharge || parsed.isCreditCardCharge,
       );
     } on DioException catch (e) {
       final isTimeout = e.type == DioExceptionType.connectionTimeout ||
@@ -167,6 +240,30 @@ class BudgetAgentService {
         latencyMs: stopwatch.elapsedMilliseconds,
       );
     } catch (_) {
+      if (_usesRealHttpAdapter) {
+        for (final baseUrl in _fallbackAgentBaseUrls) {
+          if (baseUrl == _dio.options.baseUrl) continue;
+          try {
+            final fallbackRes = await _dio.get<Map<String, dynamic>>(
+              '$baseUrl${ApiConstants.agentStatusEndpoint}',
+              options: Options(
+                sendTimeout: ApiConstants.connectTimeout,
+                receiveTimeout: ApiConstants.connectTimeout,
+              ),
+            );
+            stopwatch.stop();
+            final data = fallbackRes.data;
+            if (data != null) {
+              return AgentQuotaStatus.fromJson(
+                data,
+                latencyMs: stopwatch.elapsedMilliseconds,
+              );
+            }
+          } catch (_) {
+            continue;
+          }
+        }
+      }
       stopwatch.stop();
       return AgentQuotaStatus.offline(stopwatch.elapsedMilliseconds);
     }

@@ -195,6 +195,21 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 					"Erro ao salvar uma de suas transações na nuvem. Nenhuma alteração foi perdida localmente.",
 				)
 			}
+
+			// Se for exclusão lógica (deleted_at != nil), garante também exclusão de eventuais registros legados duplicados
+			if item.DeletedAt != nil {
+				const softDeleteMatchingTx = `
+					UPDATE transactions
+					SET deleted_at = $2, updated_at = NOW()
+					WHERE user_id = $1
+					  AND deleted_at IS NULL
+					  AND description = $3
+					  AND ABS(amount - $4::numeric) < 0.01
+					  AND tx_type = $5
+					  AND category = $6
+				`
+				_, _ = tx.Exec(ctx, softDeleteMatchingTx, userID, *item.DeletedAt, desc, item.Amount, txType, category)
+			}
 		} else if item.LocalID != nil {
 			const upsertTxWithLocalID = `
 				INSERT INTO transactions (

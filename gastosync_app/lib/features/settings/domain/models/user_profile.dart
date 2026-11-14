@@ -9,8 +9,8 @@ class UserProfile {
     this.fullName = 'Marcos Pereira',
     this.email = 'marcos.pereira@gastosync.local',
     this.accountLabel = 'Conta pessoal',
-    this.monthlyBaseIncome = 8500.0,
-    this.savingsRateTarget = 20.0,
+    this.monthlyBaseIncome = 0.0,
+    this.savingsRateTarget = 0.0,
     this.reminderTime1 = '09:00',
     this.reminderTime2 = '18:00',
     this.emailBillNotifications = true,
@@ -157,6 +157,10 @@ class UserProfileNotifier extends Notifier<UserProfile> {
 
   void clearSessionToken() {
     state = state.copyWith(clearToken: true);
+  }
+
+  void resetProfile() {
+    state = const UserProfile();
   }
 }
 

@@ -146,7 +146,7 @@ const List<_NavTabItem> _navTabs = [
     label: 'Transações',
     eyebrow: 'MOVIMENTAÇÕES',
     headerTitle: 'Transações',
-    headerSubtitle: 'Histórico completo e categorização 100% local via SQLite',
+    headerSubtitle: 'Histórico completo',
     icon: Icons.read_more_rounded,
     selectedIcon: Icons.read_more_rounded,
   ),
@@ -606,67 +606,32 @@ class _GastoSyncWebSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           const Divider(color: AppTheme.navyBorder, height: 1),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
-          // Rodapé de perfil dinâmico "{iniciais} · {nome}" + botão Sair
-          Row(
-            children: [
-              Expanded(
-                child: InkWell(
-                  key: const Key('web_sidebar_user_profile'),
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => onDestinationSelected(3),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        GastoSyncUserAvatar(
-                          initials: profile.initials,
-                          size: 36,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                profile.fullName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                profile.accountLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF94A3B8),
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+          // Botão de encerramento de sessão no rodapé (sem miniperfil)
+          OutlinedButton.icon(
+            key: const Key('web_sidebar_logout_button'),
+            onPressed: onLogoutTap,
+            icon: const Icon(
+              Icons.logout_rounded,
+              color: Color(0xFF94A3B8),
+              size: 18,
+            ),
+            label: const Text(
+              'Sair da conta',
+              style: TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
               ),
-              IconButton(
-                key: const Key('web_sidebar_logout_button'),
-                tooltip: 'Sair da conta',
-                onPressed: onLogoutTap,
-                icon: const Icon(
-                  Icons.logout_rounded,
-                  color: Color(0xFF94A3B8),
-                  size: 19,
-                ),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppTheme.navyBorder),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
+            ),
           ),
         ],
       ),

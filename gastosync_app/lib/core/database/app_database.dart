@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../features/settings/domain/models/user_profile.dart';
 import 'connection/connection.dart' as impl;
 
 part 'app_database.g.dart';
@@ -143,7 +144,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -174,16 +175,19 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(localBills);
             await m.createTable(localCreditCards);
           }
+          if (from < 4) {
+            await customStatement(
+              "DELETE FROM local_budgets WHERE (category = 'Alimentação' AND limit_amount = 1200.0) OR (category = 'Moradia' AND limit_amount = 1800.0) OR (category = 'Transporte' AND limit_amount = 600.0) OR (category = 'Lazer' AND limit_amount = 500.0);",
+            );
+            await customStatement(
+              "DELETE FROM local_credit_cards WHERE name = 'Cartão Principal' AND limit_amount = 1500.0;",
+            );
+          }
         },
       );
 
-  /// Seed padrão de metas mensais por categoria conforme protótipo Figma v2 (T044)
-  static const Map<String, double> defaultCategoryBudgets = <String, double>{
-    'Alimentação': 1200.0,
-    'Moradia': 1800.0,
-    'Transporte': 600.0,
-    'Lazer': 500.0,
-  };
+  /// Por padrão, as contas iniciam sem nenhuma predefinição de categorias/metas
+  static const Map<String, double> defaultCategoryBudgets = <String, double>{};
 
   /// Stream reativa de transações ativas (`deletedAt IS NULL`) filtradas por conta (`userEmail`) ordenadas por data
   Stream<List<LocalTransaction>> watchAllTransactions({String? userEmail}) {
@@ -231,21 +235,76 @@ class AppDatabase extends _$AppDatabase {
   Future<int> deleteTransactionById(
     int transactionId, {
     bool softDelete = true,
-  }) {
+  }) async {
     if (softDelete) {
       final now = DateTime.now();
-      return (update(localTransactions)
+      final target = await (select(localTransactions)
+            ..where((t) => t.id.equals(transactionId)))
+          .getSingleOrNull();
+      final validUuid = (target != null &&
+              target.clientUuid.trim().isNotEmpty &&
+              target.clientUuid.trim() !=
+                  '00000000-0000-4000-8000-000000000001')
+          ? target.clientUuid.trim()
+          : generateClientUuid();
+
+      final updatedRows = await (update(localTransactions)
             ..where((t) => t.id.equals(transactionId)))
           .write(
         LocalTransactionsCompanion(
+          clientUuid: Value(validUuid),
           deletedAt: Value(now),
           updatedAt: Value(now),
           isSynced: const Value(false),
         ),
       );
+
+      if (target != null && target.clientUuid.trim().isNotEmpty) {
+        await (update(localTransactions)
+              ..where(
+                (t) =>
+                    t.userEmail.equals(target.userEmail) &
+                    t.clientUuid.equals(target.clientUuid.trim()) &
+                    t.deletedAt.isNull(),
+              ))
+            .write(
+          LocalTransactionsCompanion(
+            deletedAt: Value(now),
+            updatedAt: Value(now),
+            isSynced: const Value(false),
+          ),
+        );
+      }
+      return updatedRows;
     }
     return (delete(localTransactions)..where((t) => t.id.equals(transactionId)))
         .go();
+  }
+
+  /// Lista todas as transações da conta (`userEmail`), incluindo exclusões lógicas (`deletedAt != null`),
+  /// para impedir que `pullFromCloud` restaure transações apagadas localmente.
+  Future<List<LocalTransaction>> getAllTransactionsIncludingDeleted({
+    String? userEmail,
+  }) {
+    final query = select(localTransactions);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((t) => t.userEmail.equals(normalized));
+    }
+    return query.get();
+  }
+
+  /// Lista todos os boletos da conta (`userEmail`), incluindo exclusões lógicas (`deletedAt != null`),
+  /// para impedir que `pullFromCloud` restaure boletos apagados localmente.
+  Future<List<LocalBill>> getAllBillsIncludingDeleted({
+    String? userEmail,
+  }) {
+    final query = select(localBills);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((b) => b.userEmail.equals(normalized));
+    }
+    return query.get();
   }
 
   /// Lista todas as transações pendentes de sincronização (`isSynced = false`), incluindo exclusões lógicas (`deletedAt != null`) (T025/T026)
@@ -1083,20 +1142,23 @@ final appDatabaseProvider = Provider<AppDatabase>((ref) {
   return db;
 });
 
-/// StreamProvider reativo das metas mensais (`LocalBudgets`) com seed padrão
+/// StreamProvider reativo das metas mensais (`LocalBudgets`) isoladas por conta
 final watchBudgetsProvider = StreamProvider<List<LocalBudget>>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return db.watchAllBudgets();
+  final email = ref.watch(userProfileProvider.select((p) => p.email));
+  return db.watchAllBudgets(userEmail: email);
 });
 
 /// StreamProvider reativo das categorias de metas excluídas pelo usuário
 final watchDeletedBudgetCategoriesProvider = StreamProvider<Set<String>>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return db.watchDeletedBudgetCategories();
+  final email = ref.watch(userProfileProvider.select((p) => p.email));
+  return db.watchDeletedBudgetCategories(userEmail: email);
 });
 
-/// StreamProvider reativo dos cartões de crédito (`LocalCreditCards`) com seed do Cartão Principal (T029)
+/// StreamProvider reativo dos cartões de crédito (`LocalCreditCards`) isolados por conta (T029)
 final watchCreditCardsProvider = StreamProvider<List<LocalCreditCard>>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return db.watchAllCreditCards();
+  final email = ref.watch(userProfileProvider.select((p) => p.email));
+  return db.watchAllCreditCards(userEmail: email);
 });

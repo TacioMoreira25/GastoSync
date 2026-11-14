@@ -9,6 +9,7 @@ import '../../features/planning/domain/models/credit_card_model.dart';
 import '../../features/transactions/domain/models/bill.dart';
 import '../../features/transactions/domain/models/transaction.dart';
 import '../theme/app_theme.dart';
+import 'csv_downloader/csv_downloader.dart';
 
 /// Resultado estruturado da exportação CSV (T032 / US6).
 @immutable
@@ -491,6 +492,7 @@ class _CsvExportPreviewDialog extends StatefulWidget {
 
 class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
   int _selectedSection = 0; // 0 = Consolidado, 1 = Transações, 2 = Boletos, 3 = Cartões
+  bool _isDownloading = false;
 
   String get _activeCsvContent {
     switch (_selectedSection) {
@@ -505,6 +507,23 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
     }
   }
 
+  String get _activeFileName {
+    final base = widget.report.fileName;
+    switch (_selectedSection) {
+      case 1:
+        return base.replaceFirst(
+          'gastosync_relatorio_',
+          'gastosync_transacoes_',
+        );
+      case 2:
+        return base.replaceFirst('gastosync_relatorio_', 'gastosync_boletos_');
+      case 3:
+        return base.replaceFirst('gastosync_relatorio_', 'gastosync_cartoes_');
+      default:
+        return base;
+    }
+  }
+
   String get _activeSectionLabel {
     switch (_selectedSection) {
       case 1:
@@ -515,6 +534,47 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
         return 'Cartões & Limite (${widget.report.creditCardsCount})';
       default:
         return 'Relatório Consolidado (${widget.report.totalRecordsCount})';
+    }
+  }
+
+  Future<void> _handleDownloadCsv() async {
+    if (_isDownloading) return;
+    setState(() => _isDownloading = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final fileName = _activeFileName;
+    final content = _activeCsvContent;
+
+    try {
+      final savedLocation = await downloadCsvFile(
+        fileName: fileName,
+        csvContent: content,
+      );
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            kIsWeb || savedLocation == fileName
+                ? 'Download do arquivo "$fileName" iniciado com sucesso!'
+                : (savedLocation != null
+                    ? 'CSV salvo com sucesso em: $savedLocation'
+                    : '$_activeSectionLabel exportado com sucesso!'),
+          ),
+          backgroundColor: AppTheme.emeraldDeep,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isDownloading = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Não foi possível baixar o arquivo CSV: $e'),
+          backgroundColor: AppTheme.errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -557,7 +617,7 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
                   ),
                 ),
                 Text(
-                  widget.report.fileName,
+                  _activeFileName,
                   style: const TextStyle(
                     color: AppTheme.textMuted,
                     fontSize: 11.5,
@@ -576,96 +636,120 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _buildTabChip(
-                  index: 0,
-                  label:
-                      'Consolidado (${widget.report.totalRecordsCount})',
-                  keyName: 'csv_tab_consolidated',
-                ),
-                _buildTabChip(
-                  index: 1,
-                  label:
-                      'Transações (${widget.report.transactionsCount})',
-                  keyName: 'csv_tab_transactions',
-                ),
-                _buildTabChip(
-                  index: 2,
-                  label: 'Boletos (${widget.report.billsCount})',
-                  keyName: 'csv_tab_bills',
-                ),
-                _buildTabChip(
-                  index: 3,
-                  label: 'Cartões (${widget.report.creditCardsCount})',
-                  keyName: 'csv_tab_cards',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 240),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.subtleSurface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTheme.cardBorder),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildTabChip(
+                    index: 0,
+                    label:
+                        'Consolidado (${widget.report.totalRecordsCount})',
+                    keyName: 'csv_tab_consolidated',
+                  ),
+                  _buildTabChip(
+                    index: 1,
+                    label:
+                        'Transações (${widget.report.transactionsCount})',
+                    keyName: 'csv_tab_transactions',
+                  ),
+                  _buildTabChip(
+                    index: 2,
+                    label: 'Boletos (${widget.report.billsCount})',
+                    keyName: 'csv_tab_bills',
+                  ),
+                  _buildTabChip(
+                    index: 3,
+                    label: 'Cartões (${widget.report.creditCardsCount})',
+                    keyName: 'csv_tab_cards',
+                  ),
+                ],
               ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  previewText,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11.5,
-                    color: AppTheme.textPrimary,
-                    height: 1.4,
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(maxHeight: 240),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.subtleSurface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.cardBorder),
+                ),
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    previewText,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11.5,
+                      color: AppTheme.textPrimary,
+                      height: 1.4,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Formato RFC-4180 com UTF-8 BOM — compatível com Excel, Google Sheets e Numbers.',
-              style: TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 11.5,
+              const SizedBox(height: 8),
+              const Text(
+                'Formato RFC-4180 com UTF-8 BOM — compatível com Excel, Google Sheets e Numbers.',
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 11.5,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-    actions: [
+      actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed:
+              _isDownloading ? null : () => Navigator.of(context).pop(),
           child: const Text('Fechar'),
         ),
-        FilledButton.icon(
+        OutlinedButton.icon(
           key: const Key('csv_export_copy_button'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.emeraldDeep,
+            side: const BorderSide(color: AppTheme.emeraldBadgeBg),
+          ),
+          onPressed: _isDownloading
+              ? null
+              : () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  final navigator = Navigator.of(context);
+                  await Clipboard.setData(
+                    ClipboardData(text: _activeCsvContent),
+                  );
+                  navigator.pop();
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '$_activeSectionLabel copiado em CSV (RFC-4180) para a área de transferência!',
+                      ),
+                      backgroundColor: AppTheme.emeraldDeep,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.copy_all_rounded, size: 18),
+          label: const Text('Copiar CSV'),
+        ),
+        FilledButton.icon(
+          key: const Key('csv_export_download_button'),
           style: FilledButton.styleFrom(
             backgroundColor: AppTheme.emeraldPrimary,
             foregroundColor: Colors.white,
           ),
-          onPressed: () async {
-            final messenger = ScaffoldMessenger.of(context);
-            final navigator = Navigator.of(context);
-            await Clipboard.setData(ClipboardData(text: _activeCsvContent));
-            navigator.pop();
-            messenger.showSnackBar(
-              SnackBar(
-                content: Text(
-                  '$_activeSectionLabel copiado em CSV (RFC-4180) para a área de transferência!',
-                ),
-                backgroundColor: AppTheme.emeraldDeep,
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          },
-          icon: const Icon(Icons.copy_all_rounded, size: 18),
-          label: const Text('Copiar CSV'),
+          onPressed: _isDownloading ? null : _handleDownloadCsv,
+          icon: _isDownloading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.download_rounded, size: 18),
+          label: Text(_isDownloading ? 'Baixando...' : 'Baixar CSV'),
         ),
       ],
     );

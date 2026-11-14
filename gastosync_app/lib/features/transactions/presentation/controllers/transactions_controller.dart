@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../auth/domain/auth_provider.dart';
 import '../../data/repositories/transaction_repository_impl.dart';
+import '../../data/services/cloud_sync_service.dart';
 import '../../domain/models/bill.dart';
 import '../../domain/models/transaction.dart';
 
@@ -155,6 +157,28 @@ class TransactionsController {
   String? get _currentUserEmail =>
       _ref.read(authProvider).currentEmail?.trim().toLowerCase();
 
+  /// Propaga imediatamente criações, edições e exclusões (tombstones) para a nuvem
+  /// quando houver token JWT ativo, sem bloquear a resposta local (Offline-First).
+  void _triggerBackgroundCloudSync() {
+    final auth = _ref.read(authProvider);
+    final token = auth.token;
+    if (token == null || token.isEmpty) return;
+    final email = auth.currentEmail?.trim().toLowerCase();
+    unawaited(
+      _ref
+          .read(cloudSyncServiceProvider)
+          .pushPendingTransactions(
+            jwtToken: token,
+            userEmail: email,
+          )
+          .catchError((_) => const CloudSyncResult(
+                syncedCount: 0,
+                isCloudSynced: false,
+                message: '',
+              )),
+    );
+  }
+
   Future<int> createManualTransaction({
     required String description,
     required double amount,
@@ -179,12 +203,7 @@ class TransactionsController {
       updatedAt: DateTime.now(),
     );
     final id = await _repository.addTransaction(transaction);
-    if (type == TransactionType.expense) {
-      await _db.ensureCategoryBudgetExists(
-        category,
-        userEmail: email,
-      );
-    }
+    _triggerBackgroundCloudSync();
     return id;
   }
 
@@ -196,12 +215,7 @@ class TransactionsController {
       updatedAt: DateTime.now(),
     );
     final rows = await _repository.updateTransaction(updated);
-    if (updated.isExpense) {
-      await _db.ensureCategoryBudgetExists(
-        updated.category,
-        userEmail: updated.userEmail ?? email,
-      );
-    }
+    _triggerBackgroundCloudSync();
     return rows;
   }
 
@@ -239,17 +253,13 @@ class TransactionsController {
       categorySuggested: categorySuggested,
       budgetTip: budgetTip,
     );
-    if (type == TransactionType.expense) {
-      await _db.ensureCategoryBudgetExists(
-        category,
-        userEmail: email,
-      );
-    }
+    _triggerBackgroundCloudSync();
     return id;
   }
 
-  Future<void> deleteTransaction(int id) {
-    return _repository.deleteTransaction(id);
+  Future<void> deleteTransaction(int id) async {
+    await _repository.deleteTransaction(id);
+    _triggerBackgroundCloudSync();
   }
 
   /// Cria um novo boleto/conta a pagar (`LocalBills`) associado à conta ativa (T014)
@@ -287,10 +297,7 @@ class TransactionsController {
     );
 
     final id = await _db.insertBill(bill.toCompanion());
-    await _db.ensureCategoryBudgetExists(
-      category,
-      userEmail: email,
-    );
+    _triggerBackgroundCloudSync();
     return id;
   }
 
@@ -305,21 +312,22 @@ class TransactionsController {
       updatedAt: DateTime.now(),
     );
     final rows = await _db.updateBill(bill.id!, updated.toCompanion());
-    await _db.ensureCategoryBudgetExists(
-      updated.category,
-      userEmail: updated.userEmail,
-    );
+    _triggerBackgroundCloudSync();
     return rows;
   }
 
   /// Remove um boleto por ID (soft delete por padrão para sincronização na nuvem) (T014)
-  Future<int> deleteBill(int id, {bool softDelete = true}) {
-    return _db.deleteBillById(id, softDelete: softDelete);
+  Future<int> deleteBill(int id, {bool softDelete = true}) async {
+    final rows = await _db.deleteBillById(id, softDelete: softDelete);
+    _triggerBackgroundCloudSync();
+    return rows;
   }
 
   /// Dá baixa em um boleto (`payBillAndCreateTransaction`) (T014)
-  Future<PayBillResult> payBill(int billId, {DateTime? paidAt}) {
-    return _db.payBillAndCreateTransaction(billId, paidAt: paidAt);
+  Future<PayBillResult> payBill(int billId, {DateTime? paidAt}) async {
+    final res = await _db.payBillAndCreateTransaction(billId, paidAt: paidAt);
+    _triggerBackgroundCloudSync();
+    return res;
   }
 }
 

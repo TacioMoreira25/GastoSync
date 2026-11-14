@@ -255,8 +255,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         _BrandHeader(isLoading: _isLoading),
                         const SizedBox(height: 28),
                         _buildCard(),
-                        const SizedBox(height: 22),
-                        const _SecurityNote(),
                       ],
                     ),
                   ),
@@ -1944,36 +1942,6 @@ class _BrandHeader extends StatelessWidget {
           style: const TextStyle(
             color: _LoginColors.mutedOnDark,
             fontSize: 14,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Nota de segurança discreta abaixo do card
-class _SecurityNote extends StatelessWidget {
-  const _SecurityNote();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.lock_outline_rounded,
-          size: 13,
-          color: _LoginColors.mutedOnDark,
-        ),
-        SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            'Proteção OWASP: Key Stretching 256-bit (2.048 rounds), Salt CSPRNG 128-bit e bloqueio anti-força bruta',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _LoginColors.mutedOnDark,
-              fontSize: 11.5,
-            ),
           ),
         ),
       ],

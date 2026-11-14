@@ -69,8 +69,10 @@ class Verification(BaseModel):
 
 ExpenseCategory = Literal[
     "Alimentação", "Transporte", "Moradia", "Saúde",
-    "Lazer", "Educação", "Investimentos", "Outros"
+    "Lazer", "Educação", "Investimentos", "Renda", "Outros"
 ]
+
+TransactionTypeLiteral = Literal["expense", "income", "bill"]
 
 
 class CategorizeRequest(BaseModel):
@@ -96,6 +98,7 @@ class CategorizeResponse(BaseModel):
     estimated_amount: float | None
     budget_tip: str
     payment_method: str | None = None
+    tx_type: TransactionTypeLiteral = "expense"
 
 
 class OCRResponse(BaseModel):
@@ -108,11 +111,12 @@ class OCRResponse(BaseModel):
     confidence: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
     budget_tip: str = "Revise os dados extraídos do comprovante antes de salvar."
     payment_method: str | None = None
+    tx_type: TransactionTypeLiteral = "expense"
 
     @field_validator('category', mode='before')
     @classmethod
     def normalize_category(cls, value):
-        valid = {"Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Educação", "Investimentos", "Outros"}
+        valid = {"Alimentação", "Transporte", "Moradia", "Saúde", "Lazer", "Educação", "Investimentos", "Renda", "Outros"}
         if isinstance(value, str) and value.strip() in valid:
             return value.strip()
         return "Outros"

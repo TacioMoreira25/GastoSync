@@ -248,9 +248,42 @@ class _ManualTransactionFormModalState
         _amountController.text =
             BrlCurrencyInputFormatter.formatValue(prediction.estimatedAmount);
       }
-      if (_selectedType == TransactionType.income) {
+
+      final isIncome = prediction.inferredType == 'income' ||
+          _isRendaCategory(prediction.category);
+      final isBill = !isIncome && prediction.inferredType == 'bill';
+
+      if (_isEditingBill) {
+        _isBillMode = true;
+        _selectedType = TransactionType.expense;
+        final cat = prediction.category.trim();
+        if (cat.isNotEmpty && !_isRendaCategory(cat)) {
+          if (!_categories.contains(cat)) {
+            _categories.add(cat);
+          }
+          _selectedCategory = cat;
+        }
+      } else if (isIncome) {
+        _isBillMode = false;
+        _selectedType = TransactionType.income;
         _selectedCategory = 'Renda';
+      } else if (isBill && !_isEditingTransaction) {
+        _isBillMode = true;
+        _selectedType = TransactionType.expense;
+        _isRecurring = prediction.isRecurring;
+        _isCreditCardCharge = prediction.isCreditCardCharge;
+        final cat = prediction.category.trim();
+        if (cat.isNotEmpty && !_isRendaCategory(cat)) {
+          if (!_categories.contains(cat)) {
+            _categories.add(cat);
+          }
+          _selectedCategory = cat;
+        } else {
+          _selectedCategory = 'Moradia';
+        }
       } else {
+        _isBillMode = false;
+        _selectedType = TransactionType.expense;
         final cat = prediction.category.trim();
         if (cat.isNotEmpty && !_isRendaCategory(cat)) {
           if (!_categories.contains(cat)) {
@@ -261,6 +294,7 @@ class _ManualTransactionFormModalState
           _selectedCategory = 'Alimentação';
         }
       }
+
       if (_paymentMethods.contains(prediction.paymentMethod)) {
         _selectedPaymentMethod = prediction.paymentMethod;
       }

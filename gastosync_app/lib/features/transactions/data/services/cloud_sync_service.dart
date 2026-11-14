@@ -48,7 +48,7 @@ class CloudSyncService {
   /// boletos pendentes (`bills`) e orçamentos locais para `POST /api/v1/sync/push`
   /// e atualiza o status `isSynced = true` no banco SQLite local (T026).
   Future<CloudSyncResult> pushPendingTransactions({
-    required List<Transaction> pendingTransactions,
+    List<Transaction> pendingTransactions = const <Transaction>[],
     required String? jwtToken,
     List<Bill> pendingBills = const <Bill>[],
     List<LocalBudget> budgets = const <LocalBudget>[],
@@ -105,7 +105,9 @@ class CloudSyncService {
             budgets.isNotEmpty)) {
       try {
         final txPayload = allPendingTransactions.map((tx) {
-          final resolvedUuid = tx.clientUuid.trim().isNotEmpty
+          final resolvedUuid = (tx.clientUuid.trim().isNotEmpty &&
+                  tx.clientUuid.trim() !=
+                      '00000000-0000-4000-8000-000000000001')
               ? tx.clientUuid.trim()
               : AppDatabase.generateClientUuid();
           final resolvedMethod = tx.paymentMethod.trim().isNotEmpty
@@ -113,7 +115,6 @@ class CloudSyncService {
               : 'PIX';
           final map = <String, dynamic>{
             'client_uuid': resolvedUuid,
-            'local_id': tx.id ?? 0,
             'description': tx.description,
             'amount': tx.amount,
             'tx_date': tx.date.toUtc().toIso8601String(),
@@ -137,12 +138,13 @@ class CloudSyncService {
         }).toList();
 
         final billsPayload = allPendingBills.map((bill) {
-          final resolvedUuid = bill.clientUuid.trim().isNotEmpty
+          final resolvedUuid = (bill.clientUuid.trim().isNotEmpty &&
+                  bill.clientUuid.trim() !=
+                      '00000000-0000-4000-8000-000000000001')
               ? bill.clientUuid.trim()
               : AppDatabase.generateClientUuid();
           final map = <String, dynamic>{
             'client_uuid': resolvedUuid,
-            'local_id': bill.id ?? 0,
             'description': bill.description,
             'amount': bill.amount,
             'due_date': bill.dueDate.toUtc().toIso8601String(),
@@ -211,18 +213,22 @@ class CloudSyncService {
       }
     }
 
+    final isLocalOnlySession = jwtToken == null || jwtToken.trim().isEmpty;
     var markedLocally = 0;
-    for (final tx in allPendingTransactions) {
-      if (tx.id != null) {
-        final updated = await _db.markAsSynced(tx.id!);
-        if (updated) markedLocally++;
-      }
-    }
 
-    for (final bill in allPendingBills) {
-      if (bill.id != null) {
-        final updated = await _db.markBillAsSynced(bill.id!);
-        if (updated) markedLocally++;
+    if (cloudSuccess || isLocalOnlySession) {
+      for (final tx in allPendingTransactions) {
+        if (tx.id != null) {
+          final updated = await _db.markAsSynced(tx.id!);
+          if (updated) markedLocally++;
+        }
+      }
+
+      for (final bill in allPendingBills) {
+        if (bill.id != null) {
+          final updated = await _db.markBillAsSynced(bill.id!);
+          if (updated) markedLocally++;
+        }
       }
     }
 
@@ -270,11 +276,14 @@ class CloudSyncService {
       final data = response.data;
       if (data == null) return 0;
 
-      final existingLocal = await _db
-          .watchAllTransactions(userEmail: normalizedEmail)
-          .first;
+      // Consulta TODAS as transações locais (incluindo exclusões lógicas `deletedAt != null`)
+      // para garantir que transações apagadas pelo usuário NUNCA sejam restauradas da nuvem.
+      final existingLocal = await _db.getAllTransactionsIncludingDeleted(
+        userEmail: normalizedEmail,
+      );
 
       var importedCount = 0;
+      var hasUnpushedTombstones = false;
       final remoteTransactions = data['transactions'];
       if (remoteTransactions is List) {
         for (final item in remoteTransactions) {
@@ -318,6 +327,18 @@ class CloudSyncService {
           }
 
           if (matchedByUuid != null) {
+            // Se foi apagada localmente (tombstone), NÃO restaura e agenda envio da exclusão
+            if (matchedByUuid.deletedAt != null) {
+              if (matchedByUuid.isSynced) {
+                await _db.updateTransaction(
+                  matchedByUuid.id,
+                  const LocalTransactionsCompanion(isSynced: Value(false)),
+                );
+              }
+              hasUnpushedTombstones = true;
+              continue;
+            }
+
             if (matchedByUuid.isSynced) {
               await _db.updateTransaction(
                 matchedByUuid.id,
@@ -339,45 +360,87 @@ class CloudSyncService {
             continue;
           }
 
-          final alreadyExists = existingLocal.any(
-            (local) =>
-                local.description == desc &&
+          LocalTransaction? matchedByContent;
+          for (final local in existingLocal) {
+            final sameAttributes = local.description == desc &&
                 (local.amount - amount).abs() < 0.01 &&
                 local.type == type &&
                 local.category == category &&
-                local.date.year == parsedDate.year &&
-                local.date.month == parsedDate.month &&
-                local.date.day == parsedDate.day,
-          );
-
-          if (!alreadyExists) {
-            await _db.insertTransaction(
-              LocalTransactionsCompanion(
-                clientUuid: Value(
-                  clientUuid.isNotEmpty
-                      ? clientUuid
-                      : AppDatabase.generateClientUuid(),
-                ),
-                userEmail: Value(normalizedEmail),
-                description: Value(desc),
-                amount: Value(amount),
-                date: Value(parsedDate),
-                type: Value(type),
-                category: Value(category),
-                paymentMethod: Value(paymentMethod),
-                creditCardUuid: Value(creditCardUuid),
-                isSynced: const Value(true),
-                updatedAt: Value(parsedUpdatedAt ?? DateTime.now()),
-              ),
-            );
-            importedCount++;
+                local.date.difference(parsedDate).inHours.abs() <= 36;
+            if (sameAttributes) {
+              matchedByContent = local;
+              if (local.deletedAt != null) break;
+            }
           }
+
+          if (matchedByContent != null) {
+            // Se já existia e foi excluída localmente, garante que o UUID remoto também receba tombstone na nuvem e não re-insere
+            if (matchedByContent.deletedAt != null) {
+              if (clientUuid.isNotEmpty) {
+                if (matchedByContent.clientUuid == clientUuid) {
+                  await _db.updateTransaction(
+                    matchedByContent.id,
+                    const LocalTransactionsCompanion(isSynced: Value(false)),
+                  );
+                } else {
+                  await _db.insertTransaction(
+                    LocalTransactionsCompanion(
+                      clientUuid: Value(clientUuid),
+                      userEmail: Value(normalizedEmail),
+                      description: Value(desc),
+                      amount: Value(amount),
+                      date: Value(parsedDate),
+                      type: Value(type),
+                      category: Value(category),
+                      paymentMethod: Value(paymentMethod),
+                      creditCardUuid: Value(creditCardUuid),
+                      isSynced: const Value(false),
+                      updatedAt: Value(DateTime.now()),
+                      deletedAt: Value(matchedByContent.deletedAt),
+                    ),
+                  );
+                }
+              }
+              hasUnpushedTombstones = true;
+            } else if (clientUuid.isNotEmpty &&
+                matchedByContent.clientUuid != clientUuid) {
+              await _db.updateTransaction(
+                matchedByContent.id,
+                LocalTransactionsCompanion(
+                  clientUuid: Value(clientUuid),
+                ),
+              );
+            }
+            continue;
+          }
+
+          await _db.insertTransaction(
+            LocalTransactionsCompanion(
+              clientUuid: Value(
+                clientUuid.isNotEmpty
+                    ? clientUuid
+                    : AppDatabase.generateClientUuid(),
+              ),
+              userEmail: Value(normalizedEmail),
+              description: Value(desc),
+              amount: Value(amount),
+              date: Value(parsedDate),
+              type: Value(type),
+              category: Value(category),
+              paymentMethod: Value(paymentMethod),
+              creditCardUuid: Value(creditCardUuid),
+              isSynced: const Value(true),
+              updatedAt: Value(parsedUpdatedAt ?? DateTime.now()),
+            ),
+          );
+          importedCount++;
         }
       }
 
-      // Hidratação de Boletos (`LocalBills`) (T026)
-      final existingBills =
-          await _db.watchAllBills(userEmail: normalizedEmail).first;
+      // Hidratação de Boletos (`LocalBills`) respeitando exclusões lógicas locais (T026)
+      final existingBills = await _db.getAllBillsIncludingDeleted(
+        userEmail: normalizedEmail,
+      );
       final remoteBills = data['bills'];
       if (remoteBills is List) {
         for (final item in remoteBills) {
@@ -422,6 +485,16 @@ class CloudSyncService {
           }
 
           if (matchedBillByUuid != null) {
+            if (matchedBillByUuid.deletedAt != null) {
+              if (matchedBillByUuid.isSynced) {
+                await _db.updateBill(
+                  matchedBillByUuid.id,
+                  const LocalBillsCompanion(isSynced: Value(false)),
+                );
+              }
+              hasUnpushedTombstones = true;
+              continue;
+            }
             if (matchedBillByUuid.isSynced) {
               await _db.updateBill(
                 matchedBillByUuid.id,
@@ -447,45 +520,66 @@ class CloudSyncService {
             continue;
           }
 
-          final billAlreadyExists = existingBills.any(
-            (local) =>
-                local.description == desc &&
+          LocalBill? matchedBillByContent;
+          for (final local in existingBills) {
+            final sameBill = local.description == desc &&
                 (local.amount - amount).abs() < 0.01 &&
                 local.category == category &&
                 local.dueDate.year == parsedDueDate.year &&
                 local.dueDate.month == parsedDueDate.month &&
-                local.dueDate.day == parsedDueDate.day,
-          );
-
-          if (!billAlreadyExists) {
-            await _db.insertBill(
-              LocalBillsCompanion(
-                clientUuid: Value(
-                  clientUuid.isNotEmpty
-                      ? clientUuid
-                      : AppDatabase.generateClientUuid(),
-                ),
-                userEmail: Value(normalizedEmail),
-                description: Value(desc),
-                amount: Value(amount),
-                dueDate: Value(parsedDueDate),
-                category: Value(category),
-                barcode: Value(barcode),
-                isRecurring: Value(isRecurring),
-                isCreditCardCharge: Value(isCreditCardCharge),
-                creditCardUuid: Value(creditCardUuid),
-                status: Value(status),
-                paidAt: Value(parsedPaidAt),
-                linkedTxUuid: Value(linkedTxUuid),
-                isSynced: const Value(true),
-                updatedAt: Value(parsedUpdatedAt ?? DateTime.now()),
-              ),
-            );
-            importedCount++;
+                local.dueDate.day == parsedDueDate.day;
+            if (sameBill) {
+              matchedBillByContent = local;
+              if (local.deletedAt != null) break;
+            }
           }
+
+          if (matchedBillByContent != null) {
+            if (matchedBillByContent.deletedAt != null) {
+              if (clientUuid.isNotEmpty) {
+                await _db.updateBill(
+                  matchedBillByContent.id,
+                  LocalBillsCompanion(
+                    clientUuid: Value(clientUuid),
+                    isSynced: const Value(false),
+                  ),
+                );
+              }
+              hasUnpushedTombstones = true;
+            }
+            continue;
+          }
+
+          await _db.insertBill(
+            LocalBillsCompanion(
+              clientUuid: Value(
+                clientUuid.isNotEmpty
+                    ? clientUuid
+                    : AppDatabase.generateClientUuid(),
+              ),
+              userEmail: Value(normalizedEmail),
+              description: Value(desc),
+              amount: Value(amount),
+              dueDate: Value(parsedDueDate),
+              category: Value(category),
+              barcode: Value(barcode),
+              isRecurring: Value(isRecurring),
+              isCreditCardCharge: Value(isCreditCardCharge),
+              creditCardUuid: Value(creditCardUuid),
+              status: Value(status),
+              paidAt: Value(parsedPaidAt),
+              linkedTxUuid: Value(linkedTxUuid),
+              isSynced: const Value(true),
+              updatedAt: Value(parsedUpdatedAt ?? DateTime.now()),
+            ),
+          );
+          importedCount++;
         }
       }
 
+      final deletedBudgetCategories = await _db
+          .watchDeletedBudgetCategories(userEmail: normalizedEmail)
+          .first;
       final remoteBudgets = data['budgets'];
       if (remoteBudgets is List) {
         for (final item in remoteBudgets) {
@@ -494,7 +588,9 @@ class CloudSyncService {
           final limitAmount = (item['limit_amount'] as num?)?.toDouble() ?? 0.0;
           final month = (item['month'] as num?)?.toInt();
           final year = (item['year'] as num?)?.toInt();
-          if (category.isNotEmpty && limitAmount > 0) {
+          if (category.isNotEmpty &&
+              limitAmount > 0 &&
+              !deletedBudgetCategories.contains(category.toLowerCase())) {
             await _db.upsertBudget(
               category: category,
               limitAmount: limitAmount,
@@ -504,6 +600,14 @@ class CloudSyncService {
             );
           }
         }
+      }
+
+      if (hasUnpushedTombstones) {
+        await pushPendingTransactions(
+          pendingTransactions: const [],
+          jwtToken: jwtToken,
+          userEmail: normalizedEmail,
+        );
       }
 
       return importedCount;

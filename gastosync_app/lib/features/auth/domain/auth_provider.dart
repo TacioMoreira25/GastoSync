@@ -618,11 +618,11 @@ class AuthNotifier extends Notifier<AuthState> {
     ref.read(userProfileProvider.notifier).updateProfile(
           fullName: finalName,
           email: normalizedEmail,
-          monthlyBaseIncome: remoteRes.monthlyIncome,
-          savingsRateTarget: remoteRes.savingsGoalPercent,
-          reminderTime1: remoteRes.reminderTime1,
-          reminderTime2: remoteRes.reminderTime2,
-          emailBillNotifications: remoteRes.emailBillNotifications,
+          monthlyBaseIncome: remoteRes.monthlyIncome ?? 0.0,
+          savingsRateTarget: remoteRes.savingsGoalPercent ?? 0.0,
+          reminderTime1: remoteRes.reminderTime1 ?? '09:00',
+          reminderTime2: remoteRes.reminderTime2 ?? '18:00',
+          emailBillNotifications: remoteRes.emailBillNotifications ?? true,
           jwtToken: jwtToken,
           syncToCloud: false,
         );
@@ -633,10 +633,15 @@ class AuthNotifier extends Notifier<AuthState> {
     } catch (_) {}
 
     if (jwtToken != null && jwtToken.isNotEmpty) {
-      await ref.read(cloudSyncServiceProvider).pullFromCloud(
-            jwtToken: jwtToken,
-            userEmail: normalizedEmail,
-          );
+      final syncService = ref.read(cloudSyncServiceProvider);
+      await syncService.pushPendingTransactions(
+        jwtToken: jwtToken,
+        userEmail: normalizedEmail,
+      );
+      await syncService.pullFromCloud(
+        jwtToken: jwtToken,
+        userEmail: normalizedEmail,
+      );
     }
 
     state = state.copyWith(
@@ -1198,11 +1203,11 @@ class AuthNotifier extends Notifier<AuthState> {
       ref.read(userProfileProvider.notifier).updateProfile(
             fullName: resolvedName,
             email: normalizedEmail,
-            monthlyBaseIncome: remoteVerify.monthlyIncome,
-            savingsRateTarget: remoteVerify.savingsGoalPercent,
-            reminderTime1: remoteVerify.reminderTime1,
-            reminderTime2: remoteVerify.reminderTime2,
-            emailBillNotifications: remoteVerify.emailBillNotifications,
+            monthlyBaseIncome: remoteVerify.monthlyIncome ?? 0.0,
+            savingsRateTarget: remoteVerify.savingsGoalPercent ?? 0.0,
+            reminderTime1: remoteVerify.reminderTime1 ?? '09:00',
+            reminderTime2: remoteVerify.reminderTime2 ?? '18:00',
+            emailBillNotifications: remoteVerify.emailBillNotifications ?? true,
             jwtToken: jwtToken,
             syncToCloud: false,
           );
@@ -1243,7 +1248,7 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
-    ref.read(userProfileProvider.notifier).clearSessionToken();
+    ref.read(userProfileProvider.notifier).resetProfile();
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
     state = const AuthState(isAuthenticated: false);
   }
@@ -1311,7 +1316,7 @@ class AuthNotifier extends Notifier<AuthState> {
           .deleteAuthAccountAndLocalData(email);
     } catch (_) {}
 
-    ref.read(userProfileProvider.notifier).clearSessionToken();
+    ref.read(userProfileProvider.notifier).resetProfile();
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
     state = const AuthState(
       isAuthenticated: false,

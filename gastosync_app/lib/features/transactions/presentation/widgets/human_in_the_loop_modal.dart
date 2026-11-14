@@ -111,7 +111,11 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
         widget.prediction.estimatedAmount,
       ),
     );
-    _selectedType = widget.initialType;
+    final isPredictedIncome = widget.prediction.inferredType == 'income' ||
+        widget.prediction.category.trim().toLowerCase().startsWith('renda');
+    _selectedType = isPredictedIncome
+        ? TransactionType.income
+        : widget.initialType;
     if (_selectedType == TransactionType.income) {
       _selectedCategory = 'Renda';
     } else {
