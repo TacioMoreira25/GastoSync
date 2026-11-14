@@ -993,7 +993,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 icon: Icons.download_rounded,
                 title: 'Exportar Relatório CSV',
                 subtitle:
-                    'Exportar transações (${transactions.length}), boletos e cartões em RFC-4180',
+                    'Exportar transações (${transactions.length}), boletos e cartões',
                 onTap: () => _exportCsvReport(context, transactions),
               ),
               const Divider(color: AppTheme.cardBorder, height: 1),

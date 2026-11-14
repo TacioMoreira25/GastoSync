@@ -90,13 +90,19 @@ class Transaction {
 
   factory Transaction.fromLocal(LocalTransaction row) {
     final normalizedMethod = row.paymentMethod.trim();
+    final updatedAt = row.updatedAt;
+    final safeDate = row.date.year < 2000
+        ? (updatedAt != null && updatedAt.year >= 2000
+            ? updatedAt
+            : DateTime.now())
+        : row.date;
     return Transaction(
       id: row.id,
       clientUuid: row.clientUuid,
       userEmail: row.userEmail,
       description: row.description,
       amount: row.amount,
-      date: row.date,
+      date: safeDate,
       type: TransactionType.fromString(row.type),
       category: row.category,
       paymentMethod: normalizedMethod.isEmpty ? 'PIX' : normalizedMethod,

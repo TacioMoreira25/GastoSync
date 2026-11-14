@@ -44,6 +44,25 @@ class CloudSyncService {
   final AppDatabase _db;
   final Dio _dio;
 
+  static DateTime _parseValidCloudDate(
+    Object? primary,
+    Object? secondary, {
+    DateTime? fallback,
+  }) {
+    for (final candidate in [primary, secondary]) {
+      if (candidate is String && candidate.trim().isNotEmpty) {
+        final parsed = DateTime.tryParse(candidate.trim());
+        if (parsed != null && parsed.year >= 2000) {
+          return parsed.toLocal();
+        }
+      }
+    }
+    if (fallback != null && fallback.year >= 2000) {
+      return fallback;
+    }
+    return DateTime.now();
+  }
+
   /// Envia transações pendentes (incluindo exclusões lógicas `deleted_at`),
   /// boletos pendentes (`bills`) e orçamentos locais para `POST /api/v1/sync/push`
   /// e atualiza o status `isSynced = true` no banco SQLite local (T026).
@@ -293,11 +312,10 @@ class CloudSyncService {
           final clientUuid = (item['client_uuid'] as String? ?? '').trim();
           final desc = (item['description'] as String? ?? '').trim();
           final amount = (item['amount'] as num?)?.toDouble() ?? 0.0;
-          final dateStr =
-              (item['tx_date'] as String?) ?? (item['date'] as String?);
-          final parsedDate = dateStr != null
-              ? (DateTime.tryParse(dateStr)?.toLocal() ?? DateTime.now())
-              : DateTime.now();
+          final parsedDate = _parseValidCloudDate(
+            item['date'],
+            item['tx_date'],
+          );
           final type = ((item['tx_type'] as String?) ??
                   (item['type'] as String?) ??
                   'expense')

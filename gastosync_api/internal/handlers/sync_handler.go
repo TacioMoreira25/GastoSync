@@ -497,6 +497,8 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 				"Erro ao processar o histórico de transações recebido da nuvem.",
 			)
 		}
+		t.TxDateAlias = t.Date
+		t.TxTypeAlias = t.Type
 		transactions = append(transactions, t)
 	}
 
