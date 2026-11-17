@@ -105,3 +105,9 @@ cd gastosync_agent/app && pytest -v
 - **Plano Técnico e Contratos (002)**: [`.specs/002-pro-security-db-boletos/plan.md`](.specs/002-pro-security-db-boletos/plan.md)
 - **Backlog de Tarefas (002)**: [`.specs/002-pro-security-db-boletos/tasks.md`](.specs/002-pro-security-db-boletos/tasks.md)
 - **Relatório de Auditoria de Segurança**: [`.specs/002-pro-security-db-boletos/security-audit-report.md`](.specs/002-pro-security-db-boletos/security-audit-report.md)
+
+---
+
+## Licença
+
+Este projeto está licenciado sob a **Licença MIT** — consulte o arquivo [`LICENSE`](LICENSE) para mais detalhes.
