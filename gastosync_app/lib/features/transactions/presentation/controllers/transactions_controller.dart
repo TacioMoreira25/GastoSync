@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../auth/domain/auth_provider.dart';
+import '../../../settings/domain/models/user_profile.dart';
 import '../../data/repositories/transaction_repository_impl.dart';
 import '../../data/services/cloud_sync_service.dart';
 import '../../domain/models/bill.dart';
@@ -154,8 +155,14 @@ class TransactionsController {
   final AppDatabase _db;
   final Ref _ref;
 
-  String? get _currentUserEmail =>
-      _ref.read(authProvider).currentEmail?.trim().toLowerCase();
+  String? get _currentUserEmail {
+    final authEmail = _ref.read(authProvider).currentEmail?.trim();
+    if (authEmail != null && authEmail.isNotEmpty) {
+      return authEmail.toLowerCase();
+    }
+    final profileEmail = _ref.read(userProfileProvider).email.trim();
+    return profileEmail.isNotEmpty ? profileEmail.toLowerCase() : null;
+  }
 
   /// Propaga imediatamente criações, edições e exclusões (tombstones) para a nuvem
   /// quando houver token JWT ativo, sem bloquear a resposta local (Offline-First).
@@ -328,6 +335,41 @@ class TransactionsController {
     final res = await _db.payBillAndCreateTransaction(billId, paidAt: paidAt);
     _triggerBackgroundCloudSync();
     return res;
+  }
+
+  /// Cria ou atualiza um cartão de crédito (`LocalCreditCards`) e dispara sync em nuvem.
+  Future<int> upsertCreditCard({
+    int? id,
+    String? clientUuid,
+    String? userEmail,
+    required String name,
+    required double limitAmount,
+    double targetMinPercent = 50.0,
+    double targetMaxPercent = 80.0,
+    int dueDay = 10,
+    bool isPrimary = false,
+  }) async {
+    final effectiveEmail = (userEmail ?? _currentUserEmail)?.trim().toLowerCase();
+    final cardId = await _db.upsertCreditCard(
+      id: id,
+      clientUuid: clientUuid,
+      userEmail: effectiveEmail,
+      name: name,
+      limitAmount: limitAmount,
+      targetMinPercent: targetMinPercent,
+      targetMaxPercent: targetMaxPercent,
+      dueDay: dueDay,
+      isPrimary: isPrimary,
+    );
+    _triggerBackgroundCloudSync();
+    return cardId;
+  }
+
+  /// Remove um cartão de crédito (`LocalCreditCards`) via soft delete e dispara sync em nuvem.
+  Future<int> deleteCreditCard(int cardId, {bool softDelete = true}) async {
+    final rows = await _db.deleteCreditCard(cardId, softDelete: softDelete);
+    _triggerBackgroundCloudSync();
+    return rows;
   }
 }
 

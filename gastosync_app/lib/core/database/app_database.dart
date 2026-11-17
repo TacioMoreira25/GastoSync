@@ -332,6 +332,118 @@ class AppDatabase extends _$AppDatabase {
     return query.get();
   }
 
+  /// Lista todos os cartões da conta (`userEmail`), incluindo exclusões lógicas (`deletedAt != null`),
+  /// para impedir que `pullFromCloud` restaure cartões apagados localmente.
+  Future<List<LocalCreditCard>> getAllCreditCardsIncludingDeleted({
+    String? userEmail,
+  }) {
+    final query = select(localCreditCards);
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((c) => c.userEmail.equals(normalized));
+    }
+    return query.get();
+  }
+
+  /// Lista todos os cartões pendentes de sincronização (`isSynced = false`), incluindo tombstones (`deletedAt != null`).
+  Future<List<LocalCreditCard>> getPendingSyncCreditCards({
+    String? userEmail,
+  }) {
+    final query = select(localCreditCards)
+      ..where((c) => c.isSynced.equals(false));
+    if (userEmail != null && userEmail.trim().isNotEmpty) {
+      final normalized = userEmail.trim().toLowerCase();
+      query.where((c) => c.userEmail.equals(normalized));
+    }
+    return query.get();
+  }
+
+  /// Marca um cartão de crédito como sincronizado com o backend.
+  Future<bool> markCreditCardAsSynced(int cardId) {
+    return (update(localCreditCards)..where((c) => c.id.equals(cardId)))
+        .write(const LocalCreditCardsCompanion(isSynced: Value(true)))
+        .then((rows) => rows > 0);
+  }
+
+  /// Hidrata um cartão vindo da nuvem (`pullFromCloud`), preservando alterações ou exclusões locais pendentes.
+  Future<bool> upsertPulledCreditCard({
+    required String clientUuid,
+    required String userEmail,
+    required String name,
+    required double limitAmount,
+    required double targetMinPercent,
+    required double targetMaxPercent,
+    required int dueDay,
+    required bool isPrimary,
+    DateTime? updatedAt,
+  }) async {
+    final normalizedEmail = userEmail.trim().toLowerCase();
+    final normalizedUuid = clientUuid.trim().toLowerCase();
+    final trimmedName = name.trim();
+    if (normalizedUuid.isEmpty || trimmedName.isEmpty || limitAmount <= 0) {
+      return false;
+    }
+
+    final existingRows = await (select(localCreditCards)
+          ..where((c) => c.userEmail.equals(normalizedEmail)))
+        .get();
+    LocalCreditCard? match;
+    for (final row in existingRows) {
+      if (row.clientUuid.trim().toLowerCase() == normalizedUuid) {
+        match = row;
+        break;
+      }
+    }
+
+    if (match != null) {
+      // Nunca sobrescreve edição/exclusão local ainda não enviada à nuvem
+      if (!match.isSynced || match.deletedAt != null) {
+        return false;
+      }
+
+      final changed = match.name != trimmedName ||
+          (match.limitAmount - limitAmount).abs() > 0.001 ||
+          (match.targetMinPercent - targetMinPercent).abs() > 0.01 ||
+          (match.targetMaxPercent - targetMaxPercent).abs() > 0.01 ||
+          match.dueDay != dueDay ||
+          match.isPrimary != isPrimary;
+      if (!changed) {
+        return false;
+      }
+
+      await (update(localCreditCards)..where((c) => c.id.equals(match!.id)))
+          .write(
+        LocalCreditCardsCompanion(
+          name: Value(trimmedName),
+          limitAmount: Value(limitAmount),
+          targetMinPercent: Value(targetMinPercent),
+          targetMaxPercent: Value(targetMaxPercent),
+          dueDay: Value(dueDay.clamp(1, 31)),
+          isPrimary: Value(isPrimary),
+          isSynced: const Value(true),
+          updatedAt: Value(updatedAt ?? DateTime.now()),
+        ),
+      );
+      return true;
+    }
+
+    await into(localCreditCards).insert(
+      LocalCreditCardsCompanion.insert(
+        clientUuid: Value(normalizedUuid),
+        userEmail: Value(normalizedEmail),
+        name: trimmedName,
+        limitAmount: limitAmount,
+        targetMinPercent: Value(targetMinPercent),
+        targetMaxPercent: Value(targetMaxPercent),
+        dueDay: Value(dueDay.clamp(1, 31)),
+        isPrimary: Value(isPrimary),
+        isSynced: const Value(true),
+        updatedAt: Value(updatedAt ?? DateTime.now()),
+      ),
+    );
+    return true;
+  }
+
   /// Atualização de status de sincronização com o backend
   Future<bool> markAsSynced(int transactionId) {
     return (update(localTransactions)..where((t) => t.id.equals(transactionId)))
@@ -1021,23 +1133,57 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  /// Exclui um cartão de crédito por ID (soft delete por padrão) (T029)
+  /// Exclui um cartão de crédito por ID (soft delete por padrão) e promove outro cartão a principal se necessário (T029)
   Future<int> deleteCreditCard(
     int cardId, {
     bool softDelete = true,
   }) {
-    if (softDelete) {
+    return transaction(() async {
+      final target = await (select(localCreditCards)
+            ..where((c) => c.id.equals(cardId)))
+          .getSingleOrNull();
+
       final now = DateTime.now();
-      return (update(localCreditCards)..where((c) => c.id.equals(cardId)))
-          .write(
-        LocalCreditCardsCompanion(
-          deletedAt: Value(now),
-          updatedAt: Value(now),
-          isSynced: const Value(false),
-        ),
-      );
-    }
-    return (delete(localCreditCards)..where((c) => c.id.equals(cardId))).go();
+      int affected;
+      if (softDelete) {
+        affected =
+            await (update(localCreditCards)..where((c) => c.id.equals(cardId)))
+                .write(
+          LocalCreditCardsCompanion(
+            isPrimary: const Value(false),
+            deletedAt: Value(now),
+            updatedAt: Value(now),
+            isSynced: const Value(false),
+          ),
+        );
+      } else {
+        affected =
+            await (delete(localCreditCards)..where((c) => c.id.equals(cardId)))
+                .go();
+      }
+
+      if (target != null && target.isPrimary) {
+        final remaining = await (select(localCreditCards)
+              ..where((c) => c.userEmail.equals(target.userEmail))
+              ..orderBy([(c) => OrderingTerm.asc(c.id)]))
+            .get();
+        final nextActive =
+            remaining.where((c) => c.deletedAt == null && c.id != cardId).firstOrNull;
+        if (nextActive != null) {
+          await (update(localCreditCards)
+                ..where((c) => c.id.equals(nextActive.id)))
+              .write(
+            LocalCreditCardsCompanion(
+              isPrimary: const Value(true),
+              updatedAt: Value(now),
+              isSynced: const Value(false),
+            ),
+          );
+        }
+      }
+
+      return affected;
+    });
   }
 
   /// Inicializa tabelas dinâmicas de contas locais e sessão autenticada (persistência 100% SQLite)

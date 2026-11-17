@@ -715,10 +715,17 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
   Widget build(BuildContext context) {
     final currencyFmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final rows = _activePreviewRows;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isMobile = screenWidth < 600;
 
     return AlertDialog(
       key: const Key('csv_export_preview_dialog'),
       backgroundColor: AppTheme.cardSurface,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 40,
+        vertical: 24,
+      ),
+      contentPadding: EdgeInsets.fromLTRB(isMobile ? 16 : 24, 12, isMobile ? 16 : 24, 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(
         children: [
@@ -761,7 +768,7 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
         ],
       ),
       content: SizedBox(
-        width: 580,
+        width: isMobile ? double.maxFinite : 580,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -868,6 +875,7 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!isMobile) ...[
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
@@ -930,6 +938,7 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
                             ),
                           ),
                           const Divider(height: 1, color: AppTheme.cardBorder),
+                          ],
                           Flexible(
                             child: ListView.separated(
                               shrinkWrap: true,
@@ -940,6 +949,79 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
                               ),
                               itemBuilder: (context, index) {
                                 final item = rows[index];
+                                if (isMobile) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.description,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: AppTheme.textPrimary,
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                '${item.dateLabel} · ${item.category}',
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: AppTheme.textMuted,
+                                                  fontSize: 11.5,
+                                                ),
+                                              ),
+                                              Text(
+                                                item.paymentOrDetail,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color:
+                                                      AppTheme.textSecondary,
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Flexible(
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            alignment: Alignment.centerRight,
+                                            child: Text(
+                                              item.amountLabel,
+                                              maxLines: 1,
+                                              style: TextStyle(
+                                                color: item.isPositive
+                                                    ? AppTheme.emeraldDeep
+                                                    : AppTheme.textPrimary,
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
                                 return Padding(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 12,
@@ -1072,14 +1154,17 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
           ),
         ),
         const SizedBox(height: 2),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: valueColor,
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ],

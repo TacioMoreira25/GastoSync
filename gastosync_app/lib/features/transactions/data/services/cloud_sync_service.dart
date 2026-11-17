@@ -113,6 +113,9 @@ class CloudSyncService {
 
     final allPendingTransactions = mergedTransactionsById.values.toList();
     final allPendingBills = mergedBillsById.values.toList();
+    final allPendingCreditCards = await _db.getPendingSyncCreditCards(
+      userEmail: userEmail,
+    );
 
     var cloudSuccess = false;
     String? serverError;
@@ -121,6 +124,7 @@ class CloudSyncService {
         jwtToken.isNotEmpty &&
         (allPendingTransactions.isNotEmpty ||
             allPendingBills.isNotEmpty ||
+            allPendingCreditCards.isNotEmpty ||
             budgets.isNotEmpty)) {
       try {
         final txPayload = allPendingTransactions.map((tx) {
@@ -210,6 +214,7 @@ class CloudSyncService {
           data: <String, dynamic>{
             'transactions': txPayload,
             'bills': billsPayload,
+            'credit_cards': _serializeCreditCardsPayload(allPendingCreditCards),
             'budgets': budgetPayload,
           },
           options: Options(
@@ -248,6 +253,11 @@ class CloudSyncService {
           final updated = await _db.markBillAsSynced(bill.id!);
           if (updated) markedLocally++;
         }
+      }
+
+      for (final card in allPendingCreditCards) {
+        final updated = await _db.markCreditCardAsSynced(card.id);
+        if (updated) markedLocally++;
       }
     }
 
@@ -620,6 +630,75 @@ class CloudSyncService {
         }
       }
 
+      final existingLocalCards = await _db.getAllCreditCardsIncludingDeleted(
+        userEmail: normalizedEmail,
+      );
+      final deletedCardUuids = existingLocalCards
+          .where((c) => c.deletedAt != null && c.clientUuid.trim().isNotEmpty)
+          .map((c) => c.clientUuid.trim().toLowerCase())
+          .toSet();
+      if (deletedCardUuids.isNotEmpty) {
+        hasUnpushedTombstones = true;
+      }
+
+      final remoteCreditCards = data['credit_cards'];
+      if (data.containsKey('credit_cards') && remoteCreditCards is List) {
+        final activeRemoteCardUuids = <String>{};
+
+        for (final item in remoteCreditCards) {
+          if (item is! Map) continue;
+          if (item['deleted_at'] != null) continue;
+
+          final clientUuid =
+              (item['client_uuid'] as String? ?? '').trim().toLowerCase();
+          final name = (item['name'] as String? ?? '').trim();
+          final limitAmount = (item['limit_amount'] as num?)?.toDouble() ?? 0.0;
+          if (clientUuid.isEmpty || name.isEmpty || limitAmount <= 0) {
+            continue;
+          }
+
+          if (deletedCardUuids.contains(clientUuid)) {
+            hasUnpushedTombstones = true;
+            continue;
+          }
+
+          activeRemoteCardUuids.add(clientUuid);
+          final targetMin =
+              (item['target_min_percent'] as num?)?.toDouble() ?? 50.0;
+          final targetMax =
+              (item['target_max_percent'] as num?)?.toDouble() ?? 80.0;
+          final dueDay = (item['due_day'] as num?)?.toInt() ?? 10;
+          final isPrimary = item['is_primary'] == true;
+          final updatedAt = item['updated_at'] is String
+              ? DateTime.tryParse(item['updated_at'] as String)?.toLocal()
+              : null;
+
+          final changed = await _db.upsertPulledCreditCard(
+            clientUuid: clientUuid,
+            userEmail: normalizedEmail,
+            name: name,
+            limitAmount: limitAmount,
+            targetMinPercent: targetMin,
+            targetMaxPercent: targetMax,
+            dueDay: dueDay,
+            isPrimary: isPrimary,
+            updatedAt: updatedAt,
+          );
+          if (changed) {
+            importedCount++;
+          }
+        }
+
+        // Remove localmente apenas cartões já sincronizados que foram apagados em outro dispositivo
+        for (final localCard in existingLocalCards) {
+          if (localCard.deletedAt != null || !localCard.isSynced) continue;
+          final uuid = localCard.clientUuid.trim().toLowerCase();
+          if (uuid.isNotEmpty && !activeRemoteCardUuids.contains(uuid)) {
+            await _db.deleteCreditCard(localCard.id, softDelete: false);
+          }
+        }
+      }
+
       if (hasUnpushedTombstones) {
         await pushPendingTransactions(
           pendingTransactions: const [],
@@ -632,6 +711,27 @@ class CloudSyncService {
     } catch (_) {
       return 0;
     }
+  }
+
+  List<Map<String, dynamic>> _serializeCreditCardsPayload(
+    List<LocalCreditCard> cards,
+  ) {
+    return cards.map((card) {
+      return <String, dynamic>{
+        'client_uuid': card.clientUuid.isNotEmpty
+            ? card.clientUuid
+            : AppDatabase.generateClientUuid(),
+        'name': card.name,
+        'limit_amount': card.limitAmount,
+        'target_min_percent': card.targetMinPercent,
+        'target_max_percent': card.targetMaxPercent,
+        'due_day': card.dueDay,
+        'is_primary': card.isPrimary,
+        'updated_at': (card.updatedAt ?? DateTime.now()).toUtc().toIso8601String(),
+        if (card.deletedAt != null)
+          'deleted_at': card.deletedAt!.toUtc().toIso8601String(),
+      };
+    }).toList();
   }
 }
 

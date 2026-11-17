@@ -56,22 +56,103 @@ void main() {
       expect(metrics.totalExpense, closeTo(3000.0, 0.01));
       // 4. Taxa de Poupança (%): (10000 - 3000) / 10000 * 100 = 70%
       expect(metrics.savingsRate, closeTo(70.0, 0.01));
-      // 5. Reserva em Meses: 18000 / 3000 = 6.0 meses
-      expect(metrics.emergencyMonths, closeTo(6.0, 0.01));
+      // 5. Reserva em Meses (Nível 2 Preditivo via Burn Rate): 18000 / 6200 = 2.903 meses
+      expect(metrics.emergencyMonths, closeTo(18000.0 / 6200.0, 0.01));
+      expect(metrics.emergencyReferenceCost, closeTo(6200.0, 0.01));
+      expect(metrics.emergencyReferenceSource, equals('custo projetado'));
+      expect(metrics.emergencyStatusBadgeLabel, equals('Em construção'));
       // 6. Comprometimento da Renda (%): 3000 / 10000 * 100 = 30%
       expect(metrics.incomeCommitment, closeTo(30.0, 0.01));
       // 7. Burn Rate Diário: 3000 / 15 dias = 200/dia
       expect(metrics.dailyBurnRate, closeTo(200.0, 0.01));
       // 8. Projeção de Fim de Mês (31 dias -> 16 restantes): 3000 + 200 * 16 = 6200
       expect(metrics.monthEndProjection, closeTo(6200.0, 0.01));
-      // 9. Score: (70 * 0.3) + (1.0 * 35) + (0.7 * 35) = 21 + 35 + 24.5 = 80.5
-      expect(metrics.healthScore, closeTo(80.5, 0.01));
+      // 9. Score: (70 * 0.3) + ((2.903 / 6) * 35) + (0.7 * 35) = 21 + 16.935 + 24.5 = 62.435
+      expect(metrics.healthScore, closeTo(62.44, 0.05));
       expect(metrics.fixedExpenses, closeTo(3000.0, 0.01));
       expect(metrics.variableExpenses, closeTo(0.0, 0.01));
       expect(metrics.netWorth, closeTo(18000.0, 0.01));
       expect(metrics.isCommitmentWithin30Percent, isTrue);
       expect(metrics.sixMonthsSeries.length, equals(6));
       expect(metrics.scoreStatusLabel, equals('Saudável'));
+    });
+
+    test('EmergencyFundCalculator aplica cascata de 3 níveis sem distorcer mês parcial', () {
+      // Nível 1: Média histórica dos 3 meses anteriores fechados tem prioridade
+      final level1 = EmergencyFundCalculator.calculateEmergencyMonths(
+        netWorth: 6000.0,
+        currentExpenses: 150.0,
+        projectedExpenses: 281.25,
+        fixedExpenses: 100.0,
+        averagePastThreeMonths: 1000.0,
+      );
+      expect(level1, closeTo(6.0, 0.01));
+
+      // Nível 2: Cenário real GastoSync (sem histórico fechado -> projeção via Burn Rate)
+      final level2 = EmergencyFundCalculator.calculateEmergencyMonths(
+        netWorth: 1313.62,
+        currentExpenses: 150.0,
+        projectedExpenses: 281.25,
+        fixedExpenses: 100.0,
+      );
+      expect(level2, closeTo(1313.62 / 281.25, 0.001));
+      expect(level2.toStringAsFixed(1), equals('4.7'));
+
+      // Nível 3: Primeiro acesso / fallback estrutural para gastos fixos
+      final level3 = EmergencyFundCalculator.calculateEmergencyMonths(
+        netWorth: 1313.62,
+        currentExpenses: 0.0,
+        projectedExpenses: 0.0,
+        fixedExpenses: 100.0,
+      );
+      expect(level3, closeTo(13.1362, 0.001));
+
+      // Evita divisão por zero quando não há despesas cadastradas
+      final zeroGuard = EmergencyFundCalculator.calculateEmergencyMonths(
+        netWorth: 1313.62,
+        currentExpenses: 0.0,
+        projectedExpenses: 0.0,
+        fixedExpenses: 0.0,
+      );
+      expect(zeroGuard, equals(0.0));
+
+      // Valida end-to-end no FinancialHealthEngine com o cenário do dia 16/11 (Burn Rate R$ 9,38/dia)
+      final refDate = DateTime(2026, 11, 16);
+      final benchmarkMetrics = FinancialHealthEngine.calculate(
+        [
+          Transaction(
+            id: 1,
+            description: 'Saldo Inicial / Salário',
+            amount: 1463.62,
+            date: DateTime(2026, 11, 2),
+            type: TransactionType.income,
+            category: 'Renda',
+          ),
+          Transaction(
+            id: 2,
+            description: 'Aluguel Parcial',
+            amount: 100.0,
+            date: DateTime(2026, 11, 5),
+            type: TransactionType.expense,
+            category: 'Moradia',
+          ),
+          Transaction(
+            id: 3,
+            description: 'Mercado',
+            amount: 50.0,
+            date: DateTime(2026, 11, 12),
+            type: TransactionType.expense,
+            category: 'Alimentação',
+          ),
+        ],
+        referenceDate: refDate,
+      );
+      expect(benchmarkMetrics.netWorth, closeTo(1313.62, 0.01));
+      expect(benchmarkMetrics.monthEndProjection, closeTo(281.25, 0.01));
+      expect(benchmarkMetrics.emergencyReferenceCost, closeTo(281.25, 0.01));
+      expect(benchmarkMetrics.emergencyReferenceSource, equals('custo projetado'));
+      expect(benchmarkMetrics.formattedEmergencyMonths, equals('4,7 meses'));
+      expect(benchmarkMetrics.emergencyStatusBadgeLabel, equals('Em construção'));
     });
 
     test('FinancialHealthEngine retorna score 0 (Sem dados) quando não há transações e usa Renda Base configurada nos índices quando há apenas despesas', () {

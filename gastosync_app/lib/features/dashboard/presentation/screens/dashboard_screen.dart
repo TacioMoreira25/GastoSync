@@ -8,6 +8,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../planning/domain/models/credit_card_model.dart';
+import '../../../planning/presentation/screens/planning_screen.dart';
 import '../../../settings/domain/models/user_profile.dart';
 import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
@@ -66,7 +67,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
       body: SingleChildScrollView(
-        padding: EdgeInsets.all(isDesktop ? 28.0 : 16.0),
+        padding: isDesktop
+            ? const EdgeInsets.all(28.0)
+            : EdgeInsets.fromLTRB(
+                screenWidth < 360 ? 12.0 : 16.0,
+                16.0,
+                screenWidth < 360 ? 12.0 : 16.0,
+                104.0,
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -109,6 +117,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       currencyFormatter,
                       metrics,
                       profile,
+                      transactions: transactions,
+                      bills: bills,
                     ),
                   ),
                   const SizedBox(width: 20),
@@ -173,6 +183,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 currencyFormatter,
                 metrics,
                 profile,
+                transactions: transactions,
+                bills: bills,
               ),
               const SizedBox(height: 22),
               _buildRecentTransactionsAndInsightsCard(
@@ -256,34 +268,35 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     FinancialMetrics metrics,
     UserProfile profile,
   ) {
-    final isPositive = metrics.currentBalance >= 0;
     final effectiveIncome = metrics.totalIncome > 0
         ? metrics.totalIncome
         : profile.monthlyBaseIncome;
     final isUsingBaseIncome =
         metrics.totalIncome <= 0 && profile.monthlyBaseIncome > 0;
-
+    final currMonthNet = metrics.totalIncome - metrics.totalExpense;
     String heroBadgeLabel;
+
     if (!metrics.hasTransactions) {
       heroBadgeLabel = 'Sem movimentações registradas';
+    } else if (metrics.totalIncome <= 0 && metrics.totalExpense <= 0) {
+      heroBadgeLabel = 'Sem movimentações neste mês';
     } else {
       final series = metrics.sixMonthsSeries;
       final prevPoint = series.length >= 2 ? series[series.length - 2] : null;
-      final currPoint = series.isNotEmpty ? series.last : null;
       final prevNet =
           prevPoint != null ? (prevPoint.income - prevPoint.expense) : 0.0;
-      final currNet =
-          currPoint != null ? (currPoint.income - currPoint.expense) : 0.0;
 
-      if (prevNet.abs() > 0.01) {
-        final pctChange = ((currNet - prevNet) / prevNet.abs()) * 100.0;
+      if (prevNet > 0.01) {
+        final pctChange = ((currMonthNet - prevNet) / prevNet) * 100.0;
         final sign = pctChange >= 0 ? '+' : '';
         heroBadgeLabel =
             '$sign${pctChange.toStringAsFixed(1).replaceAll('.', ',')}% vs. mês anterior';
+      } else if (currMonthNet > 0) {
+        heroBadgeLabel = 'Fluxo positivo no mês';
+      } else if (currMonthNet < 0) {
+        heroBadgeLabel = 'Atenção: despesas acima da renda no mês';
       } else {
-        heroBadgeLabel = isPositive
-            ? 'Fluxo positivo no mês'
-            : 'Atenção ao fluxo negativo';
+        heroBadgeLabel = 'Equilíbrio no mês';
       }
     }
 
@@ -348,13 +361,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            _formatValue(formatter, metrics.currentBalance),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.8,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _formatValue(formatter, metrics.currentBalance),
+              maxLines: 1,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 30,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -418,12 +436,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   iconColor: AppTheme.emeraldPrimary,
                 ),
               ),
+              const SizedBox(width: 12),
               Container(
                 width: 1,
                 height: 36,
                 color: AppTheme.navyBorder.withValues(alpha: 0.7),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: _HeroSubMetric(
                   label: 'Despesas do mês',
@@ -488,13 +507,55 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     UserProfile profile, {
     required bool isDesktop,
   }) {
+    final effectiveIncome = metrics.totalIncome > 0
+        ? metrics.totalIncome
+        : profile.monthlyBaseIncome;
+    final displaySavingsRate = math.max(0.0, metrics.savingsRate);
     final savingsProgress = profile.savingsRateTarget > 0
-        ? (metrics.savingsRate / profile.savingsRateTarget).clamp(0.0, 1.0)
-        : (metrics.savingsRate / 100.0).clamp(0.0, 1.0);
+        ? (displaySavingsRate / profile.savingsRateTarget).clamp(0.0, 1.0)
+        : (displaySavingsRate / 100.0).clamp(0.0, 1.0);
     final emergencyProgress = (metrics.emergencyMonths / 6.0).clamp(0.0, 1.0);
     final commitmentProgress =
         (metrics.incomeCommitment / 100.0).clamp(0.0, 1.0);
     final scoreProgress = (metrics.roundedScore / 100.0).clamp(0.0, 1.0);
+
+    final String savingsSubtitle;
+    if (!metrics.hasTransactions) {
+      savingsSubtitle = 'Aguardando lançamentos';
+    } else if (effectiveIncome <= 0 && metrics.totalExpense > 0) {
+      savingsSubtitle = 'Defina sua renda para calcular';
+    } else if (metrics.totalExpense > effectiveIncome && effectiveIncome > 0) {
+      savingsSubtitle = 'Despesas acima da renda no mês';
+    } else if (profile.savingsRateTarget > 0) {
+      savingsSubtitle =
+          'Meta: ${profile.savingsRateTarget.toStringAsFixed(0)}%';
+    } else {
+      savingsSubtitle = 'Meta não definida';
+    }
+    final Color emergencyColor;
+    final Color emergencyBadgeBg;
+    final Color emergencyBadgeTextColor;
+
+    if (metrics.emergencyReferenceCost <= 0 || metrics.emergencyMonths <= 0) {
+      emergencyColor = AppTheme.textMuted;
+      emergencyBadgeBg = AppTheme.subtleSurface;
+      emergencyBadgeTextColor = AppTheme.textMuted;
+    } else {
+      emergencyColor = AppTheme.emeraldPrimary;
+      emergencyBadgeBg = AppTheme.emeraldBadgeBg;
+      emergencyBadgeTextColor = AppTheme.emeraldDeep;
+    }
+
+    final String emergencySubtitle;
+    if (metrics.emergencyReferenceCost > 0) {
+      emergencySubtitle =
+          'Cobertura sobre ${metrics.emergencyReferenceSource} de ${_formatValue(formatter, metrics.emergencyReferenceCost)}/mês';
+    } else if (!metrics.hasTransactions) {
+      emergencySubtitle = 'Adicione despesas ou gastos fixos';
+    } else {
+      emergencySubtitle = 'Cadastre despesas fixas para calcular';
+    }
+
     final Color scoreColor;
     final Color scoreBadgeBg;
     final Color scoreBadgeTextColor;
@@ -552,29 +613,39 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        GridView.count(
+        GridView(
           physics: const NeverScrollableScrollPhysics(),
           shrinkWrap: true,
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: isDesktop ? 1.85 : 1.08,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            // Altura intrínseca escalada pela fonte do sistema (evita overflow com badge + 2 linhas de apoio)
+            mainAxisExtent: isDesktop
+                ? 150.0
+                : 158.0 *
+                    math.max(
+                      1.0,
+                      MediaQuery.textScalerOf(context).scale(14) / 14,
+                    ),
+          ),
           children: [
             _SummaryGridCard(
               title: 'Taxa de Poupança',
-              mainValue: '${metrics.savingsRate.toStringAsFixed(1)}%',
-              subtitle: profile.savingsRateTarget > 0
-                  ? 'Meta: ${profile.savingsRateTarget.toStringAsFixed(0)}%'
-                  : 'Meta não definida',
+              mainValue: '${displaySavingsRate.toStringAsFixed(1)}%',
+              subtitle: savingsSubtitle,
               progress: savingsProgress,
               progressColor: AppTheme.emeraldPrimary,
             ),
             _SummaryGridCard(
               title: 'Reserva de Emergência',
-              mainValue: '${metrics.emergencyMonths.toStringAsFixed(1)} meses',
-              subtitle: 'Meta: 6 meses cobertos',
+              mainValue: metrics.formattedEmergencyMonths,
+              subtitle: emergencySubtitle,
               progress: emergencyProgress,
-              progressColor: AppTheme.emeraldPrimary,
+              progressColor: emergencyColor,
+              badgeText: metrics.emergencyStatusBadgeLabel,
+              badgeBackgroundColor: emergencyBadgeBg,
+              badgeTextColor: emergencyBadgeTextColor,
             ),
             _SummaryGridCard(
               title: 'Comprometimento',
@@ -603,13 +674,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  /// Card `Burn Rate` com alerta amarelo e gráfico `fl_chart` comparando gasto acumulado vs. Teto mensal
+  /// Card `Burn Rate` com alerta amarelo e gráfico `fl_chart` comparando gasto acumulado real vs. Teto mensal
   Widget _buildBurnRateCard(
     BuildContext context,
     NumberFormat formatter,
     FinancialMetrics metrics,
-    UserProfile profile,
-  ) {
+    UserProfile profile, {
+    List<Transaction> transactions = const <Transaction>[],
+    List<Bill> bills = const <Bill>[],
+  }) {
     final effectiveIncome = metrics.totalIncome > 0
         ? metrics.totalIncome
         : profile.monthlyBaseIncome;
@@ -617,22 +690,56 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         effectiveIncome * (1.0 - (profile.savingsRateTarget / 100.0));
     final now = DateTime.now();
     final totalDays = DateTime(now.year, now.month + 1, 0).day;
-    final remainingDays = math.max(1, totalDays - now.day);
-    final remainingAllowance =
-        math.max(0.0, monthlyCeiling - metrics.totalExpense);
+    final currentDay = now.day.clamp(1, totalDays);
+    final remainingDays = math.max(1, totalDays - currentDay);
+
+    // Boletos de caixa pendentes com vencimento neste mês
+    final pendingMonthCashBills = bills
+        .where(
+          (b) =>
+              !b.isPaid &&
+              !b.isCreditCardCharge &&
+              !b.isDeleted &&
+              b.dueDate.year == now.year &&
+              b.dueDate.month == now.month,
+        )
+        .fold<double>(0.0, (sum, b) => sum + b.amount);
+
+    final realisticProjection = metrics.realisticMonthEndProjection(
+      pendingMonthCashBills: pendingMonthCashBills,
+      referenceDate: now,
+    );
+    final remainingAllowance = math.max(
+      0.0,
+      monthlyCeiling - metrics.totalExpense - pendingMonthCashBills,
+    );
     final suggestedDailyMax = remainingAllowance / remainingDays;
 
-    // Pontos para a curva de evolução do Burn Rate vs. Teto Mensal (fl_chart)
-    final currentDay = math.max(1, now.day);
-    final accumulatedSpots = <FlSpot>[
-      const FlSpot(1, 0),
-      FlSpot(
-        math.max(2, (currentDay / 2).round()).toDouble(),
-        metrics.totalExpense * 0.48,
-      ),
-      FlSpot(currentDay.toDouble(), metrics.totalExpense),
-      FlSpot(totalDays.toDouble(), metrics.monthEndProjection),
-    ];
+    // Curva de evolução real dia-a-dia a partir das transações do mês vigente + projeção até o fim do mês
+    final dailyExpenseByDay = <int, double>{};
+    for (final tx in transactions) {
+      if (tx.isExpense &&
+          !tx.isDeleted &&
+          tx.date.year == now.year &&
+          tx.date.month == now.month) {
+        final d = tx.date.day.clamp(1, totalDays);
+        dailyExpenseByDay[d] = (dailyExpenseByDay[d] ?? 0.0) + tx.amount;
+      }
+    }
+
+    final accumulatedSpots = <FlSpot>[];
+    double runningSum = 0.0;
+    for (int d = 1; d <= currentDay; d++) {
+      runningSum += dailyExpenseByDay[d] ?? 0.0;
+      if (d == 1 || d == currentDay || (dailyExpenseByDay[d] ?? 0.0) > 0) {
+        accumulatedSpots.add(FlSpot(d.toDouble(), runningSum));
+      }
+    }
+    if (totalDays > currentDay) {
+      accumulatedSpots.add(
+        FlSpot(totalDays.toDouble(), realisticProjection),
+      );
+    }
 
     final ceilingSpots = <FlSpot>[
       FlSpot(1, monthlyCeiling),
@@ -641,7 +748,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     final maxY = (math.max(
               monthlyCeiling,
-              math.max(metrics.totalExpense, metrics.monthEndProjection),
+              math.max(metrics.totalExpense, realisticProjection),
             ) *
             1.25)
         .clamp(1000.0, double.infinity);
@@ -654,43 +761,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Burn Rate Mensal',
-                      style: TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Evolução de despesas acumuladas vs. Teto mensal',
-                      style: TextStyle(
-                        color: AppTheme.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+              Text(
+                'Burn Rate Mensal',
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: AppTheme.warningBadgeDecoration,
-                child: const Text(
-                  'Monitoramento Diário',
-                  style: TextStyle(
-                    color: AppTheme.warningDark,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+              SizedBox(height: 2),
+              Text(
+                'Evolução de despesas acumuladas vs. Teto mensal',
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 12,
                 ),
               ),
             ],
@@ -754,7 +841,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        formatter.format(metrics.monthEndProjection),
+                        formatter.format(realisticProjection),
                         style: const TextStyle(
                           color: AppTheme.textPrimary,
                           fontSize: 16,
@@ -769,17 +856,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Banner de alerta amarelo
+          // Orientação diária na paleta padrão do site e mobile
           Container(
             key: const Key('burn_rate_warning_banner'),
             padding: const EdgeInsets.all(12),
-            decoration: AppTheme.warningBannerDecoration,
+            decoration: BoxDecoration(
+              color: AppTheme.emeraldSoftBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.emeraldBadgeBg),
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
-                  Icons.warning_amber_rounded,
-                  color: AppTheme.warningDark,
+                  Icons.insights_rounded,
+                  color: AppTheme.emeraldDeep,
                   size: 18,
                 ),
                 const SizedBox(width: 10),
@@ -791,7 +882,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                             : 'Você gastou ${formatter.format(metrics.totalExpense)} neste mês. Registre uma receita ou defina sua Renda Base na aba Mais para acompanhar seu teto.')
                         : 'Mantenha o gasto médio em até ${formatter.format(suggestedDailyMax)}/dia nos próximos $remainingDays dias para respeitar o teto mensal (${formatter.format(monthlyCeiling)}).',
                     style: const TextStyle(
-                      color: AppTheme.warningDark,
+                      color: AppTheme.emeraldDeep,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       height: 1.35,
@@ -966,9 +1057,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ? '[Categoria: ${latestInsight.categorySuggested} • Confiança ${(latestInsight.confidenceScore * 100).round()}%] ${latestInsight.budgetTip}'
         : (!metrics.hasTransactions
             ? 'Registre suas primeiras transações ou use o preenchimento inteligente para receber insights sobre seus gastos.'
-            : 'Sua reserva de emergência atual cobre ${metrics.emergencyMonths.toStringAsFixed(1)} meses de despesas e seu Score Financeiro está em ${metrics.roundedScore}/100 (${metrics.scoreStatusLabel}).');
+            : 'Sua reserva de emergência atual cobre ${metrics.formattedEmergencyMonths} de despesas e seu Score Financeiro está em ${metrics.roundedScore}/100 (${metrics.scoreStatusLabel}).');
 
-    final recentFour = transactions.take(4).toList();
+    final sortedTransactions = transactions.where((t) => !t.isDeleted).toList()
+      ..sort((a, b) {
+        final dateCmp = b.date.compareTo(a.date);
+        if (dateCmp != 0) return dateCmp;
+        return (b.id ?? 0).compareTo(a.id ?? 0);
+      });
+    final recentFour = sortedTransactions.take(4).toList();
     final dateFmt = DateFormat('dd/MM');
 
     return Container(
@@ -1514,7 +1611,88 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     NumberFormat formatter,
     List<CreditCardUsageSummary> cardSummaries,
   ) {
-    if (cardSummaries.isEmpty) return const SizedBox.shrink();
+    void openCreditCardsTab() {
+      ProviderScope.containerOf(context, listen: false)
+          .read(planningSubTabRequestProvider.notifier)
+          .openTab(2);
+      context.go('/planning?tab=cards');
+    }
+
+    if (cardSummaries.isEmpty) {
+      return Container(
+        key: const Key('dashboard_credit_cards_limit_card'),
+        padding: const EdgeInsets.all(20),
+        decoration: AppTheme.whiteCardDecoration,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.emeraldSoftBg,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.credit_card_rounded,
+                    size: 18,
+                    color: AppTheme.emeraldDeep,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Cartões & Limite Saudável',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  key: const Key('dashboard_manage_credit_cards_button'),
+                  onPressed: openCreditCardsTab,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.emeraldDeep,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: const Text(
+                    'Gerenciar',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Nenhum cartão cadastrado neste dispositivo. Cadastre um cartão ou sincronize sua conta para acompanhar faturas e a faixa saudável de limite (50%–80%).',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12.5,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              key: const Key('dashboard_empty_add_card_button'),
+              onPressed: openCreditCardsTab,
+              icon: const Icon(Icons.add_card_rounded, size: 17),
+              label: const Text('Cadastrar Cartão'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     final totalLimit = cardSummaries.fold<double>(
       0.0,
@@ -1566,7 +1744,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
               TextButton(
                 key: const Key('dashboard_manage_credit_cards_button'),
-                onPressed: () => context.go('/planning'),
+                onPressed: openCreditCardsTab,
                 style: TextButton.styleFrom(
                   foregroundColor: AppTheme.emeraldDeep,
                   visualDensity: VisualDensity.compact,
@@ -1688,14 +1866,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           ),
                         ),
                       ),
-                      Text(
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
                         '${summary.utilizationPercent.round()}% · Teto ${_formatValue(formatter, card.healthyMaxAmount)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end,
                         style: TextStyle(
                           color: summary.isAboveHealthyCeiling
                               ? AppTheme.errorColor
                               : AppTheme.textSecondary,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
+                        ),
                         ),
                       ),
                     ],
@@ -1821,11 +2005,15 @@ class _SummaryGridCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1835,35 +2023,39 @@ class _SummaryGridCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
-              if (badgeText != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: badgeBackgroundColor ?? AppTheme.emeraldBadgeBg,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    badgeText!,
-                    style: TextStyle(
-                      color: badgeTextColor ?? AppTheme.emeraldDeep,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
+                if (badgeText != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeBackgroundColor ?? AppTheme.emeraldBadgeBg,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      badgeText!,
+                      style: TextStyle(
+                        color: badgeTextColor ?? AppTheme.emeraldDeep,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-          Text(
-            mainValue,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.4,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              mainValue,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
             ),
           ),
           Column(
@@ -1881,11 +2073,12 @@ class _SummaryGridCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 subtitle,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: AppTheme.textMuted,
                   fontSize: 11,
+                  height: 1.25,
                 ),
               ),
             ],

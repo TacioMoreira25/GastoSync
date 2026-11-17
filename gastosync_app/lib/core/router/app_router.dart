@@ -93,7 +93,15 @@ final goRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/planning',
                 name: 'planning',
-                builder: (context, state) => const PlanningScreen(),
+                builder: (context, state) {
+                  final tabParam = state.uri.queryParameters['tab'];
+                  final initialTab = switch (tabParam) {
+                    'health' || '1' => 1,
+                    'cards' || '2' => 2,
+                    _ => 0,
+                  };
+                  return PlanningScreen(initialSubTab: initialTab);
+                },
               ),
             ],
           ),
@@ -200,8 +208,8 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
     final transactions = ref.watch(watchTransactionsProvider).value ?? const [];
     final pendingCount = transactions.where((t) => !t.isSynced).length;
     final syncLabel = pendingCount == 0
-        ? 'Local sincronizado'
-        : '$pendingCount pendente${pendingCount > 1 ? "s" : ""} local';
+        ? ''
+        : '$pendingCount pendente${pendingCount > 1 ? "s" : ""}';
 
     if (isDesktop) {
       return Scaffold(
@@ -211,6 +219,7 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
             _GastoSyncWebSidebar(
               selectedIndex: currentIndex,
               onDestinationSelected: _onDestinationSelected,
+              onCardsTap: null,
               onNewTransactionTap: () => ManualTransactionFormModal.show(context),
               onLogoutTap: () {
                 navigationShell.goBranch(0);
@@ -371,8 +380,10 @@ class _GastoSyncMobileBottomBar extends StatelessWidget {
                     isSelected: selectedIndex == 1,
                     onTap: () => onDestinationSelected(1),
                   ),
-                  // Espaço central para o botão `+` elevado
-                  const SizedBox(width: 68),
+                  // Espaço central para o botão `+` elevado (adaptativo)
+                  SizedBox(
+                    width: MediaQuery.sizeOf(context).width < 360 ? 54 : 68,
+                  ),
                   _MobileTabButton(
                     tab: _navTabs[2],
                     isSelected: selectedIndex == 2,
@@ -418,6 +429,7 @@ class _MobileTabButton extends StatelessWidget {
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
@@ -426,15 +438,21 @@ class _MobileTabButton extends StatelessWidget {
               size: 22,
             ),
             const SizedBox(height: 4),
-            Text(
-              tab.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                letterSpacing: -0.1,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  tab.label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.w500,
+                    letterSpacing: -0.1,
+                  ),
+                ),
               ),
             ),
           ],
@@ -449,6 +467,7 @@ class _GastoSyncWebSidebar extends StatelessWidget {
   const _GastoSyncWebSidebar({
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.onCardsTap,
     required this.onNewTransactionTap,
     required this.onLogoutTap,
     required this.profile,
@@ -457,6 +476,7 @@ class _GastoSyncWebSidebar extends StatelessWidget {
 
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final VoidCallback? onCardsTap;
   final VoidCallback onNewTransactionTap;
   final VoidCallback onLogoutTap;
   final UserProfile profile;

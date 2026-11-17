@@ -10,6 +10,7 @@ import '../../../../core/utils/brl_currency_formatter.dart';
 import '../../../budget_agent/data/services/budget_agent_service.dart';
 import '../../../budget_agent/domain/models/agent_prediction_models.dart';
 import '../../../dashboard/presentation/widgets/quick_expense_input_field.dart';
+import '../../../settings/domain/models/user_profile.dart';
 import '../../domain/models/bill.dart';
 import '../../domain/models/transaction.dart';
 import '../controllers/transactions_controller.dart';
@@ -412,80 +413,129 @@ class _ManualTransactionFormModalState
       });
 
       // Persiste imediatamente a nova categoria em LocalBudgets para aparecer em Planejamento
+      final userEmail = ref.read(userProfileProvider).email;
       await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
             newCat,
             defaultLimit: 500.0,
+            userEmail: userEmail,
           );
     }
   }
 
   Future<void> _promptNewCreditCard() async {
     final nameCtrl = TextEditingController(text: '');
-    final limitCtrl = TextEditingController(text: '');
+    final limitCtrl = TextEditingController(text: '1500,00');
     final dueDayCtrl = TextEditingController(text: '10');
+    String? nameError;
+    String? limitError;
 
     final created = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.cardSurface,
-        title: const Text('Novo Cartão de Crédito'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Nome / Apelido do Cartão',
-                hintText: 'Ex: Cartão Secundário, Nubank, Itaú...',
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: AppTheme.cardSurface,
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          title: const Text('Novo Cartão de Crédito'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  onChanged: (_) {
+                    if (nameError != null) {
+                      setDialogState(() => nameError = null);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Nome / Apelido do Cartão',
+                    hintText: 'Ex: Nubank, Itaú, Inter...',
+                    errorText: nameError,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: limitCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) {
+                    if (limitError != null) {
+                      setDialogState(() => limitError = null);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Limite Total do Cartão (R\$)',
+                    hintText: 'Ex: 1500,00',
+                    errorText: limitError,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: dueDayCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Dia de Vencimento da Fatura (1 a 31)',
+                    hintText: 'Ex: 10',
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: limitCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Limite Total do Cartão (R\$)',
-                hintText: 'Ex: 1500,00',
-              ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar'),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: dueDayCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Dia de Vencimento da Fatura (1 a 31)',
-                hintText: 'Ex: 10',
-              ),
+            FilledButton(
+              onPressed: () {
+                final trimmedName = nameCtrl.text.trim();
+                final rawLimit = limitCtrl.text.trim();
+                final parsedLimit = rawLimit.contains(',')
+                    ? double.tryParse(
+                        rawLimit.replaceAll('.', '').replaceAll(',', '.'),
+                      )
+                    : double.tryParse(rawLimit);
+
+                if (trimmedName.isEmpty) {
+                  setDialogState(() {
+                    nameError = 'Informe o nome do cartão.';
+                  });
+                  return;
+                }
+                if (parsedLimit == null || parsedLimit <= 0) {
+                  setDialogState(() {
+                    limitError = 'Informe um limite maior que zero.';
+                  });
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: const Text('Salvar Cartão'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Salvar Cartão'),
-          ),
-        ],
       ),
     );
 
     if (created == true && mounted) {
       final name = nameCtrl.text.trim();
-      final limit = double.tryParse(
-            limitCtrl.text.trim().replaceAll('.', '').replaceAll(',', '.'),
-          ) ??
-          double.tryParse(limitCtrl.text.trim().replaceAll(',', '.')) ??
+      final rawLimit = limitCtrl.text.trim();
+      final limit = (rawLimit.contains(',')
+              ? double.tryParse(
+                  rawLimit.replaceAll('.', '').replaceAll(',', '.'),
+                )
+              : double.tryParse(rawLimit)) ??
           1500.0;
       final dueDay = (int.tryParse(dueDayCtrl.text.trim()) ?? 10).clamp(1, 31);
       final newUuid = AppDatabase.generateClientUuid();
+      final userEmail = ref.read(userProfileProvider).email;
 
       if (name.isNotEmpty && limit > 0) {
-        await ref.read(appDatabaseProvider).upsertCreditCard(
+        await ref.read(transactionsControllerProvider).upsertCreditCard(
               clientUuid: newUuid,
+              userEmail: userEmail,
               name: name,
               limitAmount: limit,
               targetMinPercent: 50.0,
@@ -497,9 +547,32 @@ class _ManualTransactionFormModalState
           setState(() {
             _selectedCreditCardUuid = newUuid;
           });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Cartão "$name" salvo e selecionado!'),
+              backgroundColor: AppTheme.emeraldDeep,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         }
       }
     }
+  }
+
+  Future<void> _deleteCreditCardFromModal(LocalCreditCard card) async {
+    await ref.read(transactionsControllerProvider).deleteCreditCard(card.id);
+    if (!mounted) return;
+    setState(() {
+      if (_selectedCreditCardUuid == card.clientUuid) {
+        _selectedCreditCardUuid = null;
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Cartão "${card.name}" removido.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Widget _buildCreditCardSelector({
@@ -555,7 +628,7 @@ class _ManualTransactionFormModalState
             children: [
               ...cards.map((card) {
                 final isSelected = card.clientUuid == activeUuid;
-                return ChoiceChip(
+                return InputChip(
                   key: Key('credit_card_chip_${card.name}'),
                   label: Text(
                     '${card.name} (${currencyFmt.format(card.limitAmount)})',
@@ -564,6 +637,11 @@ class _ManualTransactionFormModalState
                   showCheckmark: false,
                   selectedColor: AppTheme.navyDark,
                   backgroundColor: AppTheme.cardSurface,
+                  deleteIconColor:
+                      isSelected ? Colors.white70 : AppTheme.textMuted,
+                  deleteButtonTooltipMessage: 'Apagar cartão',
+                  onDeleted:
+                      isBusy ? null : () => _deleteCreditCardFromModal(card),
                   labelStyle: TextStyle(
                     color: isSelected ? Colors.white : AppTheme.textSecondary,
                     fontSize: 12,
@@ -722,9 +800,11 @@ class _ManualTransactionFormModalState
         }
 
         if (_selectedType == TransactionType.expense) {
+          final userEmail = ref.read(userProfileProvider).email;
           await ref.read(appDatabaseProvider).ensureCategoryBudgetExists(
                 effectiveCategory,
                 defaultLimit: 500.0,
+                userEmail: userEmail,
               );
         }
       }

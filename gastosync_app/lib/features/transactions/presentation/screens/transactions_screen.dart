@@ -22,6 +22,29 @@ class TransactionsScreen extends ConsumerStatefulWidget {
 class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  int? _selectedYearMonthKey;
+  int? _selectedDay;
+
+  static const List<String> _monthNamesFull = <String>[
+    'Janeiro',
+    'Fevereiro',
+    'Março',
+    'Abril',
+    'Maio',
+    'Junho',
+    'Julho',
+    'Agosto',
+    'Setembro',
+    'Outubro',
+    'Novembro',
+    'Dezembro',
+  ];
+
+  String _formatYearMonthLabel(int ym) {
+    final year = ym ~/ 100;
+    final month = (ym % 100).clamp(1, 12);
+    return '${_monthNamesFull[month - 1]} $year';
+  }
 
   static const List<String> _defaultCategories = <String>[
     'Alimentação',
@@ -134,9 +157,31 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           }
           final categories = categoryMap.values.toList();
 
-          // Filtra transações por categoria selecionada e termo de pesquisa
+          final now = DateTime.now();
+          final yearMonthSet = <int>{now.year * 100 + now.month};
+          for (final t in transactions) {
+            yearMonthSet.add(t.date.year * 100 + t.date.month);
+          }
+          for (final bill in bills) {
+            yearMonthSet.add(bill.dueDate.year * 100 + bill.dueDate.month);
+          }
+          if (_selectedYearMonthKey != null) {
+            yearMonthSet.add(_selectedYearMonthKey!);
+          }
+          final availableYearMonths = yearMonthSet.toList()
+            ..sort((a, b) => b.compareTo(a));
+
+          // Filtra transações por categoria, mês/dia e termo de pesquisa
           final query = _searchQuery.trim().toLowerCase();
           final filteredTransactions = transactions.where((tx) {
+            final matchesMonth = _selectedYearMonthKey == null ||
+                (tx.date.year * 100 + tx.date.month) == _selectedYearMonthKey;
+            if (!matchesMonth) return false;
+
+            final matchesDay =
+                _selectedDay == null || tx.date.day == _selectedDay;
+            if (!matchesDay) return false;
+
             final matchesCategory = selectedCategory == null ||
                 tx.category.toLowerCase() == selectedCategory.toLowerCase() ||
                 (selectedCategory == 'Renda' && tx.isIncome);
@@ -148,8 +193,17 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 tx.category.toLowerCase().contains(query);
           }).toList();
 
-          // Filtra boletos por categoria selecionada e termo de pesquisa
+          // Filtra boletos por categoria, mês/dia e termo de pesquisa
           final filteredBills = bills.where((bill) {
+            final matchesMonth = _selectedYearMonthKey == null ||
+                (bill.dueDate.year * 100 + bill.dueDate.month) ==
+                    _selectedYearMonthKey;
+            if (!matchesMonth) return false;
+
+            final matchesDay =
+                _selectedDay == null || bill.dueDate.day == _selectedDay;
+            if (!matchesDay) return false;
+
             final matchesCategory = selectedCategory == null ||
                 bill.category.toLowerCase() == selectedCategory.toLowerCase();
             if (!matchesCategory) return false;
@@ -210,7 +264,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
                 // 3. Barra de pesquisa
                 _buildSearchBar(selectedSubTab: selectedSubTab),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
+
+                // 3b. Filtro por Mês e Dia (Web e Mobile)
+                _buildDateFilterBar(
+                  context: context,
+                  availableYearMonths: availableYearMonths,
+                ),
+                const SizedBox(height: 12),
 
                 // 4. Chips horizontais de categoria sem scrollbar visível
                 _buildCategoryFilterChips(
@@ -254,66 +315,36 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   }) {
     final badgeLabel = '$syncedCount sincronizada${syncedCount == 1 ? '' : 's'}';
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'MOVIMENTAÇÕES',
-                style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                selectedSubTab == 0 ? 'Transações' : 'Boletos e Contas a Pagar',
-                style: TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: isDesktop ? 22 : 18,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Badge verde "X sincronizadas" conforme protótipo Figma (FR-014)
-        Container(
-          key: const Key('transactions_synced_badge'),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: AppTheme.emeraldBadgeDecoration,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: const BoxDecoration(
-                  color: AppTheme.emeraldDeep,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                badgeLabel,
-                style: const TextStyle(
-                  color: AppTheme.emeraldDeep,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (pendingCount > 0) ...[
-          const SizedBox(width: 8),
+    final syncedBadge = Container(
+      key: const Key('transactions_synced_badge'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: AppTheme.emeraldBadgeDecoration,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Container(
+            width: 7,
+            height: 7,
+            decoration: const BoxDecoration(
+              color: AppTheme.emeraldDeep,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            badgeLabel,
+            style: const TextStyle(
+              color: AppTheme.emeraldDeep,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final pendingBadge = pendingCount > 0
+        ? Container(
             key: const Key('transactions_pending_badge'),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: AppTheme.warningBadgeDecoration,
@@ -325,51 +356,104 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 fontWeight: FontWeight.w700,
               ),
             ),
+          )
+        : null;
+
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'MOVIMENTAÇÕES',
+          style: TextStyle(
+            color: AppTheme.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
           ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          selectedSubTab == 0 ? 'Transações' : 'Boletos e Contas a Pagar',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: isDesktop ? 22 : 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
+          ),
+        ),
+      ],
+    );
+
+    if (!isDesktop) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: titleBlock),
+              IconButton(
+                key: const Key('transactions_export_csv_button'),
+                tooltip: 'Exportar CSV',
+                onPressed: onExportCsv,
+                icon: const Icon(
+                  Icons.download_rounded,
+                  color: AppTheme.textSecondary,
+                  size: 20,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [syncedBadge, ?pendingBadge],
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(child: titleBlock),
+        syncedBadge,
+        if (pendingBadge != null) ...[
+          const SizedBox(width: 8),
+          pendingBadge,
         ],
         const SizedBox(width: 8),
-        if (isDesktop)
-          OutlinedButton.icon(
-            key: const Key('transactions_export_csv_button'),
-            onPressed: onExportCsv,
-            icon: const Icon(Icons.download_rounded, size: 17),
-            label: const Text('Exportar CSV'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppTheme.textPrimary,
-              side: const BorderSide(color: AppTheme.cardBorder),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            ),
-          )
-        else
-          IconButton(
-            key: const Key('transactions_export_csv_button'),
-            tooltip: 'Exportar CSV',
-            onPressed: onExportCsv,
-            icon: const Icon(
-              Icons.download_rounded,
-              color: AppTheme.textSecondary,
-              size: 20,
-            ),
+        OutlinedButton.icon(
+          key: const Key('transactions_export_csv_button'),
+          onPressed: onExportCsv,
+          icon: const Icon(Icons.download_rounded, size: 17),
+          label: const Text('Exportar CSV'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.textPrimary,
+            side: const BorderSide(color: AppTheme.cardBorder),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
           ),
-        if (isDesktop) ...[
-          const SizedBox(width: 10),
-          FilledButton.icon(
-            key: const Key('add_transaction_fab'),
-            onPressed: () => ManualTransactionFormModal.show(
-              context,
-              startInBillMode: selectedSubTab == 1,
-            ),
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: Text(
-              selectedSubTab == 1 ? 'Novo Boleto' : 'Nova Transação',
-            ),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.emeraldPrimary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
+        ),
+        const SizedBox(width: 10),
+        FilledButton.icon(
+          key: const Key('add_transaction_fab'),
+          onPressed: () => ManualTransactionFormModal.show(
+            context,
+            startInBillMode: selectedSubTab == 1,
           ),
-        ],
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: Text(
+            selectedSubTab == 1 ? 'Novo Boleto' : 'Nova Transação',
+          ),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppTheme.emeraldPrimary,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+        ),
       ],
     );
   }
@@ -725,6 +809,184 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     );
   }
 
+  Widget _buildDateFilterBar({
+    required BuildContext context,
+    required List<int> availableYearMonths,
+  }) {
+    final now = DateTime.now();
+    final hasMonth = _selectedYearMonthKey != null;
+    final hasDay = _selectedDay != null;
+    final monthLabel = hasMonth
+        ? _formatYearMonthLabel(_selectedYearMonthKey!)
+        : 'Mês: Todos';
+    final dayLabel = hasDay
+        ? 'Dia ${_selectedDay!.toString().padLeft(2, '0')}'
+        : 'Dia: Todos';
+
+    Future<void> pickDateFromCalendar() async {
+      final initialDate = _selectedYearMonthKey != null
+          ? DateTime(
+              _selectedYearMonthKey! ~/ 100,
+              (_selectedYearMonthKey! % 100).clamp(1, 12),
+              (_selectedDay ?? 1).clamp(1, 28),
+            )
+          : now;
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: initialDate,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(2100),
+      );
+      if (picked != null && mounted) {
+        setState(() {
+          _selectedYearMonthKey = picked.year * 100 + picked.month;
+          _selectedDay = picked.day;
+        });
+      }
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        PopupMenuButton<int>(
+          key: const Key('transactions_month_filter_button'),
+          tooltip: 'Filtrar por mês',
+          color: AppTheme.cardSurface,
+          onSelected: (value) {
+            setState(() {
+              _selectedYearMonthKey = value == 0 ? null : value;
+            });
+          },
+          itemBuilder: (context) => [
+            PopupMenuItem<int>(
+              value: 0,
+              child: Text(
+                'Todos os meses',
+                style: TextStyle(
+                  fontWeight: !hasMonth ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+            const PopupMenuDivider(),
+            ...availableYearMonths.map(
+              (ym) => PopupMenuItem<int>(
+                value: ym,
+                child: Text(
+                  _formatYearMonthLabel(ym),
+                  style: TextStyle(
+                    fontWeight: _selectedYearMonthKey == ym
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          child: _DateFilterChipLabel(
+            icon: Icons.calendar_month_rounded,
+            label: monthLabel,
+            isSelected: hasMonth,
+          ),
+        ),
+        PopupMenuButton<int>(
+          key: const Key('transactions_day_filter_button'),
+          tooltip: 'Filtrar por dia',
+          color: AppTheme.cardSurface,
+          onSelected: (value) async {
+            if (value == 0) {
+              setState(() => _selectedDay = null);
+            } else if (value == -2) {
+              setState(() {
+                _selectedYearMonthKey = now.year * 100 + now.month;
+                _selectedDay = now.day;
+              });
+            } else if (value == -1) {
+              await pickDateFromCalendar();
+            } else {
+              setState(() => _selectedDay = value);
+            }
+          },
+          itemBuilder: (context) => [
+            PopupMenuItem<int>(
+              value: 0,
+              child: Text(
+                'Todos os dias',
+                style: TextStyle(
+                  fontWeight: !hasDay ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+            PopupMenuItem<int>(
+              value: -2,
+              child: Text('Hoje (${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')})'),
+            ),
+            const PopupMenuItem<int>(
+              value: -1,
+              child: Row(
+                children: [
+                  Icon(Icons.event_rounded, size: 16, color: AppTheme.emeraldDeep),
+                  SizedBox(width: 8),
+                  Text('Escolher no calendário...'),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            ...List.generate(
+              31,
+              (index) {
+                final day = index + 1;
+                return PopupMenuItem<int>(
+                  value: day,
+                  child: Text(
+                    'Dia ${day.toString().padLeft(2, '0')}',
+                    style: TextStyle(
+                      fontWeight: _selectedDay == day
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+          child: _DateFilterChipLabel(
+            icon: Icons.today_rounded,
+            label: dayLabel,
+            isSelected: hasDay,
+          ),
+        ),
+        if (hasMonth || hasDay)
+          ActionChip(
+            key: const Key('transactions_clear_date_filter_button'),
+            avatar: const Icon(
+              Icons.close_rounded,
+              size: 15,
+              color: AppTheme.textSecondary,
+            ),
+            label: const Text(
+              'Limpar data',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            backgroundColor: AppTheme.subtleSurface,
+            side: const BorderSide(color: AppTheme.cardBorder),
+            shape: const StadiumBorder(),
+            onPressed: () {
+              setState(() {
+                _selectedYearMonthKey = null;
+                _selectedDay = null;
+              });
+            },
+          ),
+      ],
+    );
+  }
+
   Widget _buildCategoryFilterChips({
     required BuildContext context,
     required List<String> categories,
@@ -811,6 +1073,23 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 height: 1.4,
               ),
             ),
+            if (_selectedYearMonthKey != null ||
+                _selectedDay != null ||
+                _searchQuery.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {
+                    _searchQuery = '';
+                    _selectedYearMonthKey = null;
+                    _selectedDay = null;
+                  });
+                },
+                icon: const Icon(Icons.filter_alt_off_rounded, size: 16),
+                label: const Text('Limpar filtros'),
+              ),
+            ],
           ],
         ),
       );
@@ -887,41 +1166,50 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 const SizedBox(width: 12),
 
                 // Valor + Badge de status (Sincronizado verde / Pendente local laranja)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${isIncome ? "+" : "-"} ${currencyFormatter.format(tx.amount)}',
-                      style: TextStyle(
-                        color: isIncome
-                            ? AppTheme.emeraldDeep
-                            : AppTheme.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '${isIncome ? "+" : "-"} ${currencyFormatter.format(tx.amount)}',
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: isIncome
+                                    ? AppTheme.emeraldDeep
+                                    : AppTheme.textPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: tx.isSynced
+                                ? AppTheme.emeraldBadgeDecoration
+                                : AppTheme.warningBadgeDecoration,
+                            child: Text(
+                              tx.isSynced ? 'Sincronizado' : 'Pendente local',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: tx.isSynced
+                                    ? AppTheme.emeraldDeep
+                                    : AppTheme.warningDark,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: tx.isSynced
-                          ? AppTheme.emeraldBadgeDecoration
-                          : AppTheme.warningBadgeDecoration,
-                      child: Text(
-                        tx.isSynced ? 'Sincronizado' : 'Pendente local',
-                        style: TextStyle(
-                          color: tx.isSynced
-                              ? AppTheme.emeraldDeep
-                              : AppTheme.warningDark,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
 
                 if (tx.id != null) ...[
                   const SizedBox(width: 4),
@@ -1367,6 +1655,58 @@ class _CategoryChipPill extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DateFilterChipLabel extends StatelessWidget {
+  const _DateFilterChipLabel({
+    required this.icon,
+    required this.label,
+    required this.isSelected,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: isSelected ? AppTheme.navyDark : AppTheme.cardSurface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isSelected ? AppTheme.navyDark : AppTheme.cardBorder,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 15,
+            color: isSelected ? Colors.white : AppTheme.emeraldDeep,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : AppTheme.textSecondary,
+              fontSize: 12.5,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 16,
+            color: isSelected ? Colors.white70 : AppTheme.textMuted,
+          ),
+        ],
       ),
     );
   }

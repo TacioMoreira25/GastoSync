@@ -12,18 +12,73 @@ import '../../../transactions/domain/models/transaction.dart';
 import '../../../transactions/presentation/controllers/transactions_controller.dart';
 import '../../domain/models/credit_card_model.dart';
 
+class PlanningSubTabRequestNotifier extends Notifier<int?> {
+  @override
+  int? build() => null;
+
+  void openTab(int index) => state = index;
+
+  void clear() => state = null;
+}
+
+final planningSubTabRequestProvider =
+    NotifierProvider<PlanningSubTabRequestNotifier, int?>(
+  PlanningSubTabRequestNotifier.new,
+);
+
 class PlanningScreen extends ConsumerStatefulWidget {
-  const PlanningScreen({super.key});
+  const PlanningScreen({
+    super.key,
+    this.initialSubTab = 0,
+  });
+
+  final int initialSubTab;
 
   @override
   ConsumerState<PlanningScreen> createState() => _PlanningScreenState();
 }
 
 class _PlanningScreenState extends ConsumerState<PlanningScreen> {
-  int _selectedSubTab = 0; // 0 = Orçamentos & Metas, 1 = Saúde Financeira, 2 = Cartões & Limite
+  late int _selectedSubTab; // 0 = Orçamentos & Metas, 1 = Saúde Financeira, 2 = Cartões & Limite
+
+  @override
+  void initState() {
+    super.initState();
+    final pendingRequest = ref.read(planningSubTabRequestProvider);
+    _selectedSubTab = (pendingRequest ?? widget.initialSubTab).clamp(0, 2);
+    if (pendingRequest != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(planningSubTabRequestProvider.notifier).clear();
+        }
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PlanningScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialSubTab != oldWidget.initialSubTab) {
+      setState(() {
+        _selectedSubTab = widget.initialSubTab.clamp(0, 2);
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int?>(planningSubTabRequestProvider, (previous, next) {
+      if (next != null) {
+        if (mounted) {
+          setState(() => _selectedSubTab = next.clamp(0, 2));
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref.read(planningSubTabRequestProvider.notifier).clear();
+          }
+        });
+      }
+    });
     final budgetsAsync = ref.watch(watchBudgetsProvider);
     final deletedCategoriesAsync = ref.watch(watchDeletedBudgetCategoriesProvider);
     final transactionsAsync = ref.watch(watchTransactionsProvider);
@@ -193,7 +248,8 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
             ],
           ),
         ),
-        Container(
+        Flexible(
+          child: Container(
           key: const Key('planning_health_score_badge'),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: badgeDecoration,
@@ -206,22 +262,28 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 color: badgeColor,
               ),
               const SizedBox(width: 6),
-              Text(
-                'Score $score · $statusLabel',
-                style: TextStyle(
-                  color: badgeColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              Flexible(
+                child: Text(
+                  'Score $score · $statusLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: badgeColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
+        ),
         ),
       ],
     );
   }
 
   Widget _buildSubTabSelector() {
+    final compact = MediaQuery.sizeOf(context).width < 420;
     return Container(
       key: const Key('planning_subtab_selector'),
       padding: const EdgeInsets.all(4),
@@ -235,9 +297,10 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           Expanded(
             child: _SubTabButton(
               key: const Key('planning_tab_budgets'),
-              label: 'Orçamentos & Metas',
+              label: compact ? 'Metas' : 'Orçamentos & Metas',
               icon: Icons.pie_chart_outline_rounded,
               isSelected: _selectedSubTab == 0,
+              compact: compact,
               onTap: () => setState(() => _selectedSubTab = 0),
             ),
           ),
@@ -245,9 +308,10 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           Expanded(
             child: _SubTabButton(
               key: const Key('planning_tab_health'),
-              label: 'Saúde Financeira',
+              label: compact ? 'Saúde' : 'Saúde Financeira',
               icon: Icons.insights_rounded,
               isSelected: _selectedSubTab == 1,
+              compact: compact,
               onTap: () => setState(() => _selectedSubTab = 1),
             ),
           ),
@@ -255,9 +319,10 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           Expanded(
             child: _SubTabButton(
               key: const Key('planning_tab_credit_cards'),
-              label: 'Cartões & Limite',
+              label: compact ? 'Cartões' : 'Cartões & Limite',
               icon: Icons.credit_card_rounded,
               isSelected: _selectedSubTab == 2,
+              compact: compact,
               onTap: () => setState(() => _selectedSubTab = 2),
             ),
           ),
@@ -780,6 +845,8 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
       builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: AppTheme.cardSurface,
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
@@ -791,7 +858,8 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          content: Column(
+          content: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
@@ -815,6 +883,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 ),
               ),
             ],
+            ),
           ),
           actions: [
             if (isEditing)
@@ -936,7 +1005,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
             _buildSingleCreditCardSummaryCard(
               context: context,
               summary: summaries[i],
-              canDelete: summaries.length > 1 || !summaries[i].card.isPrimary,
+              canDelete: true,
               currencyFormatter: currencyFormatter,
             ),
             if (i < summaries.length - 1) const SizedBox(height: 16),
@@ -1067,14 +1136,24 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               if (canDelete && card.id != null && card.id! > 0)
                 IconButton(
                   key: Key('delete_credit_card_${card.id}'),
-                  tooltip: 'Remover cartão',
+                  tooltip: 'Apagar cartão',
                   icon: const Icon(
                     Icons.delete_outline_rounded,
                     size: 19,
-                    color: AppTheme.textMuted,
+                    color: AppTheme.errorColor,
                   ),
-                  onPressed: () {
-                    ref.read(appDatabaseProvider).deleteCreditCard(card.id!);
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    await ref
+                        .read(transactionsControllerProvider)
+                        .deleteCreditCard(card.id!);
+                    if (!mounted) return;
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Cartão "${card.name}" apagado.'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
                   },
                 ),
             ],
@@ -1085,29 +1164,39 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'TOTAL UTILIZADO NO MÊS (FIXAS + COMPRAS)',
-                    style: TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'TOTAL UTILIZADO NO MÊS (FIXAS + COMPRAS)',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${currencyFormatter.format(summary.totalUsedAmount)} (${summary.utilizationPercent.toStringAsFixed(1)}%)',
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
+                    const SizedBox(height: 3),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${currencyFormatter.format(summary.totalUsedAmount)} (${summary.utilizationPercent.toStringAsFixed(1)}%)',
+                        maxLines: 1,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Flexible(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -1390,6 +1479,38 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 ),
               ),
               actions: [
+                if (existing != null && existing.id != null && existing.id! > 0)
+                  TextButton.icon(
+                    key: Key('dialog_delete_credit_card_${existing.id}'),
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(this.context);
+                      await ref
+                          .read(transactionsControllerProvider)
+                          .deleteCreditCard(existing.id!);
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop();
+                      }
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text('Cartão "${existing.name}" apagado.'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 18,
+                      color: AppTheme.errorColor,
+                    ),
+                    label: const Text(
+                      'Apagar',
+                      style: TextStyle(
+                        color: AppTheme.errorColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancelar'),
@@ -1414,7 +1535,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                     if (name.isEmpty || limit == null || limit <= 0) return;
 
                     final userEmail = ref.read(userProfileProvider).email;
-                    await ref.read(appDatabaseProvider).upsertCreditCard(
+                    await ref.read(transactionsControllerProvider).upsertCreditCard(
                           id: existing?.id,
                           clientUuid: existing?.clientUuid,
                           userEmail: userEmail,
@@ -1459,12 +1580,14 @@ class _SubTabButton extends StatelessWidget {
     required this.icon,
     required this.isSelected,
     required this.onTap,
+    this.compact = false,
     super.key,
   });
 
   final String label;
   final IconData icon;
   final bool isSelected;
+  final bool compact;
   final VoidCallback onTap;
 
   @override
@@ -1476,29 +1599,34 @@ class _SubTabButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+          padding: EdgeInsets.symmetric(
+            vertical: 10,
+            horizontal: compact ? 4 : 12,
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 icon,
-                size: 17,
+                size: compact ? 15 : 17,
                 color:
                     isSelected ? AppTheme.emeraldDeep : AppTheme.textMuted,
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: compact ? 4 : 8),
               Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isSelected
-                        ? AppTheme.textPrimary
-                        : AppTheme.textSecondary,
-                    fontSize: 13,
-                    fontWeight:
-                        isSelected ? FontWeight.w700 : FontWeight.w500,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: isSelected
+                          ? AppTheme.textPrimary
+                          : AppTheme.textSecondary,
+                      fontSize: compact ? 12 : 13,
+                      fontWeight:
+                          isSelected ? FontWeight.w700 : FontWeight.w500,
+                    ),
                   ),
                 ),
               ),

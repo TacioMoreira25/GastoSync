@@ -45,19 +45,25 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
         userEmail: currentEmail,
       );
 
+      var pulledCount = 0;
       if (authState.token != null &&
           authState.token!.isNotEmpty &&
           authState.currentEmail != null) {
-        await syncService.pullFromCloud(
+        pulledCount = await syncService.pullFromCloud(
           jwtToken: authState.token,
           userEmail: authState.currentEmail!,
         );
       }
 
       if (!mounted) return;
+      final snackMessage = pulledCount > 0 && pushResult.syncedCount == 0
+          ? 'Sincronização em nuvem concluída: $pulledCount registro(s) atualizado(s).'
+          : (pulledCount > 0
+              ? '${pushResult.message} ($pulledCount atualizado(s) da nuvem)'
+              : pushResult.message);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(pushResult.message),
+          content: Text(snackMessage),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -241,40 +247,6 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                   spacing: 8,
                   runSpacing: 6,
                   children: [
-                    Container(
-                      key: const Key('more_active_local_account_badge'),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: AppTheme.emeraldBadgeDecoration,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: AppTheme.emeraldDeep,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Flexible(
-                            child: Text(
-                              'Conta local ativa',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: AppTheme.emeraldDeep,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                     Material(
                       color: Colors.transparent,
                       child: InkWell(
@@ -529,9 +501,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
         isOnline ? AppTheme.emeraldDeep : AppTheme.warningAmber;
     final badgeTextColor =
         isOnline ? AppTheme.emeraldDeep : AppTheme.warningDark;
-    final badgeText = isOnline
-        ? 'Groq Online • ${status.latencyMs}ms'
-        : 'IA Offline • Fallback Local Ativo';
+    final badgeText = isOnline ? 'IA Online' : 'IA Offline';
 
     return Container(
       key: const Key('more_ai_agent_quota_card'),
@@ -567,19 +537,11 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Status da IA & Limites da Cota (Groq)',
+                      'Status da IA',
                       style: TextStyle(
                         color: AppTheme.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Render Cloud · ${status.provider}',
-                      style: const TextStyle(
-                        color: AppTheme.textMuted,
-                        fontSize: 12,
                       ),
                     ),
                   ],
@@ -642,12 +604,19 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                   ),
                 ),
               ),
-              Text(
-                '${status.totalRequests} / ${status.dailyRequestLimit} req (${status.requestUsagePercent.toStringAsFixed(1)}%)',
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              const SizedBox(width: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '${status.totalRequests} / ${status.dailyRequestLimit} req (${status.requestUsagePercent.toStringAsFixed(1)}%)',
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -662,44 +631,6 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
               color: status.requestUsageRatio > 0.8
                   ? AppTheme.warningAmber
                   : AppTheme.emeraldPrimary,
-            ),
-          ),
-          const SizedBox(height: 14),
-
-          // Tokens Processados (TPM)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Flexible(
-                child: Text(
-                  'Tokens Processados (Teto 12.000 TPM)',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Text(
-                '${status.totalTokensUsed} / ${status.minuteTokenLimit} TPM',
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: status.tokenUsageRatio,
-              minHeight: 6,
-              backgroundColor: AppTheme.subtleSurface,
-              color: AppTheme.emeraldPrimary,
             ),
           ),
           const SizedBox(height: 16),
@@ -992,8 +923,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 key: const Key('more_setting_export_csv'),
                 icon: Icons.download_rounded,
                 title: 'Exportar Relatório CSV',
-                subtitle:
-                    'Exportar transações (${transactions.length}), boletos e cartões',
+                subtitle: 'Exportar transações, boletos e cartões',
                 onTap: () => _exportCsvReport(context, transactions),
               ),
               const Divider(color: AppTheme.cardBorder, height: 1),

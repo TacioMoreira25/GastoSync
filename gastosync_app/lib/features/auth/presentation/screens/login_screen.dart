@@ -243,8 +243,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: MediaQuery.sizeOf(context).width < 360 ? 12 : 20,
                     vertical: 32,
                   ),
                   child: ConstrainedBox(
@@ -270,8 +270,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget _buildCard() {
     final authState = ref.watch(authProvider);
 
+    final compact = MediaQuery.sizeOf(context).width < 360;
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 16 : 24,
+        26,
+        compact ? 16 : 24,
+        24,
+      ),
       decoration: BoxDecoration(
         color: AppTheme.cardSurface,
         borderRadius: BorderRadius.circular(24),

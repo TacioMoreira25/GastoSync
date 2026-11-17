@@ -216,6 +216,32 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
     }
   }
 
+  Widget _responsivePair({
+    required Widget first,
+    required Widget second,
+    int firstFlex = 1,
+    int secondFlex = 1,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 360) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [first, const SizedBox(height: 12), second],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: firstFlex, child: first),
+            const SizedBox(width: 10),
+            Expanded(flex: secondFlex, child: second),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final confidencePercent = (widget.prediction.confidence * 100).round();
@@ -412,12 +438,10 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                   const SizedBox(height: 12),
 
                   // Linha Valor + Data
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: TextFormField(
+                  _responsivePair(
+                    firstFlex: 3,
+                    secondFlex: 2,
+                    first: TextFormField(
                           key: const Key('hitl_amount_field'),
                           controller: _amountController,
                           cursorColor: AppTheme.emeraldPrimary,
@@ -446,12 +470,8 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                             }
                             return null;
                           },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: 2,
-                        child: InkWell(
+                    ),
+                    second: InkWell(
                           key: const Key('hitl_date_selector'),
                           onTap: _isSaving ? null : _selectDate,
                           borderRadius: BorderRadius.circular(12),
@@ -472,18 +492,13 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                   const SizedBox(height: 12),
 
                   // Linha Categoria + Forma de Pagamento
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
+                  _responsivePair(
+                    first: DropdownButtonFormField<String>(
                           key: Key('hitl_category_dropdown_${_selectedType.name}'),
                           isExpanded: true,
                           initialValue: _selectedType == TransactionType.income
@@ -514,11 +529,8 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                                     setState(() => _selectedCategory = value);
                                   }
                                 },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
+                    ),
+                    second: DropdownButtonFormField<String>(
                           key: const Key('hitl_payment_method_dropdown'),
                           isExpanded: true,
                           initialValue: _selectedPaymentMethod,
@@ -543,9 +555,7 @@ class _HumanInTheLoopModalState extends ConsumerState<HumanInTheLoopModal> {
                               setState(() => _selectedPaymentMethod = value);
                             }
                           },
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                   const SizedBox(height: 22),
 

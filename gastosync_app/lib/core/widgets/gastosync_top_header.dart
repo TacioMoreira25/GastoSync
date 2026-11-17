@@ -5,8 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/dashboard/domain/services/financial_health_engine.dart';
 import '../../features/dashboard/presentation/controllers/dashboard_controller.dart';
+import '../../features/planning/domain/models/credit_card_model.dart';
 import '../../features/settings/domain/models/user_profile.dart';
+import '../../features/transactions/domain/models/bill.dart';
+import '../../features/transactions/domain/models/transaction.dart';
+import '../../features/transactions/presentation/controllers/transactions_controller.dart';
 import '../constants/api_constants.dart';
+import '../database/app_database.dart';
 import '../network/dio_client.dart';
 import '../security/owasp_prompt_sanitizer.dart';
 import '../theme/app_theme.dart';
@@ -154,12 +159,17 @@ class GastoSyncMobileHeader extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const GastoSyncBrandLogo(
-                  iconSize: 22,
-                  fontSize: 13,
-                  textColor: Colors.white,
+                const Flexible(
+                  child: GastoSyncBrandLogo(
+                    iconSize: 22,
+                    fontSize: 13,
+                    textColor: Colors.white,
+                  ),
                 ),
-                ?trailingBadge,
+                if (trailingBadge != null) ...[
+                  const SizedBox(width: 8),
+                  Flexible(child: trailingBadge!),
+                ],
               ],
             ),
             const SizedBox(height: 12),
@@ -208,12 +218,12 @@ class GastoSyncMobileHeader extends ConsumerWidget {
   }
 }
 
-/// Barra superior clara para Web / Desktop (>= 800dp) com badge "Local sincronizado" e sino (FR-013)
+/// Barra superior clara para Web / Desktop (>= 800dp) com sino de notificações (FR-013)
 class GastoSyncWebTopBar extends ConsumerWidget {
   const GastoSyncWebTopBar({
     this.title,
     this.subtitle,
-    this.syncStatusLabel = 'Local sincronizado',
+    this.syncStatusLabel = '',
     this.onNotificationTap,
     this.onAvatarTap,
     super.key,
@@ -269,34 +279,36 @@ class GastoSyncWebTopBar extends ConsumerWidget {
               ],
             ),
           ),
-          Container(
-            key: const Key('web_top_bar_sync_badge'),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: AppTheme.emeraldBadgeDecoration,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: AppTheme.emeraldPrimary,
-                    shape: BoxShape.circle,
+          if (syncStatusLabel.trim().isNotEmpty) ...[
+            Container(
+              key: const Key('web_top_bar_sync_badge'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: AppTheme.emeraldBadgeDecoration,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.emeraldPrimary,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  syncStatusLabel,
-                  style: const TextStyle(
-                    color: AppTheme.emeraldDeep,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  const SizedBox(width: 6),
+                  Text(
+                    syncStatusLabel,
+                    style: const TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 14),
+            const SizedBox(width: 14),
+          ],
           _NotificationBellButton(
             iconColor: AppTheme.textSecondary,
             backgroundColor: AppTheme.subtleSurface,
@@ -738,8 +750,7 @@ class FiboChatState {
 
 class FiboChatNotifier extends Notifier<FiboChatState> {
   static const String _initialGreeting =
-      'Olá! Sou o assistente financeiro do GastoSync.\n\n'
-      'Posso ajudar você a acompanhar seus gastos do mês, planejar sua meta de poupança e avaliar sua reserva de emergência.';
+      'Olá! Sou o **Fibo**. Como posso ajudar nas suas finanças hoje?';
 
   static const String _clearedGreeting =
       'Conversa reiniciada. Como posso ajudar com suas finanças hoje?';
@@ -918,20 +929,60 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
       return;
     }
 
-    // Contexto financeiro do usuário local (Renda, Despesas, Poupança, Ritmo)
+    // Contexto financeiro completo do usuário local (Renda, Despesas, Boletos, Cartões, Poupança, Reserva e Score)
     final metrics = ref.read(financialMetricsStreamProvider).value;
     final profile = ref.read(userProfileProvider);
+    final transactions =
+        ref.read(watchTransactionsProvider).value ?? const <Transaction>[];
+    final bills = (ref.read(watchBillsProvider).value ?? const <Bill>[])
+        .where((b) => !b.isDeleted)
+        .toList();
+    final creditCards =
+        (ref.read(watchCreditCardsProvider).value ?? const <LocalCreditCard>[])
+            .map(CreditCard.fromLocal)
+            .toList();
+
     final effectiveIncome = (metrics != null && metrics.totalIncome > 0)
         ? metrics.totalIncome
         : profile.monthlyBaseIncome;
+    final pendingCashBills =
+        BillCalculations.calculateTotalPendingCashOutflow(bills);
+    final cardSummaries = CreditCardUsageSummary.calculateAll(
+      cards: creditCards,
+      transactions: transactions,
+      bills: bills,
+    );
+
     String? financialContext;
     if (metrics != null) {
+      final realisticProj = metrics.realisticMonthEndProjection(
+        pendingMonthCashBills: pendingCashBills,
+      );
+      final cardsInfo = cardSummaries.isEmpty
+          ? 'Sem cartões cadastrados'
+          : cardSummaries
+              .map(
+                (s) =>
+                    '${s.card.name}: usado R\$ ${s.totalUsedAmount.toStringAsFixed(2)} de R\$ ${s.card.limitAmount.toStringAsFixed(2)} (${s.utilizationPercent.toStringAsFixed(1)}%, teto saudável R\$ ${s.card.healthyMaxAmount.toStringAsFixed(2)})',
+              )
+              .join('; ');
+
       financialContext =
+          '[Contexto silencioso da conta de ${profile.firstName} — cite apenas os números que tiverem relação direta com a pergunta, sem listar indicadores fixos]\n'
           'Renda mensal: R\$ ${effectiveIncome.toStringAsFixed(2)} | '
-          'Despesas no mês: R\$ ${metrics.totalExpense.toStringAsFixed(2)} | '
+          'Despesas no mês: R\$ ${metrics.totalExpense.toStringAsFixed(2)} (Fixas: R\$ ${metrics.fixedExpenses.toStringAsFixed(2)}, Variáveis: R\$ ${metrics.variableExpenses.toStringAsFixed(2)}) | '
           'Saldo disponível: R\$ ${metrics.currentBalance.toStringAsFixed(2)} | '
-          'Meta de poupança: ${profile.savingsRateTarget.toStringAsFixed(0)}% | '
-          'Ritmo diário: R\$ ${metrics.dailyBurnRate.toStringAsFixed(2)}/dia';
+          'Boletos pendentes: R\$ ${pendingCashBills.toStringAsFixed(2)} | '
+          'Poupança atual: ${metrics.savingsRate.toStringAsFixed(1)}% (Meta: ${profile.savingsRateTarget.toStringAsFixed(0)}%) | '
+          'Comprometimento: ${metrics.incomeCommitment.toStringAsFixed(1)}% | '
+          'Reserva: ${metrics.formattedEmergencyMonths} | '
+          'Score: ${metrics.roundedScore}/100 (${metrics.scoreStatusLabel}) | '
+          'Ritmo diário: R\$ ${metrics.dailyBurnRate.toStringAsFixed(2)}/dia | '
+          'Projeção fim do mês: R\$ ${realisticProj.toStringAsFixed(2)} | '
+          'Cartões: $cardsInfo\n'
+          'ESTILO DE ATENDIMENTO: Seja ultra-curto, intuitivo e direto ao ponto (no máximo 2 frases curtas, até 35 palavras). '
+          'Passe apenas a informação essencial para responder à pergunta, sem textos longos e sem listar dados que não foram perguntados. '
+          'Só dê explicações longas se o usuário pedir explicitamente para detalhar.';
     }
 
     final remoteReply = await _postAgentChatWithFallback(
@@ -941,8 +992,14 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
     );
 
     final bool isOnline = remoteReply != null;
-    final String replyText =
-        remoteReply ?? _buildLocalFallbackReply(sanitizedText, metrics, profile);
+    final String replyText = remoteReply ??
+        _buildLocalFallbackReply(
+          sanitizedText,
+          metrics,
+          profile,
+          bills: bills,
+          cardSummaries: cardSummaries,
+        );
 
     state = state.copyWith(
       messages: [
@@ -972,63 +1029,126 @@ class FiboChatNotifier extends Notifier<FiboChatState> {
   static String _buildLocalFallbackReply(
     String prompt,
     FinancialMetrics? metrics,
-    UserProfile profile,
-  ) {
+    UserProfile profile, {
+    List<Bill> bills = const <Bill>[],
+    List<CreditCardUsageSummary> cardSummaries =
+        const <CreditCardUsageSummary>[],
+  }) {
     final lower = prompt.trim().toLowerCase();
 
-    if (metrics == null) {
-      return 'Olá, ${profile.firstName}! No momento o servidor de IA conversacional está fora do ar (operando em modo Offline).\n\n'
-          'Assim que você registrar suas receitas e despesas, posso calcular localmente seu saldo, ritmo de gastos e meta de poupança.';
+    if (RegExp(
+      r'^(oi+|ol[aá]+|opa|e\s*a[ií]|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|quem\s+[eé]\s+voc[eê]|o\s+que\s+voc[eê]\s+faz|como\s+funciona)\b',
+    ).hasMatch(lower)) {
+      return 'Olá, **${profile.firstName}**! Sou o **Fibo**. Qual dúvida financeira vamos resolver agora?';
     }
 
-    // 1. Pergunta sobre Burn Rate / Ritmo de gastos
+    if (metrics == null || !metrics.hasTransactions) {
+      return 'Você ainda não tem lançamentos registrados. Adicione sua renda ou despesa no botão **+** para eu analisar!';
+    }
+
+    final effectiveIncome = metrics.totalIncome > 0
+        ? metrics.totalIncome
+        : profile.monthlyBaseIncome;
+    final pendingCashBills =
+        BillCalculations.calculateTotalPendingCashOutflow(bills);
+    final realisticProj = metrics.realisticMonthEndProjection(
+      pendingMonthCashBills: pendingCashBills,
+    );
+    final now = DateTime.now();
+    final totalDays = DateTime(now.year, now.month + 1, 0).day;
+    final remainingDays = math.max(1, totalDays - now.day);
+    final ceiling =
+        effectiveIncome * (1.0 - (profile.savingsRateTarget / 100.0));
+    final remainingAllowance = math.max(
+      0.0,
+      ceiling - metrics.totalExpense - pendingCashBills,
+    );
+    final dailySuggested = remainingAllowance / remainingDays;
+
+    // 1. Pedido explícito de detalhes
+    if (lower.contains('complet') ||
+        lower.contains('detalh') ||
+        lower.contains('passo a passo')) {
+      return '• **Saldo:** ${_fmtBrl(metrics.currentBalance)} | **Score:** ${metrics.roundedScore}/100\n'
+          '• **Mês:** ${_fmtBrl(effectiveIncome)} (renda) vs. ${_fmtBrl(metrics.totalExpense)} (gastos)\n'
+          '• **Meta diária:** até **${_fmtBrl(dailySuggested)}/dia** nos próximos $remainingDays dias.';
+    }
+
+    // 2. Simulação de compra ("posso gastar X?")
+    final numberMatch = RegExp(r'(\d+(?:[.,]\d{1,2})?)').firstMatch(lower);
+    if ((lower.contains('gastar') ||
+            lower.contains('comprar') ||
+            lower.contains('compra') ||
+            lower.contains('cabe')) &&
+        numberMatch != null) {
+      final simulatedValue =
+          double.tryParse(numberMatch.group(1)!.replaceAll(',', '.')) ?? 0.0;
+      if (simulatedValue > 0 && simulatedValue != 20.0) {
+        final balanceAfter = metrics.currentBalance - simulatedValue;
+        final fits =
+            simulatedValue <= remainingAllowance && balanceAfter >= 0;
+        return fits
+            ? '✅ **Cabe no orçamento!** Seu saldo ficará em **${_fmtBrl(balanceAfter)}** (meta restante: **${_fmtBrl((remainingAllowance - simulatedValue) / remainingDays)}/dia**).'
+            : '⚠️ **Pesa no mês.** Sua folga atual é de **${_fmtBrl(remainingAllowance)}** e seu saldo cairia para **${_fmtBrl(balanceAfter)}**.';
+      }
+    }
+
+    // 3. Cartões
+    if (lower.contains('cartão') ||
+        lower.contains('cartao') ||
+        lower.contains('limite') ||
+        lower.contains('fatura')) {
+      if (cardSummaries.isEmpty) {
+        return 'Nenhum cartão cadastrado ainda. Adicione o seu em **Planejamento > Cartões** para monitorar o limite.';
+      }
+      final main = cardSummaries.first;
+      return '💳 **${main.card.name}:** usado **${_fmtBrl(main.totalUsedAmount)}** de **${_fmtBrl(main.card.limitAmount)}** (**${main.utilizationPercent.toStringAsFixed(0)}%**).\n'
+          '${main.isAboveHealthyCeiling ? "⚠️ Acima do teto saudável de ${main.card.targetMaxPercent.toStringAsFixed(0)}%." : "✅ Restam **${_fmtBrl(main.remainingHealthyMargin)}** dentro da faixa saudável."}';
+    }
+
+    // 4. Boletos
+    if (lower.contains('boleto') ||
+        lower.contains('vencimento') ||
+        lower.contains('conta')) {
+      final openBills = bills.where((b) => !b.isPaid).toList();
+      if (openBills.isEmpty) {
+        return '✅ **Nenhum boleto pendente** no momento.';
+      }
+      return '📄 Você tem **${openBills.length} boleto(s)** em aberto somando **${_fmtBrl(pendingCashBills)}** (saldo atual: **${_fmtBrl(metrics.currentBalance)}**).';
+    }
+
+    // 5. Burn Rate / Ritmo
     if (lower.contains('burn') || lower.contains('ritmo')) {
-      final effectiveIncome = metrics.totalIncome > 0
-          ? metrics.totalIncome
-          : profile.monthlyBaseIncome;
-      final ceiling =
-          effectiveIncome * (1.0 - (profile.savingsRateTarget / 100.0));
-      final withinCeiling = metrics.monthEndProjection <= ceiling;
-      return '📊 Ritmo de Gastos (Cálculo Local):\n'
-          '• Gasto médio diário: ${_fmtBrl(metrics.dailyBurnRate)}/dia\n'
-          '• Despesas acumuladas no mês: ${_fmtBrl(metrics.totalExpense)}\n'
-          '• Projeção até o fim do mês: ${_fmtBrl(metrics.monthEndProjection)}\n\n'
-          '${withinCeiling ? '✅ Seu ritmo atual está dentro do seu teto mensal de ${_fmtBrl(ceiling)}.' : '⚠️ Atenção: mantendo esse ritmo, os gastos podem superar seu teto de ${_fmtBrl(ceiling)}.'}';
+      final withinCeiling = ceiling > 0 && realisticProj <= ceiling;
+      return '${withinCeiling ? "✅ **Ritmo controlado:**" : "⚠️ **Ritmo elevado:**"} **${_fmtBrl(metrics.dailyBurnRate)}/dia** (projeção de **${_fmtBrl(realisticProj)}** no mês).\n'
+          '${effectiveIncome > 0 ? "💡 Gaste até **${_fmtBrl(dailySuggested)}/dia** nos próximos $remainingDays dias." : "💡 Defina sua Renda Base na aba Mais para ver seu limite diário."}';
     }
 
-    // 2. Pergunta sobre Poupança / Economia
-    if (lower.contains('poupan') || lower.contains('economia')) {
-      final targetPct = profile.savingsRateTarget;
-      final targetValue = metrics.totalIncome * (targetPct / 100.0);
+    // 6. Poupança
+    if (lower.contains('poupan') ||
+        lower.contains('economia') ||
+        lower.contains('economizar')) {
+      final targetPct =
+          profile.savingsRateTarget > 0 ? profile.savingsRateTarget : 20.0;
+      final targetValue = effectiveIncome * (targetPct / 100.0);
       final currentSaved =
-          math.max(0.0, metrics.totalIncome - metrics.totalExpense);
-      return '💰 Taxa de Poupança (Cálculo Local):\n'
-          '• Taxa atual: ${metrics.savingsRate.toStringAsFixed(1)}% da renda (meta: ${targetPct.toStringAsFixed(0)}%)\n'
-          '• Valor poupado no mês: ${_fmtBrl(currentSaved)}\n'
-          '• Meta ideal no mês: ${_fmtBrl(targetValue)}\n\n'
-          '${metrics.savingsRate >= targetPct ? '✅ Parabéns! Você já atingiu sua meta de poupança deste mês.' : '💡 Dica: reduza pequenos gastos variáveis para se aproximar da meta de ${targetPct.toStringAsFixed(0)}%.'}';
+          math.max(0.0, effectiveIncome - metrics.totalExpense);
+      final displaySavingsPct = math.max(0.0, metrics.savingsRate);
+
+      if (effectiveIncome <= 0) {
+        return 'Cadastre sua receita ou **Renda Base** na aba **Mais** para calcular sua meta de **${targetPct.toStringAsFixed(0)}%**.';
+      }
+      return '💰 **Poupança atual:** **${_fmtBrl(currentSaved)}** (**${displaySavingsPct.toStringAsFixed(0)}%** da renda · meta: **${_fmtBrl(targetValue)}**).\n'
+          '💡 Limite gastos variáveis a **${_fmtBrl(dailySuggested)}/dia** para bater a meta.';
     }
 
-    // 3. Pergunta sobre Reserva de Emergência
+    // 7. Reserva de Emergência
     if (lower.contains('reserva') || lower.contains('emerg')) {
-      final months = metrics.emergencyMonths;
-      final monthsText = months >= 24
-          ? 'mais de 24 meses (despesas atuais muito baixas em relação ao saldo)'
-          : '${months.toStringAsFixed(1)} meses do seu custo mensal';
-      return '🛡️ Reserva de Emergência (Cálculo Local):\n'
-          '• Saldo disponível atual: ${_fmtBrl(metrics.currentBalance)}\n'
-          '• Cobertura estimada: $monthsText\n\n'
-          '💡 O recomendado para segurança financeira é manter entre 6 e 12 meses do seu custo mensal guardado.';
+      return '🛡️ **Reserva atual:** **${_fmtBrl(metrics.currentBalance)}**, cobrindo **${metrics.formattedEmergencyMonths}** dos seus custos (meta ideal: **6 meses**).';
     }
 
-    // 4. Mensagem padrão
-    return 'Olá, ${profile.firstName}! No momento o servidor de IA conversacional está fora do ar, por isso não consigo responder conversas livres agora.\n\n'
-        'Mesmo offline, seu painel local está atualizado:\n'
-        '• Saldo disponível: ${_fmtBrl(metrics.currentBalance)}\n'
-        '• Receitas do mês: ${_fmtBrl(metrics.totalIncome)}\n'
-        '• Despesas do mês: ${_fmtBrl(metrics.totalExpense)}\n'
-        '• Ritmo diário: ${_fmtBrl(metrics.dailyBurnRate)}/dia\n\n'
-        'Você pode tocar nas sugestões rápidas ou perguntar sobre seu "Burn Rate", "Poupança" ou "Reserva" para consultar seus dados locais!';
+    // 8. Resumo curto padrão
+    return '📊 **Saldo:** **${_fmtBrl(metrics.currentBalance)}** | **Gastos no mês:** **${_fmtBrl(metrics.totalExpense)}** (${effectiveIncome > 0 ? "limite seguro: **${_fmtBrl(dailySuggested)}/dia**" : "Score **${metrics.roundedScore}/100**"}).';
   }
 }
 
@@ -1129,6 +1249,35 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
           prompts: _quickPrompts,
           enabled: !isSending,
           onSelected: _sendPrompt,
+        ),
+      ] else if (!isSending &&
+          messages.isNotEmpty &&
+          !messages.last.isUser) ...[
+        Padding(
+          padding: const EdgeInsets.only(left: 36, top: 10),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _FollowUpChip(
+                label: 'Quero uma análise mais completa',
+                icon: Icons.auto_awesome_outlined,
+                onTap: () => _sendPrompt(
+                  'Me dê uma análise mais completa e passo a passo sobre isso.',
+                ),
+              ),
+              _FollowUpChip(
+                label: 'Posso gastar R\$ 100 hoje?',
+                icon: Icons.shopping_bag_outlined,
+                onTap: () => _sendPrompt('Posso gastar R\$ 100 hoje?'),
+              ),
+              _FollowUpChip(
+                label: 'Analisar meus cartões',
+                icon: Icons.credit_card_rounded,
+                onTap: () => _sendPrompt('Como está o uso dos meus cartões?'),
+              ),
+            ],
+          ),
         ),
       ],
       if (isSending) ...[
@@ -1471,7 +1620,7 @@ class _AiAvatar extends StatelessWidget {
   }
 }
 
-/// Bolha de mensagem (usuário à direita em verde, IA à esquerda em branco)
+/// Bolha de mensagem (usuário à direita em verde ajustada ao texto, IA à esquerda em card elegante)
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.message});
 
@@ -1483,71 +1632,543 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
-    final maxWidth = math.min(360.0, MediaQuery.sizeOf(context).width * 0.74);
-
-    final bubble = Container(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 7),
-      decoration: BoxDecoration(
-        color: isUser ? null : AppTheme.cardSurface,
-        gradient: isUser
-            ? const LinearGradient(
-                colors: [AppTheme.emeraldPrimary, AppTheme.emeraldDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : null,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(18),
-          topRight: const Radius.circular(18),
-          bottomLeft: Radius.circular(isUser ? 18 : 4),
-          bottomRight: Radius.circular(isUser ? 4 : 18),
-        ),
-        border: isUser ? null : Border.all(color: AppTheme.cardBorder),
-        boxShadow: const [
-          BoxShadow(
-            color: _ChatColors.bubbleShadow,
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            message.text,
-            style: TextStyle(
-              color: isUser ? Colors.white : AppTheme.textPrimary,
-              fontSize: 14,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _formatTime(message.timestamp),
-            style: TextStyle(
-              color: isUser
-                  ? Colors.white.withValues(alpha: 0.75)
-                  : AppTheme.textMuted,
-              fontSize: 10.5,
-            ),
-          ),
-        ],
-      ),
-    );
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxWidth = screenWidth >= 600
+        ? 440.0
+        : math.min(380.0, screenWidth * 0.82);
 
     if (isUser) {
-      return Align(alignment: Alignment.centerRight, child: bubble);
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [AppTheme.emeraldPrimary, AppTheme.emeraldDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(18),
+              topRight: Radius.circular(18),
+              bottomLeft: Radius.circular(18),
+              bottomRight: Radius.circular(4),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _ChatColors.bubbleShadow,
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                message.text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.8,
+                  fontWeight: FontWeight.w500,
+                  height: 1.42,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formatTime(message.timestamp),
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _AiAvatar(),
+        const Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: _AiAvatar(),
+        ),
         const SizedBox(width: 8),
-        Flexible(child: bubble),
+        Flexible(
+          child: Container(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            padding: const EdgeInsets.fromLTRB(15, 13, 15, 10),
+            decoration: BoxDecoration(
+              color: AppTheme.cardSurface,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(6),
+                topRight: Radius.circular(18),
+                bottomLeft: Radius.circular(18),
+                bottomRight: Radius.circular(18),
+              ),
+              border: Border.all(color: AppTheme.cardBorder),
+              boxShadow: const [
+                BoxShadow(
+                  color: _ChatColors.bubbleShadow,
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _AiStructuredMessageView(rawText: message.text),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 11,
+                      color: AppTheme.emeraldPrimary.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Fibo · ${_formatTime(message.timestamp)}',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Renderizador estruturado para respostas da IA:
+/// - Quebra automaticamente listas inline (`1) ... 2) ...` ou `1. ... 2. ...`) em itens visuais separados;
+/// - Aplica tipografia leve e legível no texto corrido e destaca automaticamente valores `R$` e `%`;
+/// - Exibe cards numerados e marcadores esmeralda limpos no Mobile e no Web.
+class _AiStructuredMessageView extends StatefulWidget {
+  const _AiStructuredMessageView({required this.rawText});
+
+  final String rawText;
+
+  @override
+  State<_AiStructuredMessageView> createState() =>
+      _AiStructuredMessageViewState();
+}
+
+class _AiStructuredMessageViewState extends State<_AiStructuredMessageView> {
+  bool _isExpanded = false;
+
+  /// Normaliza textos corridos enviados pela IA (ex: "Passo a passo: 1) ... 2) ...")
+  /// em linhas estruturadas para apresentação visual limpa.
+  static String _normalizeStructure(String raw) {
+    var text = raw.replaceAll('\r\n', '\n').trim();
+
+    // Separa prefixos como "Passo a passo:" ou "Resumo:" em sua própria linha de título
+    text = text.replaceAllMapped(
+      RegExp(
+        r'^(passo a passo|resumo|an[aá]lise|como funciona|detalhamento)\s*:\s*',
+        caseSensitive: false,
+      ),
+      (m) => '### ${m[1]![0].toUpperCase()}${m[1]!.substring(1)}\n',
+    );
+
+    // Quebra itens numerados inline "1) ... 2) ..." ou "1. ... 2. ..." em linhas próprias
+    text = text.replaceAllMapped(
+      RegExp(r'(?:(?<=\s)|^)(\d{1,2})\)\s+'),
+      (m) => '\n${m[1]}. ',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'(?<=[.;!])\s+(\d{1,2})\.\s+'),
+      (m) => '\n${m[1]}. ',
+    );
+
+    // Quebra bullets inline " • " em linhas próprias
+    text = text.replaceAll(RegExp(r'\s+•\s+'), '\n• ');
+
+    // Garante espaço após "R$" quando vier colado ("R$0,00" -> "R$ 0,00")
+    text = text.replaceAllMapped(
+      RegExp(r'R\$(\d)'),
+      (m) => 'R\$ ${m[1]}',
+    );
+
+    return text.trim();
+  }
+
+  ({String summary, String? details}) _splitSummaryAndDetails(String text) {
+    final normalized = _normalizeStructure(text);
+
+    // Divisor explícito ---DETALHES---
+    final separatorRegex = RegExp(
+      r'\n*\s*---+\s*DETALHES\s*---+\s*\n*',
+      caseSensitive: false,
+    );
+    if (separatorRegex.hasMatch(normalized)) {
+      final parts = normalized.split(separatorRegex);
+      final summary = parts.first.trim();
+      final details = parts.skip(1).join('\n\n').trim();
+      return (
+        summary: summary.isNotEmpty ? summary : normalized,
+        details: details.isNotEmpty ? details : null,
+      );
+    }
+
+    return (summary: normalized, details: null);
+  }
+
+  /// Destaca `**negrito**`, valores monetários (`R$ 1.500,00`) e percentuais (`20%`)
+  /// mantendo o restante do texto em peso regular suave e confortável de ler.
+  List<InlineSpan> _parseRichSpans(
+    String line, {
+    Color baseColor = const Color(0xFF334155),
+    double fontSize = 13.6,
+    FontWeight defaultWeight = FontWeight.w400,
+  }) {
+    final tokenRegex = RegExp(
+      r'\*\*(.+?)\*\*|(R\$\s*\d+(?:[.,]\d+)*(?:/dia|/m[eê]s)?)|(\b\d+(?:[.,]\d+)?%)',
+    );
+    final spans = <InlineSpan>[];
+    int currentIndex = 0;
+
+    for (final match in tokenRegex.allMatches(line)) {
+      if (match.start > currentIndex) {
+        spans.add(
+          TextSpan(
+            text: line.substring(currentIndex, match.start),
+            style: TextStyle(
+              color: baseColor,
+              fontSize: fontSize,
+              fontWeight: defaultWeight,
+              height: 1.48,
+            ),
+          ),
+        );
+      }
+
+      if (match.group(1) != null) {
+        // **Negrito explícito**
+        spans.add(
+          TextSpan(
+            text: match.group(1),
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              height: 1.48,
+            ),
+          ),
+        );
+      } else if (match.group(2) != null) {
+        // Valor monetário R$ ...
+        spans.add(
+          TextSpan(
+            text: match.group(2),
+            style: TextStyle(
+              color: AppTheme.emeraldDeep,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              height: 1.48,
+            ),
+          ),
+        );
+      } else if (match.group(3) != null) {
+        // Percentual ...%
+        spans.add(
+          TextSpan(
+            text: match.group(3),
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              height: 1.48,
+            ),
+          ),
+        );
+      }
+      currentIndex = match.end;
+    }
+
+    if (currentIndex < line.length) {
+      spans.add(
+        TextSpan(
+          text: line.substring(currentIndex),
+          style: TextStyle(
+            color: baseColor,
+            fontSize: fontSize,
+            fontWeight: defaultWeight,
+            height: 1.48,
+          ),
+        ),
+      );
+    }
+
+    return spans;
+  }
+
+  Widget _buildFormattedSection(String content) {
+    final rawLines = content.split('\n');
+    final widgets = <Widget>[];
+
+    for (var i = 0; i < rawLines.length; i++) {
+      final line = rawLines[i].trim();
+      if (line.isEmpty) continue;
+
+      // 1. Cabeçalhos (### Título)
+      if (line.startsWith('#')) {
+        final cleanHeader = line.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+        widgets.add(
+          Padding(
+            padding: EdgeInsets.only(top: widgets.isEmpty ? 0 : 8, bottom: 6),
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 14,
+                  margin: const EdgeInsets.only(right: 7),
+                  decoration: BoxDecoration(
+                    color: AppTheme.emeraldPrimary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    cleanHeader.replaceAll('**', ''),
+                    style: const TextStyle(
+                      color: AppTheme.navyDark,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        continue;
+      }
+
+      // 2. Callout de Ação Recomendada / Alerta (💡, ⚠️)
+      if (line.startsWith('💡') || line.startsWith('⚠️')) {
+        final isWarning = line.startsWith('⚠️');
+        widgets.add(
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 6, bottom: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            decoration: BoxDecoration(
+              color: isWarning
+                  ? AppTheme.warningBadgeBg.withValues(alpha: 0.65)
+                  : AppTheme.emeraldSoftBg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isWarning
+                    ? AppTheme.warningBorder
+                    : AppTheme.emeraldBadgeBg,
+              ),
+            ),
+            child: RichText(
+              text: TextSpan(
+                children: _parseRichSpans(
+                  line,
+                  baseColor:
+                      isWarning ? AppTheme.warningDark : AppTheme.emeraldDeep,
+                  fontSize: 13,
+                  defaultWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        );
+        continue;
+      }
+
+      // 3. Item de lista com bullet (•, -, *)
+      if (line.startsWith('•') ||
+          line.startsWith('- ') ||
+          line.startsWith('* ')) {
+        final cleanBullet =
+            line.replaceFirst(RegExp(r'^[•\-*]\s*'), '').trim();
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  margin: const EdgeInsets.only(top: 7, right: 9),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.emeraldPrimary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      children: _parseRichSpans(
+                        cleanBullet,
+                        fontSize: 13.4,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        continue;
+      }
+
+      // 4. Item numerado (1., 2., 3.) renderizado como mini-card organizado
+      final numMatch = RegExp(r'^(\d+)\.\s+(.+)$').firstMatch(line);
+      if (numMatch != null) {
+        final stepNum = numMatch.group(1)!;
+        final stepText = numMatch.group(2)!;
+        widgets.add(
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.subtleSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  margin: const EdgeInsets.only(right: 9),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppTheme.emeraldSoftBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    stepNum,
+                    style: const TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      children: _parseRichSpans(
+                        stepText,
+                        fontSize: 13.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        continue;
+      }
+
+      // 5. Parágrafo padrão (peso regular suave, destacando apenas valores e negritos)
+      widgets.add(
+        Padding(
+          padding: EdgeInsets.only(bottom: i < rawLines.length - 1 ? 6 : 0),
+          child: RichText(
+            text: TextSpan(
+              children: _parseRichSpans(
+                line,
+                fontSize: 13.8,
+                defaultWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: widgets,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = _splitSummaryAndDetails(widget.rawText);
+    final hasDetails = parts.details != null && parts.details!.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildFormattedSection(parts.summary),
+        if (hasDetails) ...[
+          const SizedBox(height: 8),
+          if (_isExpanded) ...[
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.subtleSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: _buildFormattedSection(parts.details!),
+            ),
+          ],
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.subtleSurface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isExpanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    size: 16,
+                    color: AppTheme.emeraldDeep,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isExpanded ? 'Mostrar menos' : 'Ver mais',
+                    style: const TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1711,6 +2332,57 @@ class _SuggestionList extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _FollowUpChip extends StatelessWidget {
+  const _FollowUpChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.cardSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(999),
+        side: const BorderSide(color: AppTheme.emeraldBadgeBg),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        hoverColor: AppTheme.emeraldSoftBg,
+        splashColor: AppTheme.emeraldBadgeBg,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: AppTheme.emeraldDeep),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.emeraldDeep,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

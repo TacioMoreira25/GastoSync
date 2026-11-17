@@ -433,6 +433,115 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 		syncedBudgetCount++
 	}
 
+	syncedCardCount := 0
+	for _, card := range req.CreditCards {
+		clientUUID := normalizeUUIDString(card.ClientUUID)
+		name := strings.TrimSpace(card.Name)
+
+		if card.DeletedAt != nil && (name == "" || card.LimitAmount <= 0) {
+			if clientUUID != "" {
+				const softDeleteCardByUUID = `
+					UPDATE credit_cards
+					SET deleted_at = $3, updated_at = NOW()
+					WHERE user_id = $1 AND client_uuid = $2::uuid
+				`
+				if _, err := tx.Exec(ctx, softDeleteCardByUUID, userID, clientUUID, *card.DeletedAt); err != nil {
+					return response.InternalError(
+						c,
+						"CREDIT_CARD_SOFT_DELETE_FAILED",
+						"Erro ao propagar exclusão do cartão na nuvem.",
+					)
+				}
+				syncedCardCount++
+			}
+			continue
+		}
+
+		if name == "" || card.LimitAmount <= 0 {
+			continue
+		}
+
+		targetMin := card.TargetMinPercent
+		if targetMin <= 0 || targetMin > 100 {
+			targetMin = 50.0
+		}
+		targetMax := card.TargetMaxPercent
+		if targetMax <= targetMin || targetMax > 100 {
+			targetMax = 80.0
+		}
+		dueDay := card.DueDay
+		if dueDay < 1 || dueDay > 31 {
+			dueDay = 10
+		}
+
+		if clientUUID != "" {
+			const upsertCardByClientUUID = `
+				INSERT INTO credit_cards (
+					user_id, client_uuid, name, limit_amount,
+					target_min_percent, target_max_percent, due_day,
+					is_primary, updated_at, deleted_at
+				)
+				VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, NOW(), $9)
+				ON CONFLICT (user_id, client_uuid)
+				DO UPDATE SET
+					name = EXCLUDED.name,
+					limit_amount = EXCLUDED.limit_amount,
+					target_min_percent = EXCLUDED.target_min_percent,
+					target_max_percent = EXCLUDED.target_max_percent,
+					due_day = EXCLUDED.due_day,
+					is_primary = EXCLUDED.is_primary,
+					updated_at = NOW(),
+					deleted_at = EXCLUDED.deleted_at
+			`
+			if _, err := tx.Exec(
+				ctx,
+				upsertCardByClientUUID,
+				userID,
+				clientUUID,
+				name,
+				card.LimitAmount,
+				targetMin,
+				targetMax,
+				dueDay,
+				card.IsPrimary,
+				card.DeletedAt,
+			); err != nil {
+				return response.InternalError(
+					c,
+					"CREDIT_CARD_UPSERT_FAILED",
+					"Erro ao sincronizar um dos cartões na nuvem. Seus dados continuam salvos localmente.",
+				)
+			}
+		} else {
+			const insertCard = `
+				INSERT INTO credit_cards (
+					user_id, name, limit_amount, target_min_percent,
+					target_max_percent, due_day, is_primary, updated_at, deleted_at
+				)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+			`
+			if _, err := tx.Exec(
+				ctx,
+				insertCard,
+				userID,
+				name,
+				card.LimitAmount,
+				targetMin,
+				targetMax,
+				dueDay,
+				card.IsPrimary,
+				card.DeletedAt,
+			); err != nil {
+				return response.InternalError(
+					c,
+					"CREDIT_CARD_INSERT_FAILED",
+					"Erro ao registrar cartão na nuvem. Seus dados continuam salvos localmente.",
+				)
+			}
+		}
+		syncedCardCount++
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return response.InternalError(
 			c,
@@ -444,6 +553,7 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(models.SyncPushResponse{
 		SyncedTransactions: syncedTxCount,
 		SyncedBills:        syncedBillCount,
+		SyncedCreditCards:  syncedCardCount,
 		SyncedBudgets:      syncedBudgetCount,
 		SyncedAt:           time.Now().UTC(),
 	})
@@ -587,9 +697,52 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 		budgets = append(budgets, b)
 	}
 
+	const cardQuery = `
+		SELECT id, client_uuid::text, name, limit_amount::DOUBLE PRECISION,
+		       target_min_percent::DOUBLE PRECISION, target_max_percent::DOUBLE PRECISION,
+		       due_day, is_primary, updated_at, deleted_at
+		FROM credit_cards
+		WHERE user_id = $1 AND deleted_at IS NULL
+		ORDER BY is_primary DESC, id ASC
+	`
+	cardRows, err := h.pool.Query(ctx, cardQuery, userID)
+	if err != nil {
+		return response.InternalError(
+			c,
+			"CREDIT_CARD_PULL_QUERY_FAILED",
+			"Não foi possível buscar seus cartões de crédito na nuvem no momento.",
+		)
+	}
+	defer cardRows.Close()
+
+	creditCards := make([]models.CreditCardDTO, 0)
+	for cardRows.Next() {
+		var card models.CreditCardDTO
+		if err := cardRows.Scan(
+			&card.ID,
+			&card.ClientUUID,
+			&card.Name,
+			&card.LimitAmount,
+			&card.TargetMinPercent,
+			&card.TargetMaxPercent,
+			&card.DueDay,
+			&card.IsPrimary,
+			&card.UpdatedAt,
+			&card.DeletedAt,
+		); err != nil {
+			return response.InternalError(
+				c,
+				"CREDIT_CARD_SCAN_FAILED",
+				"Erro ao processar sua lista de cartões recebida da nuvem.",
+			)
+		}
+		creditCards = append(creditCards, card)
+	}
+
 	return c.Status(fiber.StatusOK).JSON(models.SyncPullResponse{
 		Transactions: transactions,
 		Bills:        bills,
+		CreditCards:  creditCards,
 		Budgets:      budgets,
 		SyncedAt:     time.Now().UTC(),
 	})

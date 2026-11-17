@@ -81,7 +81,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Marcos Pereira'), findsOneWidget);
-      expect(find.text('Conta local ativa'), findsOneWidget);
+      expect(find.byKey(const Key('more_email_verification_badge')), findsOneWidget);
       expect(find.text('Status Offline-First (SQLite Local)'), findsOneWidget);
       expect(find.text('Sincronizar agora'), findsOneWidget);
       expect(find.text('Configurações financeiras'), findsOneWidget);

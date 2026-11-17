@@ -36,6 +36,8 @@ class FinancialMetrics {
     this.variableExpenses = 0.0,
     this.hasTransactions = true,
     this.usedBaseIncomeFallback = false,
+    this.emergencyReferenceCost = 0.0,
+    this.emergencyReferenceSource = 'custo projetado',
     double? netWorth,
   }) : netWorth = netWorth ?? currentBalance;
 
@@ -62,8 +64,10 @@ class FinancialMetrics {
   /// 7. Comprometimento de Renda (% — referência saudável < 30%)
   final double incomeCommitment;
 
-  /// 8. Reserva de Emergência (em meses)
+  /// 8. Reserva de Emergência (em meses) e seu custo de referência
   final double emergencyMonths;
+  final double emergencyReferenceCost;
+  final String emergencyReferenceSource;
 
   /// 9. Patrimônio Líquido (Saldo acumulado + ativos/investimentos)
   final double netWorth;
@@ -96,6 +100,38 @@ class FinancialMetrics {
   /// Indica se o comprometimento de renda respeita a diretriz saudável (< 30%)
   bool get isCommitmentWithin30Percent => incomeCommitment <= 30.0;
 
+  /// Rótulo amigável para a Reserva de Emergência (padrão brasileiro com vírgula)
+  String get formattedEmergencyMonths {
+    if (!hasTransactions || currentBalance <= 0 || emergencyMonths <= 0) {
+      return '0,0 meses';
+    }
+    if (emergencyMonths > 24.0) return '24+ meses';
+    return '${emergencyMonths.toStringAsFixed(1).replaceAll('.', ',')} meses';
+  }
+
+  /// Badge de status da Reserva de Emergência para o Dashboard
+  String get emergencyStatusBadgeLabel {
+    if (!hasTransactions || emergencyMonths <= 0) return 'Sem cobertura';
+    if (emergencyMonths >= 6.0) return 'Meta 6 meses';
+    return 'Em construção';
+  }
+
+  /// Projeção inteligente de fim de mês separando gastos fixos (1x/mês) + boletos pendentes do mês
+  /// da extrapolação diária apenas dos gastos variáveis.
+  double realisticMonthEndProjection({
+    double pendingMonthCashBills = 0.0,
+    DateTime? referenceDate,
+  }) {
+    final ref = referenceDate ?? calculatedAt;
+    final elapsedDays = math.max(1, ref.day);
+    final totalDaysInMonth = DateTime(ref.year, ref.month + 1, 0).day;
+    final remainingDays = math.max(0, totalDaysInMonth - elapsedDays);
+    final variableDailyRate = variableExpenses / elapsedDays;
+    final projectedVariable =
+        variableExpenses + (variableDailyRate * remainingDays);
+    return fixedExpenses + projectedVariable + math.max(0.0, pendingMonthCashBills);
+  }
+
   LocalMetricsCompanion toCompanion({String? userEmail}) {
     final normalizedEmail = (userEmail != null && userEmail.trim().isNotEmpty)
         ? userEmail.trim().toLowerCase()
@@ -115,6 +151,70 @@ class FinancialMetrics {
       monthEndProjection: monthEndProjection,
       healthScore: healthScore,
     );
+  }
+}
+
+/// Calculadora adaptativa em 3 camadas para a Reserva de Emergência:
+/// 1. Média real das despesas mensais fechadas dos últimos 3 meses (`averagePastThreeMonths`);
+/// 2. Projeção de fechamento do mês corrente via Burn Rate (`projectedExpenses`);
+/// 3. Piso estrutural de gastos fixos (`fixedExpenses`).
+class EmergencyFundCalculator {
+  const EmergencyFundCalculator._();
+
+  /// Calcula os meses de cobertura da reserva de emergência
+  static double calculateEmergencyMonths({
+    required double netWorth,
+    required double currentExpenses,
+    required double projectedExpenses,
+    required double fixedExpenses,
+    double? averagePastThreeMonths,
+  }) {
+    if (netWorth <= 0) return 0.0;
+
+    // 1. Prioridade: Média histórica consolidada (se houver histórico fechado)
+    if (averagePastThreeMonths != null && averagePastThreeMonths > 0) {
+      return netWorth / averagePastThreeMonths;
+    }
+
+    // 2. Fallback Preditivo: Projeção de fechamento do mês via Burn Rate
+    if (projectedExpenses > 0) {
+      return netWorth / projectedExpenses;
+    }
+
+    // 3. Fallback Mínimo: Gastos fixos estruturais
+    if (fixedExpenses > 0) {
+      return netWorth / fixedExpenses;
+    }
+
+    // Evita divisão por zero caso o usuário não tenha cadastrado despesas
+    return 0.0;
+  }
+
+  /// Identifica o custo mensal de referência utilizado na cascata e o rótulo explicativo para a UI
+  static ({double referenceCost, String sourceLabel}) resolveReferenceCost({
+    required double projectedExpenses,
+    required double fixedExpenses,
+    double? averagePastThreeMonths,
+  }) {
+    if (averagePastThreeMonths != null && averagePastThreeMonths > 0) {
+      return (
+        referenceCost: averagePastThreeMonths,
+        sourceLabel: 'média histórica',
+      );
+    }
+    if (projectedExpenses > 0) {
+      return (
+        referenceCost: projectedExpenses,
+        sourceLabel: 'custo projetado',
+      );
+    }
+    if (fixedExpenses > 0) {
+      return (
+        referenceCost: fixedExpenses,
+        sourceLabel: 'gastos fixos',
+      );
+    }
+    return (referenceCost: 0.0, sourceLabel: 'sem despesas');
   }
 }
 
@@ -238,17 +338,6 @@ class FinancialHealthEngine {
     final double variableExpenses =
         math.max(0.0, totalExpense - fixedExpenses);
 
-    // 8. Reserva de Emergência em Meses = Saldo Líquido Acumulado / Média Mensal de Despesas (últimos 3 meses)
-    final avgExpense3Months = _calculateAverageMonthlyExpenseLast3Months(
-      transactions,
-      now,
-      currentMonthExpenseFallback: totalExpense,
-    );
-    final double emergencyMonths =
-        (avgExpense3Months > 0 && currentBalance > 0)
-            ? (currentBalance / avgExpense3Months)
-            : 0.0;
-
     // 7. Comprometimento da Renda (%) = Despesa Mensal / Renda Efetiva * 100 (Referência < 30%)
     final double incomeCommitment = !hasTransactions
         ? 0.0
@@ -270,6 +359,28 @@ class FinancialHealthEngine {
     final totalDaysInMonth = DateTime(currentYear, currentMonth + 1, 0).day;
     final remainingDays = math.max(0, totalDaysInMonth - elapsedDays);
     final monthEndProjection = totalExpense + (dailyBurnRate * remainingDays);
+
+    // 8. Reserva de Emergência em Meses via EmergencyFundCalculator (cascata de 3 níveis):
+    // Nível 1: Média real dos últimos 3 meses fechados (i = 1..3)
+    // Nível 2: Projeção de fechamento do mês corrente via Burn Rate (monthEndProjection)
+    // Nível 3: Piso estrutural de gastos fixos (fixedExpenses)
+    final closedAvg3Months = _calculateClosedAverageMonthlyExpenseLast3Months(
+      transactions,
+      now,
+    );
+    final resolvedRef = EmergencyFundCalculator.resolveReferenceCost(
+      projectedExpenses: monthEndProjection,
+      fixedExpenses: fixedExpenses,
+      averagePastThreeMonths: closedAvg3Months,
+    );
+    final double emergencyMonths =
+        EmergencyFundCalculator.calculateEmergencyMonths(
+      netWorth: netWorth,
+      currentExpenses: totalExpense,
+      projectedExpenses: monthEndProjection,
+      fixedExpenses: fixedExpenses,
+      averagePastThreeMonths: closedAvg3Months,
+    );
 
     // Score de Saúde Financeira (0-100):
     // Score = (Poupança * 0.3) + (min(Reserva em Meses / 6, 1) * 35) + ((1 - min(ComprometimentoRatio, 1)) * 35)
@@ -295,6 +406,8 @@ class FinancialHealthEngine {
       fixedExpenses: fixedExpenses,
       variableExpenses: variableExpenses,
       emergencyMonths: emergencyMonths,
+      emergencyReferenceCost: resolvedRef.referenceCost,
+      emergencyReferenceSource: resolvedRef.sourceLabel,
       incomeCommitment: incomeCommitment,
       netWorth: netWorth,
       dailyBurnRate: dailyBurnRate,
@@ -306,20 +419,22 @@ class FinancialHealthEngine {
     );
   }
 
-  static double _calculateAverageMonthlyExpenseLast3Months(
+  /// Calcula a média mensal de despesas considerando APENAS os últimos 3 meses fechados
+  /// (i = 1, 2, 3), nunca misturando o mês corrente parcial em aberto.
+  static double? _calculateClosedAverageMonthlyExpenseLast3Months(
     List<Transaction> transactions,
-    DateTime now, {
-    required double currentMonthExpenseFallback,
-  }) {
+    DateTime now,
+  ) {
     double sumExpenses = 0.0;
     int monthsWithData = 0;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 1; i <= 3; i++) {
       final targetDate = DateTime(now.year, now.month - i, 1);
       final monthExpense = transactions
           .where(
             (t) =>
                 t.isExpense &&
+                !t.isDeleted &&
                 t.date.year == targetDate.year &&
                 t.date.month == targetDate.month,
           )
@@ -331,7 +446,7 @@ class FinancialHealthEngine {
     }
 
     if (monthsWithData == 0) {
-      return currentMonthExpenseFallback;
+      return null;
     }
     return sumExpenses / monthsWithData;
   }
