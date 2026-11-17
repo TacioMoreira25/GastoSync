@@ -17,7 +17,7 @@
 ## Acesso em Produção e Download
 
 - **Versão Web (Cloudflare Pages):** [`https://gastosync.pages.dev`](https://gastosync.pages.dev)
-- **Instalador Android (`.apk`):** Acesse [**Releases**](https://github.com/TacioMoreira25/GastoSync/releases/latest) para baixar a versão de produção (`gastosync-v1.0.0.apk`).
+- **Instalador Android (`.apk`):** Acesse [**Releases**](https://github.com/TacioMoreira25/GastoSync/releases/latest) para baixar a versão mais recente em produção (`gastosync-v*.apk`).
 - **API Core (Go / Render):** [`https://gastosync-api.onrender.com/health`](https://gastosync-api.onrender.com/health)
 - **Agente de IA (Python / Render):** [`https://gastosync-agent.onrender.com/api/v1/agent/status`](https://gastosync-agent.onrender.com/api/v1/agent/status)
 
