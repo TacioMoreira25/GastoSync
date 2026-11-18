@@ -718,13 +718,14 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isMobile = screenWidth < 600;
 
-    return AlertDialog(
-      key: const Key('csv_export_preview_dialog'),
-      backgroundColor: AppTheme.cardSurface,
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: isMobile ? 12 : 40,
-        vertical: 24,
-      ),
+    return SafeArea(
+      child: AlertDialog(
+        key: const Key('csv_export_preview_dialog'),
+        backgroundColor: AppTheme.cardSurface,
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 12 : 40,
+          vertical: 16,
+        ),
       contentPadding: EdgeInsets.fromLTRB(isMobile ? 16 : 24, 12, isMobile ? 16 : 24, 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(
@@ -1133,6 +1134,7 @@ class _CsvExportPreviewDialogState extends State<_CsvExportPreviewDialog> {
           label: Text(_isDownloading ? 'Baixando...' : 'Baixar CSV'),
         ),
       ],
+      ),
     );
   }
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,14 +56,28 @@ class HumanInTheLoopModal extends ConsumerStatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-        child: HumanInTheLoopModal(
-          prediction: prediction,
-          initialType: initialType,
-          onConfirmed: onConfirmed,
-        ),
-      ),
+      builder: (ctx) {
+        final mq = MediaQuery.of(ctx);
+        final bottomInset = math.max(
+          mq.viewInsets.bottom,
+          mq.viewPadding.bottom,
+        );
+        final maxHeight = math.max(
+          280.0,
+          mq.size.height - mq.viewPadding.top - 16,
+        );
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: HumanInTheLoopModal(
+              prediction: prediction,
+              initialType: initialType,
+              onConfirmed: onConfirmed,
+            ),
+          ),
+        );
+      },
     );
   }
 

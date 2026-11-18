@@ -272,7 +272,7 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
                 Positioned.fill(child: navigationShell),
                 const Positioned(
                   right: 16,
-                  bottom: 16,
+                  bottom: 20,
                   child: GastoSyncAiFloatingButton(),
                 ),
               ],
@@ -366,6 +366,7 @@ class _GastoSyncMobileBottomBar extends StatelessWidget {
           ),
           child: SafeArea(
             top: false,
+            maintainBottomViewPadding: true,
             child: SizedBox(
               height: 64,
               child: Row(

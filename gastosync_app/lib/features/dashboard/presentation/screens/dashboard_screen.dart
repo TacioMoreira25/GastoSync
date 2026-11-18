@@ -64,6 +64,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       bills: bills,
     );
 
+    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
       body: SingleChildScrollView(
@@ -73,7 +75,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 screenWidth < 360 ? 12.0 : 16.0,
                 16.0,
                 screenWidth < 360 ? 12.0 : 16.0,
-                104.0,
+                124.0 + bottomSafeInset,
               ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

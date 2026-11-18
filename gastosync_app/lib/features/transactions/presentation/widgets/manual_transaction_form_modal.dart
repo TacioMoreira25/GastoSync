@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -60,14 +61,28 @@ class ManualTransactionFormModal extends ConsumerStatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-        child: ManualTransactionFormModal(
-          startInBillMode: startInBillMode,
-          initialTransaction: initialTransaction,
-          initialBill: initialBill,
-        ),
-      ),
+      builder: (ctx) {
+        final mq = MediaQuery.of(ctx);
+        final bottomInset = math.max(
+          mq.viewInsets.bottom,
+          mq.viewPadding.bottom,
+        );
+        final maxHeight = math.max(
+          280.0,
+          mq.size.height - mq.viewPadding.top - 16,
+        );
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: ManualTransactionFormModal(
+              startInBillMode: startInBillMode,
+              initialTransaction: initialTransaction,
+              initialBill: initialBill,
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -876,8 +891,10 @@ class _ManualTransactionFormModalState
     }
     final allExpenseCategories = categoryMap.values.toList();
 
+    final horizontalPadding = MediaQuery.sizeOf(context).width < 380 ? 16.0 : 24.0;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+      padding: EdgeInsets.fromLTRB(horizontalPadding, 20, horizontalPadding, 28),
       child: Form(
         key: _formKey,
         child: Column(

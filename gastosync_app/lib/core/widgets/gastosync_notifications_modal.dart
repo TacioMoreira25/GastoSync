@@ -614,15 +614,22 @@ class GastoSyncNotificationsModal extends ConsumerStatefulWidget {
       ),
       builder: (ctx) {
         final mq = MediaQuery.of(ctx);
+        final bottomInset = mq.viewPadding.bottom;
         final height = math.max(
           320.0,
-          math.min(mq.size.height * 0.86, mq.size.height - mq.padding.top - 12),
+          math.min(
+            mq.size.height * 0.86,
+            mq.size.height - mq.viewPadding.top - 12,
+          ),
         );
         return Theme(
           data: AppTheme.lightTheme,
           child: SizedBox(
             height: height,
-            child: const GastoSyncNotificationsModal(isBottomSheet: true),
+            child: Padding(
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: const GastoSyncNotificationsModal(isBottomSheet: true),
+            ),
           ),
         );
       },

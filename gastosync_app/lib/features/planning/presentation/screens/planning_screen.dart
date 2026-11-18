@@ -109,6 +109,8 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
     final isHealthy = metrics.isScoreHealthy;
     final scoreStatusLabel = metrics.scoreStatusLabel;
 
+    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
       body: SingleChildScrollView(
@@ -116,7 +118,7 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
           isDesktop ? 28.0 : 16.0,
           isDesktop ? 24.0 : 16.0,
           isDesktop ? 28.0 : 16.0,
-          116.0,
+          isDesktop ? 48.0 : 124.0 + bottomSafeInset,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

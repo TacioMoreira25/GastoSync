@@ -89,6 +89,8 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
         NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final isDesktop = MediaQuery.sizeOf(context).width >= 800;
 
+    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
       body: SingleChildScrollView(
@@ -96,7 +98,7 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
           isDesktop ? 28.0 : 16.0,
           isDesktop ? 24.0 : 16.0,
           isDesktop ? 28.0 : 16.0,
-          96.0,
+          isDesktop ? 48.0 : 124.0 + bottomSafeInset,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,6 +69,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        behavior: SnackBarBehavior.floating,
         content: Text(
           'Código de "${bill.description}" copiado para a área de transferência!',
         ),
@@ -90,12 +92,18 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           : 'Baixa realizada em "${bill.description}"! Despesa lançada no extrato.$recurrenceSuffix';
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(message),
+        ),
       );
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao dar baixa no boleto: $e')),
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Erro ao dar baixa no boleto: $e'),
+        ),
       );
     }
   }
@@ -113,7 +121,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     final currencyFormatter =
         NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final dateFormatter = DateFormat('dd/MM/yyyy');
-    final isDesktop = MediaQuery.sizeOf(context).width >= 800;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isDesktop = screenWidth >= 800;
+    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
 
     final bills =
         (billsAsync.value ?? const <Bill>[]).where((b) => !b.isDeleted).toList();
@@ -216,10 +226,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
           return SingleChildScrollView(
             padding: EdgeInsets.fromLTRB(
-              isDesktop ? 28.0 : 16.0,
+              isDesktop ? 28.0 : (screenWidth < 360 ? 12.0 : 16.0),
               isDesktop ? 24.0 : 16.0,
-              isDesktop ? 28.0 : 16.0,
-              96.0,
+              isDesktop ? 28.0 : (screenWidth < 360 ? 12.0 : 16.0),
+              isDesktop ? 48.0 : 124.0 + bottomSafeInset,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -491,6 +501,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 ),
                 child: Text(
                   'Lançamentos ($transactionsCount)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: selectedSubTab == 0
                         ? Colors.white
@@ -845,6 +857,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       }
     }
 
+    final mq = MediaQuery.of(context);
+    final usableHeight =
+        mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom;
+    final menuMaxHeight = math.max(180.0, math.min(320.0, usableHeight * 0.42));
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -854,6 +871,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           key: const Key('transactions_month_filter_button'),
           tooltip: 'Filtrar por mês',
           color: AppTheme.cardSurface,
+          position: PopupMenuPosition.under,
+          constraints: BoxConstraints(maxHeight: menuMaxHeight),
           onSelected: (value) {
             setState(() {
               _selectedYearMonthKey = value == 0 ? null : value;
@@ -894,6 +913,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           key: const Key('transactions_day_filter_button'),
           tooltip: 'Filtrar por dia',
           color: AppTheme.cardSurface,
+          position: PopupMenuPosition.under,
+          constraints: BoxConstraints(maxHeight: menuMaxHeight),
           onSelected: (value) async {
             if (value == 0) {
               setState(() => _selectedDay = null);
@@ -1110,6 +1131,163 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           final tx = filtered[index];
           final isIncome = tx.isIncome;
           final iconData = _categoryIcon(tx.category, isIncome: isIncome);
+          final isCompact = MediaQuery.sizeOf(context).width < 600;
+
+          final syncBadge = Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 2,
+            ),
+            decoration: tx.isSynced
+                ? AppTheme.emeraldBadgeDecoration
+                : AppTheme.warningBadgeDecoration,
+            child: Text(
+              tx.isSynced ? 'Sincronizado' : 'Pendente local',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tx.isSynced
+                    ? AppTheme.emeraldDeep
+                    : AppTheme.warningDark,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          );
+
+          final amountText = FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${isIncome ? "+" : "-"} ${currencyFormatter.format(tx.amount)}',
+              maxLines: 1,
+              style: TextStyle(
+                color: isIncome
+                    ? AppTheme.emeraldDeep
+                    : AppTheme.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          );
+
+          if (isCompact) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: isIncome
+                              ? AppTheme.emeraldSoftBg
+                              : AppTheme.subtleSurface,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          iconData,
+                          size: 19,
+                          color: isIncome
+                              ? AppTheme.emeraldDeep
+                              : AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              tx.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${tx.category} · ${tx.paymentMethod} · ${dateFormatter.format(tx.date)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 112),
+                        child: amountText,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const SizedBox(width: 52),
+                      syncBadge,
+                      const Spacer(),
+                      if (tx.id != null) ...[
+                        IconButton(
+                          key: Key('edit_transaction_button_${tx.id}'),
+                          icon: const Icon(
+                            Icons.edit_outlined,
+                            size: 18,
+                            color: AppTheme.textSecondary,
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 34,
+                            minHeight: 34,
+                          ),
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Editar transação',
+                          onPressed: () {
+                            ManualTransactionFormModal.show(
+                              context,
+                              initialTransaction: tx,
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          key: Key('delete_transaction_button_${tx.id}'),
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            size: 19,
+                            color: AppTheme.textMuted,
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 34,
+                            minHeight: 34,
+                          ),
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Excluir transação',
+                          onPressed: () {
+                            ref
+                                .read(transactionsControllerProvider)
+                                .deleteTransaction(tx.id!);
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }
 
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -1166,50 +1344,16 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 const SizedBox(width: 12),
 
                 // Valor + Badge de status (Sincronizado verde / Pendente local laranja)
-                    Flexible(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              '${isIncome ? "+" : "-"} ${currencyFormatter.format(tx.amount)}',
-                              maxLines: 1,
-                              style: TextStyle(
-                                color: isIncome
-                                    ? AppTheme.emeraldDeep
-                                    : AppTheme.textPrimary,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: tx.isSynced
-                                ? AppTheme.emeraldBadgeDecoration
-                                : AppTheme.warningBadgeDecoration,
-                            child: Text(
-                              tx.isSynced ? 'Sincronizado' : 'Pendente local',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: tx.isSynced
-                                    ? AppTheme.emeraldDeep
-                                    : AppTheme.warningDark,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      amountText,
+                      const SizedBox(height: 4),
+                      syncBadge,
+                    ],
+                  ),
+                ),
 
                 if (tx.id != null) ...[
                   const SizedBox(width: 4),

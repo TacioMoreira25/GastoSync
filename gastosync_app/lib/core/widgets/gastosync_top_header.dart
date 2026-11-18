@@ -682,17 +682,18 @@ class GastoSyncAiChatModal extends ConsumerStatefulWidget {
       builder: (ctx) {
         final mq = MediaQuery.of(ctx);
         final keyboard = mq.viewInsets.bottom;
+        final bottomInset = math.max(keyboard, mq.viewPadding.bottom);
         final height = math.max(
           280.0,
           math.min(
             mq.size.height * 0.88,
-            mq.size.height - keyboard - mq.padding.top - 8,
+            mq.size.height - bottomInset - mq.viewPadding.top - 8,
           ),
         );
         return Theme(
           data: AppTheme.lightTheme,
           child: Padding(
-            padding: EdgeInsets.only(bottom: keyboard),
+            padding: EdgeInsets.only(bottom: bottomInset),
             child: SizedBox(
               height: height,
               child: const GastoSyncAiChatModal(isBottomSheet: true),
@@ -1323,6 +1324,7 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
       ),
       child: SafeArea(
         top: false,
+        bottom: !widget.isBottomSheet,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           child: Column(
