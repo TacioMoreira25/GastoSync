@@ -178,6 +178,11 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                           transactions: transactions,
                           currencyFormatter: currencyFormatter,
                         ),
+                        const SizedBox(height: 22),
+                        _buildSecurityAndAccountSection(
+                          context: context,
+                          profile: profile,
+                        ),
                       ],
                     ),
                   ),
@@ -214,6 +219,13 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 profile: profile,
                 transactions: transactions,
                 currencyFormatter: currencyFormatter,
+              ),
+              const SizedBox(height: 22),
+
+              // 5. Seção Segurança e Conta
+              _buildSecurityAndAccountSection(
+                context: context,
+                profile: profile,
               ),
             ],
           ],
@@ -963,8 +975,37 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 subtitle: 'Exportar transações, boletos e cartões',
                 onTap: () => _exportCsvReport(context, transactions),
               ),
-              if (!kIsWeb && ref.watch(authProvider).biometricSupported) ...[
-                const Divider(color: AppTheme.cardBorder, height: 1),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSecurityAndAccountSection({
+    required BuildContext context,
+    required UserProfile profile,
+  }) {
+    final authState = ref.watch(authProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Segurança e Conta',
+          style: TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          key: const Key('more_security_account_card'),
+          decoration: AppTheme.whiteCardDecoration,
+          child: Column(
+            children: [
+              if (!kIsWeb && authState.biometricSupported) ...[
                 SwitchListTile(
                   key: const Key('more_setting_biometric_switch'),
                   contentPadding: const EdgeInsets.symmetric(
@@ -1000,11 +1041,11 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                     ),
                   ),
                   activeThumbColor: AppTheme.emeraldPrimary,
-                  value: ref.watch(authProvider).biometricEnabled,
+                  value: authState.biometricEnabled,
                   onChanged: _isTogglingBiometric ? null : _toggleBiometricAuth,
                 ),
+                const Divider(color: AppTheme.cardBorder, height: 1),
               ],
-              const Divider(color: AppTheme.cardBorder, height: 1),
               _SettingsTile(
                 key: const Key('more_logout_button'),
                 icon: Icons.logout_rounded,

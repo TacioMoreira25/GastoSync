@@ -261,13 +261,20 @@ class CloudSyncService {
       }
     }
 
+    final hasPendingWork = allPendingTransactions.isNotEmpty ||
+        allPendingBills.isNotEmpty ||
+        allPendingCreditCards.isNotEmpty;
+
     if (markedLocally == 0) {
       return CloudSyncResult(
         syncedCount: 0,
         isCloudSynced: cloudSuccess,
         message: cloudSuccess
             ? 'Sincronização com a nuvem concluída! Todos os dados estão atualizados.'
-            : (serverError ?? 'Banco local já está 100% sincronizado.'),
+            : (hasPendingWork
+                ? (serverError ??
+                    'Sem conexão com a nuvem no momento. Seus dados continuam salvos localmente.')
+                : (serverError ?? 'Banco local já está 100% sincronizado.')),
       );
     }
 
@@ -314,12 +321,16 @@ class CloudSyncService {
       var importedCount = 0;
       var hasUnpushedTombstones = false;
       final remoteTransactions = data['transactions'];
-      if (remoteTransactions is List) {
+      if (data.containsKey('transactions') && remoteTransactions is List) {
+        final activeRemoteTxUuids = <String>{};
+        final matchedLocalTxIds = <int>{};
+
         for (final item in remoteTransactions) {
           if (item is! Map) continue;
           if (item['deleted_at'] != null) continue;
 
           final clientUuid = (item['client_uuid'] as String? ?? '').trim();
+          final normalizedUuid = clientUuid.toLowerCase();
           final desc = (item['description'] as String? ?? '').trim();
           final amount = (item['amount'] as num?)?.toDouble() ?? 0.0;
           final parsedDate = _parseValidCloudDate(
@@ -343,11 +354,14 @@ class CloudSyncService {
               : null;
 
           if (desc.isEmpty || amount <= 0) continue;
+          if (normalizedUuid.isNotEmpty) {
+            activeRemoteTxUuids.add(normalizedUuid);
+          }
 
           LocalTransaction? matchedByUuid;
-          if (clientUuid.isNotEmpty) {
+          if (normalizedUuid.isNotEmpty) {
             for (final local in existingLocal) {
-              if (local.clientUuid == clientUuid) {
+              if (local.clientUuid.trim().toLowerCase() == normalizedUuid) {
                 matchedByUuid = local;
                 break;
               }
@@ -367,6 +381,7 @@ class CloudSyncService {
               continue;
             }
 
+            matchedLocalTxIds.add(matchedByUuid.id);
             if (matchedByUuid.isSynced) {
               await _db.updateTransaction(
                 matchedByUuid.id,
@@ -405,7 +420,8 @@ class CloudSyncService {
             // Se já existia e foi excluída localmente, garante que o UUID remoto também receba tombstone na nuvem e não re-insere
             if (matchedByContent.deletedAt != null) {
               if (clientUuid.isNotEmpty) {
-                if (matchedByContent.clientUuid == clientUuid) {
+                if (matchedByContent.clientUuid.trim().toLowerCase() ==
+                    normalizedUuid) {
                   await _db.updateTransaction(
                     matchedByContent.id,
                     const LocalTransactionsCompanion(isSynced: Value(false)),
@@ -430,14 +446,17 @@ class CloudSyncService {
                 }
               }
               hasUnpushedTombstones = true;
-            } else if (clientUuid.isNotEmpty &&
-                matchedByContent.clientUuid != clientUuid) {
-              await _db.updateTransaction(
-                matchedByContent.id,
-                LocalTransactionsCompanion(
-                  clientUuid: Value(clientUuid),
-                ),
-              );
+            } else {
+              matchedLocalTxIds.add(matchedByContent.id);
+              if (clientUuid.isNotEmpty &&
+                  matchedByContent.clientUuid != clientUuid) {
+                await _db.updateTransaction(
+                  matchedByContent.id,
+                  LocalTransactionsCompanion(
+                    clientUuid: Value(clientUuid),
+                  ),
+                );
+              }
             }
             continue;
           }
@@ -463,6 +482,18 @@ class CloudSyncService {
           );
           importedCount++;
         }
+
+        // Remove localmente apenas transações já sincronizadas que foram apagadas em outro dispositivo
+        // Preserva intactas transações criadas/alteradas offline (`isSynced == false`).
+        for (final localTx in existingLocal) {
+          if (localTx.deletedAt != null || !localTx.isSynced) continue;
+          if (matchedLocalTxIds.contains(localTx.id)) continue;
+          final uuid = localTx.clientUuid.trim().toLowerCase();
+          if (uuid.isEmpty || !activeRemoteTxUuids.contains(uuid)) {
+            await _db.deleteTransactionById(localTx.id, softDelete: false);
+            importedCount++;
+          }
+        }
       }
 
       // Hidratação de Boletos (`LocalBills`) respeitando exclusões lógicas locais (T026)
@@ -470,12 +501,16 @@ class CloudSyncService {
         userEmail: normalizedEmail,
       );
       final remoteBills = data['bills'];
-      if (remoteBills is List) {
+      if (data.containsKey('bills') && remoteBills is List) {
+        final activeRemoteBillUuids = <String>{};
+        final matchedLocalBillIds = <int>{};
+
         for (final item in remoteBills) {
           if (item is! Map) continue;
           if (item['deleted_at'] != null) continue;
 
           final clientUuid = (item['client_uuid'] as String? ?? '').trim();
+          final normalizedUuid = clientUuid.toLowerCase();
           final desc = (item['description'] as String? ?? '').trim();
           final amount = (item['amount'] as num?)?.toDouble() ?? 0.0;
           final dueDateStr = item['due_date'] as String?;
@@ -501,11 +536,14 @@ class CloudSyncService {
               : null;
 
           if (desc.isEmpty || amount <= 0) continue;
+          if (normalizedUuid.isNotEmpty) {
+            activeRemoteBillUuids.add(normalizedUuid);
+          }
 
           LocalBill? matchedBillByUuid;
-          if (clientUuid.isNotEmpty) {
+          if (normalizedUuid.isNotEmpty) {
             for (final local in existingBills) {
-              if (local.clientUuid == clientUuid) {
+              if (local.clientUuid.trim().toLowerCase() == normalizedUuid) {
                 matchedBillByUuid = local;
                 break;
               }
@@ -523,6 +561,7 @@ class CloudSyncService {
               hasUnpushedTombstones = true;
               continue;
             }
+            matchedLocalBillIds.add(matchedBillByUuid.id);
             if (matchedBillByUuid.isSynced) {
               await _db.updateBill(
                 matchedBillByUuid.id,
@@ -574,6 +613,8 @@ class CloudSyncService {
                 );
               }
               hasUnpushedTombstones = true;
+            } else {
+              matchedLocalBillIds.add(matchedBillByContent.id);
             }
             continue;
           }
@@ -602,6 +643,18 @@ class CloudSyncService {
             ),
           );
           importedCount++;
+        }
+
+        // Remove localmente apenas boletos já sincronizados que foram apagados em outro dispositivo
+        // Preserva intactos boletos criados/alterados offline (`isSynced == false`).
+        for (final localBill in existingBills) {
+          if (localBill.deletedAt != null || !localBill.isSynced) continue;
+          if (matchedLocalBillIds.contains(localBill.id)) continue;
+          final uuid = localBill.clientUuid.trim().toLowerCase();
+          if (uuid.isEmpty || !activeRemoteBillUuids.contains(uuid)) {
+            await _db.deleteBillById(localBill.id, softDelete: false);
+            importedCount++;
+          }
         }
       }
 
@@ -695,6 +748,7 @@ class CloudSyncService {
           final uuid = localCard.clientUuid.trim().toLowerCase();
           if (uuid.isNotEmpty && !activeRemoteCardUuids.contains(uuid)) {
             await _db.deleteCreditCard(localCard.id, softDelete: false);
+            importedCount++;
           }
         }
       }

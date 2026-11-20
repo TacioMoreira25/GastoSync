@@ -16,6 +16,7 @@ class _FakeBiometricAuthService extends BiometricAuthService {
   bool supported;
   bool authResult;
   BiometricStoredSession? storedSession;
+  final Set<String> dismissedEmails = <String>{};
   int authenticateCalls = 0;
 
   @override
@@ -39,6 +40,20 @@ class _FakeBiometricAuthService extends BiometricAuthService {
   Future<void> clearSession() async {
     storedSession = null;
   }
+
+  @override
+  Future<bool> hasDismissedPrompt(String email) async =>
+      dismissedEmails.contains(email.trim().toLowerCase());
+
+  @override
+  Future<void> markPromptDismissed(String email) async {
+    dismissedEmails.add(email.trim().toLowerCase());
+  }
+
+  @override
+  Future<void> clearPromptDismissed(String email) async {
+    dismissedEmails.remove(email.trim().toLowerCase());
+  }
 }
 
 class _OfflineAuthService extends AuthService {
@@ -46,6 +61,17 @@ class _OfflineAuthService extends AuthService {
   Future<AuthResult> login({
     required String email,
     required String password,
+  }) async {
+    return const AuthResult(
+      isOffline: true,
+      error: 'Sem conexão com o servidor.',
+    );
+  }
+
+  @override
+  Future<AuthResult> deleteAccount({
+    required String token,
+    String? password,
   }) async {
     return const AuthResult(
       isOffline: true,
@@ -66,6 +92,38 @@ void main() {
       await db.close();
     });
 
+    test('Login com senha oferece ativar biometria e recusa permanente evita novo convite para o mesmo e-mail', () async {
+      final fakeBio = _FakeBiometricAuthService(supported: true, authResult: true);
+      final container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(db),
+          biometricAuthServiceProvider.overrideWithValue(fakeBio),
+          authServiceProvider.overrideWithValue(_OfflineAuthService()),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(authProvider);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final loggedIn = await container.read(authProvider.notifier).login(
+            email: AuthNotifier.defaultDemoEmail,
+            password: AuthNotifier.defaultDemoPassword,
+          );
+      expect(loggedIn, isTrue);
+      expect(container.read(authProvider).shouldOfferBiometricEnrollment, isTrue);
+
+      await container.read(authProvider.notifier).dismissBiometricEnrollmentPrompt();
+      expect(container.read(authProvider).shouldOfferBiometricEnrollment, isFalse);
+
+      await container.read(authProvider.notifier).logout();
+      await container.read(authProvider.notifier).login(
+            email: AuthNotifier.defaultDemoEmail,
+            password: AuthNotifier.defaultDemoPassword,
+          );
+      expect(container.read(authProvider).shouldOfferBiometricEnrollment, isFalse);
+    });
+
     test('Ativar biometria exige confirmação biométrica e salva sessão no cofre', () async {
       final fakeBio = _FakeBiometricAuthService(supported: true, authResult: true);
       final container = ProviderContainer(
@@ -77,7 +135,6 @@ void main() {
       );
       addTearDown(container.dispose);
 
-      // Aguarda inicialização assíncrona do notifier
       container.read(authProvider);
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
@@ -93,6 +150,7 @@ void main() {
       expect(fakeBio.storedSession, isNotNull);
       expect(fakeBio.storedSession!.email, equals(AuthNotifier.defaultDemoEmail));
       expect(container.read(authProvider).biometricEnabled, isTrue);
+      expect(container.read(authProvider).shouldOfferBiometricEnrollment, isFalse);
     });
 
     test('Cancelar prompt biométrico ao ativar mantém biometria desativada', () async {
@@ -120,7 +178,7 @@ void main() {
       expect(container.read(authProvider).biometricEnabled, isFalse);
     });
 
-    test('Login por biometria entra instantaneamente e logout limpa o cofre (padrão bancário)', () async {
+    test('Sair da conta mantém biometria ativa sem auto-prompt; excluir conta limpa o cofre', () async {
       final fakeBio = _FakeBiometricAuthService(
         supported: true,
         authResult: true,
@@ -143,19 +201,25 @@ void main() {
       container.read(authProvider);
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(container.read(authProvider).biometricSupported, isTrue);
-      expect(container.read(authProvider).biometricEnabled, isTrue);
-
       final ok = await container.read(authProvider.notifier).loginWithBiometrics();
       expect(ok, isTrue);
       expect(container.read(authProvider).isAuthenticated, isTrue);
-      expect(container.read(authProvider).currentEmail, equals(AuthNotifier.defaultDemoEmail));
 
-      // Ao clicar em "Sair da conta", limpa o cofre seguro e desativa biometria
+      // Sair da conta mantém a biometria ativa, mas suprime o popup imediato na LoginScreen
       await container.read(authProvider.notifier).logout();
       expect(container.read(authProvider).isAuthenticated, isFalse);
+      expect(container.read(authProvider).biometricEnabled, isTrue);
+      expect(container.read(authProvider).suppressBiometricAutoPrompt, isTrue);
+      expect(fakeBio.storedSession, isNotNull);
+
+      // Entra novamente pela biometria e exclui a conta -> limpa o cofre completamente
+      await container.read(authProvider.notifier).loginWithBiometrics();
+      final deleteErr = await container.read(authProvider.notifier).deleteAccount(
+            password: AuthNotifier.defaultDemoPassword,
+          );
+      expect(deleteErr, isNull);
+      expect(container.read(authProvider).isAuthenticated, isFalse);
       expect(container.read(authProvider).biometricEnabled, isFalse);
-      expect(container.read(authProvider).biometricSupported, isTrue);
       expect(fakeBio.storedSession, isNull);
     });
   });

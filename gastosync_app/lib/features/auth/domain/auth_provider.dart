@@ -203,6 +203,8 @@ class AuthState {
     this.biometricSupported = false,
     this.biometricEnabled = false,
     this.biometricEmail,
+    this.suppressBiometricAutoPrompt = false,
+    this.shouldOfferBiometricEnrollment = false,
   });
 
   final bool isAuthenticated;
@@ -218,6 +220,8 @@ class AuthState {
   final bool biometricSupported;
   final bool biometricEnabled;
   final String? biometricEmail;
+  final bool suppressBiometricAutoPrompt;
+  final bool shouldOfferBiometricEnrollment;
 
   bool get isLocked =>
       lockedUntil != null && DateTime.now().isBefore(lockedUntil!);
@@ -245,6 +249,8 @@ class AuthState {
     bool? biometricEnabled,
     String? biometricEmail,
     bool clearBiometricEmail = false,
+    bool? suppressBiometricAutoPrompt,
+    bool? shouldOfferBiometricEnrollment,
   }) {
     return AuthState(
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
@@ -267,6 +273,10 @@ class AuthState {
       biometricEmail: clearBiometricEmail
           ? null
           : (biometricEmail ?? this.biometricEmail),
+      suppressBiometricAutoPrompt:
+          suppressBiometricAutoPrompt ?? this.suppressBiometricAutoPrompt,
+      shouldOfferBiometricEnrollment:
+          shouldOfferBiometricEnrollment ?? this.shouldOfferBiometricEnrollment,
     );
   }
 }
@@ -677,23 +687,31 @@ class AuthNotifier extends Notifier<AuthState> {
 
     _sessionPassword = normalizedPassword;
 
+    final biometricService = ref.read(biometricAuthServiceProvider);
+    final biometricSupported = state.biometricSupported ||
+        await biometricService.isDeviceSupported();
+    var shouldOfferEnrollment = false;
+
     if (state.biometricEnabled && state.biometricEmail == normalizedEmail) {
       unawaited(
-        ref.read(biometricAuthServiceProvider).saveSession(
-              BiometricStoredSession(
-                email: normalizedEmail,
-                password: normalizedPassword,
-                fullName: finalName,
-                jwtToken: jwtToken,
-                monthlyBaseIncome: remoteRes.monthlyIncome ?? 0.0,
-                savingsRateTarget: remoteRes.savingsGoalPercent ?? 0.0,
-                reminderTime1: remoteRes.reminderTime1 ?? '09:00',
-                reminderTime2: remoteRes.reminderTime2 ?? '18:00',
-                emailBillNotifications:
-                    remoteRes.emailBillNotifications ?? true,
-              ),
-            ),
+        biometricService.saveSession(
+          BiometricStoredSession(
+            email: normalizedEmail,
+            password: normalizedPassword,
+            fullName: finalName,
+            jwtToken: jwtToken,
+            monthlyBaseIncome: remoteRes.monthlyIncome ?? 0.0,
+            savingsRateTarget: remoteRes.savingsGoalPercent ?? 0.0,
+            reminderTime1: remoteRes.reminderTime1 ?? '09:00',
+            reminderTime2: remoteRes.reminderTime2 ?? '18:00',
+            emailBillNotifications: remoteRes.emailBillNotifications ?? true,
+          ),
+        ),
       );
+    } else if (!kIsWeb && biometricSupported) {
+      final dismissed =
+          await biometricService.hasDismissedPrompt(normalizedEmail);
+      shouldOfferEnrollment = !dismissed;
     }
 
     state = state.copyWith(
@@ -702,6 +720,9 @@ class AuthNotifier extends Notifier<AuthState> {
       token: jwtToken,
       isEmailVerified: isVerified,
       failedAttempts: 0,
+      biometricSupported: biometricSupported,
+      suppressBiometricAutoPrompt: false,
+      shouldOfferBiometricEnrollment: shouldOfferEnrollment,
       clearLock: true,
       clearError: true,
       clearSuccess: true,
@@ -1337,13 +1358,29 @@ class AuthNotifier extends Notifier<AuthState> {
       ),
     );
 
+    await biometricService.clearPromptDismissed(email);
+
     state = state.copyWith(
       biometricSupported: true,
       biometricEnabled: true,
       biometricEmail: email,
+      shouldOfferBiometricEnrollment: false,
       clearError: true,
     );
     return null;
+  }
+
+  /// Recusa o convite pós-login de ativação biométrica para o e-mail atual.
+  Future<void> dismissBiometricEnrollmentPrompt({
+    bool permanently = true,
+  }) async {
+    final email = (state.currentEmail ?? ref.read(userProfileProvider).email)
+        .trim()
+        .toLowerCase();
+    state = state.copyWith(shouldOfferBiometricEnrollment: false);
+    if (permanently && email.isNotEmpty) {
+      await ref.read(biometricAuthServiceProvider).markPromptDismissed(email);
+    }
   }
 
   /// Desativa o desbloqueio biométrico e limpa o cofre seguro do dispositivo.
@@ -1491,10 +1528,9 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<void> logout() async {
     final supported = state.biometricSupported;
+    final biometricEnabled = state.biometricEnabled;
+    final biometricEmail = state.biometricEmail;
     _sessionPassword = null;
-    try {
-      await ref.read(biometricAuthServiceProvider).clearSession();
-    } catch (_) {}
     try {
       await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
@@ -1503,7 +1539,10 @@ class AuthNotifier extends Notifier<AuthState> {
     state = AuthState(
       isAuthenticated: false,
       biometricSupported: supported,
-      biometricEnabled: false,
+      biometricEnabled: biometricEnabled,
+      biometricEmail: biometricEmail,
+      suppressBiometricAutoPrompt: true,
+      shouldOfferBiometricEnrollment: false,
     );
   }
 

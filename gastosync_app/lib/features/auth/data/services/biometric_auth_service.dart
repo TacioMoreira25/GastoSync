@@ -100,6 +100,7 @@ class BiometricAuthService {
             );
 
   static const String _sessionKey = 'gastosync_biometric_session_v1';
+  static const String _dismissedEmailsKey = 'gastosync_biometric_dismissed_v1';
 
   final LocalAuthentication _localAuth;
   final FlutterSecureStorage _secureStorage;
@@ -167,6 +168,59 @@ class BiometricAuthService {
     if (kIsWeb) return;
     try {
       await _secureStorage.delete(key: _sessionKey);
+    } catch (_) {}
+  }
+
+  Future<bool> hasDismissedPrompt(String email) async {
+    if (kIsWeb) return true;
+    final normalized = email.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    try {
+      final raw = await _secureStorage.read(key: _dismissedEmailsKey);
+      if (raw == null || raw.isEmpty) return false;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return false;
+      return decoded.contains(normalized);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> markPromptDismissed(String email) async {
+    if (kIsWeb) return;
+    final normalized = email.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    try {
+      final raw = await _secureStorage.read(key: _dismissedEmailsKey);
+      final list = <String>{};
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          list.addAll(decoded.whereType<String>());
+        }
+      }
+      list.add(normalized);
+      await _secureStorage.write(
+        key: _dismissedEmailsKey,
+        value: jsonEncode(list.toList()),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> clearPromptDismissed(String email) async {
+    if (kIsWeb) return;
+    final normalized = email.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    try {
+      final raw = await _secureStorage.read(key: _dismissedEmailsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final list = decoded.whereType<String>().toSet()..remove(normalized);
+      await _secureStorage.write(
+        key: _dismissedEmailsKey,
+        value: jsonEncode(list.toList()),
+      );
     } catch (_) {}
   }
 }

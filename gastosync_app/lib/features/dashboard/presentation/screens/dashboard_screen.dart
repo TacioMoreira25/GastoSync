@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
+import '../../../auth/domain/auth_provider.dart';
 import '../../../planning/domain/models/credit_card_model.dart';
 import '../../../planning/presentation/screens/planning_screen.dart';
 import '../../../settings/domain/models/user_profile.dart';
@@ -26,6 +29,121 @@ class DashboardScreen extends ConsumerStatefulWidget {
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _isBalanceHidden = false;
+  bool _isShowingBiometricPrompt = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _maybeShowBiometricEnrollmentDialog(ref.read(authProvider));
+    });
+  }
+
+  void _maybeShowBiometricEnrollmentDialog(AuthState authState) {
+    if (kIsWeb ||
+        _isShowingBiometricPrompt ||
+        !authState.isAuthenticated ||
+        !authState.shouldOfferBiometricEnrollment) {
+      return;
+    }
+    _isShowingBiometricPrompt = true;
+    unawaited(_showBiometricEnrollmentDialog());
+  }
+
+  Future<void> _showBiometricEnrollmentDialog() async {
+    try {
+      final shouldActivate = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          icon: Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: AppTheme.emeraldBadgeBg,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.fingerprint_rounded,
+              color: AppTheme.emeraldPrimary,
+              size: 30,
+            ),
+          ),
+          title: const Text(
+            'Ativar entrada por biometria?',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: const Text(
+            'Use sua digital ou PIN do aparelho para entrar mais rápido no GastoSync nas próximas vezes, sem precisar digitar sua senha.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 13.5,
+              height: 1.4,
+            ),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+          actions: [
+            TextButton(
+              key: const Key('biometric_prompt_dismiss_button'),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text(
+                'Agora não',
+                style: TextStyle(color: AppTheme.textSecondary),
+              ),
+            ),
+            FilledButton(
+              key: const Key('biometric_prompt_activate_button'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text('Ativar agora'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      final authNotifier = ref.read(authProvider.notifier);
+      if (shouldActivate == true) {
+        final error = await authNotifier.enableBiometricAuth();
+        if (!mounted) return;
+        if (error != null) {
+          // Se o usuário cancelou a digital no meio, apenas fecha sem bloquear reativação futura
+          await authNotifier.dismissBiometricEnrollmentPrompt(
+            permanently: false,
+          );
+        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error ?? 'Autenticação por biometria ativada neste dispositivo.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        await authNotifier.dismissBiometricEnrollmentPrompt(permanently: true);
+      }
+    } finally {
+      _isShowingBiometricPrompt = false;
+    }
+  }
 
   String _formatValue(NumberFormat formatter, double value) {
     if (_isBalanceHidden) return 'R\$ ••••••';
@@ -34,6 +152,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<bool>(
+      authProvider.select((s) => s.shouldOfferBiometricEnrollment),
+      (prev, next) {
+        if (next && !(prev ?? false)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _maybeShowBiometricEnrollmentDialog(ref.read(authProvider));
+          });
+        }
+      },
+    );
     final currencyFormatter =
         NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final screenWidth = MediaQuery.sizeOf(context).width;

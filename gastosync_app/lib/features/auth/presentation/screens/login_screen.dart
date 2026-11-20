@@ -71,6 +71,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _emailController.text.trim().isEmpty) {
       _emailController.text = savedEmail;
     }
+    if (authState.suppressBiometricAutoPrompt) {
+      return;
+    }
     unawaited(_loginWithBiometrics());
   }
 
