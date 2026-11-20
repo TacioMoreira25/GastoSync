@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -41,6 +42,50 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscureConfirmPassword = true;
   bool _submittedOnce = false;
   bool _isLoading = false;
+  bool _isBiometricLoading = false;
+  bool _biometricAutoPrompted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _maybeAutoPromptBiometrics(ref.read(authProvider));
+    });
+  }
+
+  void _maybeAutoPromptBiometrics(AuthState authState) {
+    if (kIsWeb ||
+        _biometricAutoPrompted ||
+        _isRegisterMode ||
+        _isLoading ||
+        _isBiometricLoading ||
+        authState.isAuthenticated ||
+        !authState.biometricEnabled) {
+      return;
+    }
+    _biometricAutoPrompted = true;
+    final savedEmail = authState.biometricEmail;
+    if (savedEmail != null &&
+        savedEmail.isNotEmpty &&
+        _emailController.text.trim().isEmpty) {
+      _emailController.text = savedEmail;
+    }
+    unawaited(_loginWithBiometrics());
+  }
+
+  Future<void> _loginWithBiometrics() async {
+    if (_isLoading || _isBiometricLoading) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _isBiometricLoading = true);
+    try {
+      await ref.read(authProvider.notifier).loginWithBiometrics();
+    } finally {
+      if (mounted) {
+        setState(() => _isBiometricLoading = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -231,6 +276,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<bool>(
+      authProvider.select((s) => s.biometricEnabled),
+      (prev, next) {
+        if (next && !(prev ?? false)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _maybeAutoPromptBiometrics(ref.read(authProvider));
+          });
+        }
+      },
+    );
+
     return Theme(
       data: AppTheme.lightTheme,
       child: Scaffold(
@@ -715,6 +772,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
               ),
             ),
+            if (!kIsWeb && !_isRegisterMode && authState.biometricEnabled) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 48,
+                child: OutlinedButton.icon(
+                  key: const Key('login_biometric_button'),
+                  onPressed: (_isLoading || _isBiometricLoading)
+                      ? null
+                      : _loginWithBiometrics,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.navyDark,
+                    side: const BorderSide(
+                      color: AppTheme.cardBorder,
+                      width: 1.2,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: _isBiometricLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.emeraldPrimary,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.fingerprint_rounded,
+                          size: 22,
+                          color: AppTheme.emeraldPrimary,
+                        ),
+                  label: Text(
+                    _isBiometricLoading
+                        ? 'Validando biometria...'
+                        : 'Entrar com biometria',
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

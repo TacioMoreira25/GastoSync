@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -9,6 +10,7 @@ import '../../settings/domain/models/user_profile.dart';
 import '../../transactions/data/services/cloud_sync_service.dart';
 import '../../transactions/presentation/controllers/transactions_controller.dart';
 import '../data/services/auth_service.dart';
+import '../data/services/biometric_auth_service.dart';
 
 /// Resultado detalhado de avaliação de segurança da senha em tempo real (OWASP ASVS / NIST)
 @immutable
@@ -198,6 +200,9 @@ class AuthState {
     this.lockedUntil,
     this.errorMessage,
     this.successMessage,
+    this.biometricSupported = false,
+    this.biometricEnabled = false,
+    this.biometricEmail,
   });
 
   final bool isAuthenticated;
@@ -210,6 +215,9 @@ class AuthState {
   final DateTime? lockedUntil;
   final String? errorMessage;
   final String? successMessage;
+  final bool biometricSupported;
+  final bool biometricEnabled;
+  final String? biometricEmail;
 
   bool get isLocked =>
       lockedUntil != null && DateTime.now().isBefore(lockedUntil!);
@@ -233,6 +241,10 @@ class AuthState {
     bool clearError = false,
     String? successMessage,
     bool clearSuccess = false,
+    bool? biometricSupported,
+    bool? biometricEnabled,
+    String? biometricEmail,
+    bool clearBiometricEmail = false,
   }) {
     return AuthState(
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
@@ -250,6 +262,11 @@ class AuthState {
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       successMessage:
           clearSuccess ? null : (successMessage ?? this.successMessage),
+      biometricSupported: biometricSupported ?? this.biometricSupported,
+      biometricEnabled: biometricEnabled ?? this.biometricEnabled,
+      biometricEmail: clearBiometricEmail
+          ? null
+          : (biometricEmail ?? this.biometricEmail),
     );
   }
 }
@@ -290,10 +307,12 @@ class AuthNotifier extends Notifier<AuthState> {
       <String, PasswordResetTicket>{};
   final Map<String, PasswordResetTicket> _verificationTickets =
       <String, PasswordResetTicket>{};
+  String? _sessionPassword;
 
   @override
   AuthState build() {
     _accounts.clear();
+    _sessionPassword = null;
     _seedDefaultAccount();
     _loadPersistedAccountsAndSession();
     return const AuthState(isAuthenticated: false);
@@ -335,6 +354,18 @@ class AuthNotifier extends Notifier<AuthState> {
           );
         }
       }
+    } catch (_) {}
+
+    try {
+      final biometricService = ref.read(biometricAuthServiceProvider);
+      final supported = await biometricService.isDeviceSupported();
+      final stored = supported ? await biometricService.readSession() : null;
+      state = state.copyWith(
+        biometricSupported: supported,
+        biometricEnabled: stored != null,
+        biometricEmail: stored?.email,
+        clearBiometricEmail: stored == null,
+      );
     } catch (_) {}
   }
 
@@ -641,6 +672,27 @@ class AuthNotifier extends Notifier<AuthState> {
       await syncService.pullFromCloud(
         jwtToken: jwtToken,
         userEmail: normalizedEmail,
+      );
+    }
+
+    _sessionPassword = normalizedPassword;
+
+    if (state.biometricEnabled && state.biometricEmail == normalizedEmail) {
+      unawaited(
+        ref.read(biometricAuthServiceProvider).saveSession(
+              BiometricStoredSession(
+                email: normalizedEmail,
+                password: normalizedPassword,
+                fullName: finalName,
+                jwtToken: jwtToken,
+                monthlyBaseIncome: remoteRes.monthlyIncome ?? 0.0,
+                savingsRateTarget: remoteRes.savingsGoalPercent ?? 0.0,
+                reminderTime1: remoteRes.reminderTime1 ?? '09:00',
+                reminderTime2: remoteRes.reminderTime2 ?? '18:00',
+                emailBillNotifications:
+                    remoteRes.emailBillNotifications ?? true,
+              ),
+            ),
       );
     }
 
@@ -1244,13 +1296,215 @@ class AuthNotifier extends Notifier<AuthState> {
     );
   }
 
+  /// Ativa o desbloqueio por biometria mediante confirmação biométrica imediata.
+  /// Salva a sessão no cofre seguro do dispositivo (Android Keystore).
+  Future<String?> enableBiometricAuth() async {
+    final biometricService = ref.read(biometricAuthServiceProvider);
+    final supported = await biometricService.isDeviceSupported();
+    if (!supported) {
+      state = state.copyWith(biometricSupported: false, biometricEnabled: false);
+      return 'Este dispositivo não possui suporte a biometria configurado.';
+    }
+
+    final email = (state.currentEmail ?? ref.read(userProfileProvider).email)
+        .trim()
+        .toLowerCase();
+    final pwd = _sessionPassword;
+    if (email.isEmpty || pwd == null || pwd.isEmpty) {
+      return 'Faça login novamente com e-mail e senha para ativar a biometria.';
+    }
+
+    final authenticated = await biometricService.authenticate(
+      localizedReason:
+          'Confirme sua biometria para ativar o acesso rápido no GastoSync',
+    );
+    if (!authenticated) {
+      return 'Autenticação biométrica cancelada.';
+    }
+
+    final profile = ref.read(userProfileProvider);
+    await biometricService.saveSession(
+      BiometricStoredSession(
+        email: email,
+        password: pwd,
+        fullName: profile.fullName,
+        jwtToken: state.token,
+        monthlyBaseIncome: profile.monthlyBaseIncome,
+        savingsRateTarget: profile.savingsRateTarget,
+        reminderTime1: profile.reminderTime1,
+        reminderTime2: profile.reminderTime2,
+        emailBillNotifications: profile.emailBillNotifications,
+      ),
+    );
+
+    state = state.copyWith(
+      biometricSupported: true,
+      biometricEnabled: true,
+      biometricEmail: email,
+      clearError: true,
+    );
+    return null;
+  }
+
+  /// Desativa o desbloqueio biométrico e limpa o cofre seguro do dispositivo.
+  Future<void> disableBiometricAuth() async {
+    await ref.read(biometricAuthServiceProvider).clearSession();
+    state = state.copyWith(
+      biometricEnabled: false,
+      clearBiometricEmail: true,
+    );
+  }
+
+  /// Autentica instantaneamente via biometria (com fallback para PIN do aparelho),
+  /// abre o painel usando o SQLite local e renova o JWT + sincroniza em segundo plano.
+  Future<bool> loginWithBiometrics() async {
+    final biometricService = ref.read(biometricAuthServiceProvider);
+    final stored = await biometricService.readSession();
+    if (stored == null) {
+      state = state.copyWith(
+        biometricEnabled: false,
+        clearBiometricEmail: true,
+        errorMessage:
+            'Sessão biométrica indisponível. Entre com e-mail e senha.',
+        clearSuccess: true,
+      );
+      return false;
+    }
+
+    final authenticated = await biometricService.authenticate(
+      localizedReason: 'Use sua digital ou PIN para entrar no GastoSync',
+    );
+    if (!authenticated) {
+      return false;
+    }
+
+    _sessionPassword = stored.password;
+
+    ref.read(userProfileProvider.notifier).updateProfile(
+          fullName: stored.fullName,
+          email: stored.email,
+          monthlyBaseIncome: stored.monthlyBaseIncome,
+          savingsRateTarget: stored.savingsRateTarget,
+          reminderTime1: stored.reminderTime1,
+          reminderTime2: stored.reminderTime2,
+          emailBillNotifications: stored.emailBillNotifications,
+          jwtToken: stored.jwtToken,
+          syncToCloud: false,
+        );
+
+    state = state.copyWith(
+      isAuthenticated: true,
+      currentEmail: stored.email,
+      token: stored.jwtToken,
+      isEmailVerified: true,
+      failedAttempts: 0,
+      biometricEnabled: true,
+      biometricEmail: stored.email,
+      clearLock: true,
+      clearError: true,
+      clearSuccess: true,
+    );
+
+    unawaited(_refreshSessionAndSyncInBackground(stored));
+    return true;
+  }
+
+  Future<void> _refreshSessionAndSyncInBackground(
+    BiometricStoredSession stored,
+  ) async {
+    try {
+      final remoteRes = await ref.read(authServiceProvider).login(
+            email: stored.email,
+            password: stored.password,
+          );
+
+      // Se o usuário já saiu ou trocou de conta enquanto a chamada ocorria, ignora
+      if (!state.isAuthenticated || state.currentEmail != stored.email) {
+        return;
+      }
+
+      if (remoteRes.isSuccess) {
+        final refreshedToken = remoteRes.token ?? stored.jwtToken;
+        final refreshedName = remoteRes.name ?? stored.fullName;
+
+        ref.read(userProfileProvider.notifier).updateProfile(
+              fullName: refreshedName,
+              email: stored.email,
+              monthlyBaseIncome:
+                  remoteRes.monthlyIncome ?? stored.monthlyBaseIncome,
+              savingsRateTarget:
+                  remoteRes.savingsGoalPercent ?? stored.savingsRateTarget,
+              reminderTime1: remoteRes.reminderTime1 ?? stored.reminderTime1,
+              reminderTime2: remoteRes.reminderTime2 ?? stored.reminderTime2,
+              emailBillNotifications: remoteRes.emailBillNotifications ??
+                  stored.emailBillNotifications,
+              jwtToken: refreshedToken,
+              syncToCloud: false,
+            );
+
+        state = state.copyWith(token: refreshedToken);
+
+        await ref.read(biometricAuthServiceProvider).saveSession(
+              stored.copyWith(
+                fullName: refreshedName,
+                jwtToken: refreshedToken,
+                monthlyBaseIncome:
+                    remoteRes.monthlyIncome ?? stored.monthlyBaseIncome,
+                savingsRateTarget:
+                    remoteRes.savingsGoalPercent ?? stored.savingsRateTarget,
+                reminderTime1: remoteRes.reminderTime1 ?? stored.reminderTime1,
+                reminderTime2: remoteRes.reminderTime2 ?? stored.reminderTime2,
+                emailBillNotifications: remoteRes.emailBillNotifications ??
+                    stored.emailBillNotifications,
+              ),
+            );
+
+        if (refreshedToken != null && refreshedToken.isNotEmpty) {
+          final syncService = ref.read(cloudSyncServiceProvider);
+          await syncService.pushPendingTransactions(
+            jwtToken: refreshedToken,
+            userEmail: stored.email,
+          );
+          await syncService.pullFromCloud(
+            jwtToken: refreshedToken,
+            userEmail: stored.email,
+          );
+        }
+      } else if (!remoteRes.isOffline && !remoteRes.requiresVerification) {
+        // Senha foi alterada remotamente em outro dispositivo -> invalida biometria
+        _sessionPassword = null;
+        await ref.read(biometricAuthServiceProvider).clearSession();
+        ref.read(userProfileProvider.notifier).resetProfile();
+        ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
+        state = AuthState(
+          isAuthenticated: false,
+          biometricSupported: state.biometricSupported,
+          biometricEnabled: false,
+          errorMessage:
+              'Suas credenciais expiraram ou foram alteradas. Faça login novamente com sua senha.',
+        );
+      }
+    } catch (_) {
+      // Em caso de falha transitória de rede, mantém o usuário operando Offline-First
+    }
+  }
+
   Future<void> logout() async {
+    final supported = state.biometricSupported;
+    _sessionPassword = null;
+    try {
+      await ref.read(biometricAuthServiceProvider).clearSession();
+    } catch (_) {}
     try {
       await ref.read(appDatabaseProvider).clearAuthSession();
     } catch (_) {}
     ref.read(userProfileProvider.notifier).resetProfile();
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
-    state = const AuthState(isAuthenticated: false);
+    state = AuthState(
+      isAuthenticated: false,
+      biometricSupported: supported,
+      biometricEnabled: false,
+    );
   }
 
   /// Exclui permanentemente a conta atual na nuvem e remove os registros locais (LGPD)
@@ -1309,6 +1563,12 @@ class AuthNotifier extends Notifier<AuthState> {
     _accounts.remove(email);
     _resetTickets.remove(email);
     _verificationTickets.remove(email);
+    _sessionPassword = null;
+
+    final supported = state.biometricSupported;
+    try {
+      await ref.read(biometricAuthServiceProvider).clearSession();
+    } catch (_) {}
 
     try {
       await ref
@@ -1318,8 +1578,10 @@ class AuthNotifier extends Notifier<AuthState> {
 
     ref.read(userProfileProvider.notifier).resetProfile();
     ref.read(selectedCategoryFilterProvider.notifier).selectCategory(null);
-    state = const AuthState(
+    state = AuthState(
       isAuthenticated: false,
+      biometricSupported: supported,
+      biometricEnabled: false,
       successMessage:
           'Sua conta e todos os seus dados foram encerrados e excluídos permanentemente.',
     );

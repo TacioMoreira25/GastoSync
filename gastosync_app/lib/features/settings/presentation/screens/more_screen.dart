@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,6 +27,40 @@ class MoreScreen extends ConsumerStatefulWidget {
 
 class _MoreScreenState extends ConsumerState<MoreScreen> {
   bool _isSyncing = false;
+  bool _isTogglingBiometric = false;
+
+  Future<void> _toggleBiometricAuth(bool enable) async {
+    if (_isTogglingBiometric) return;
+    setState(() => _isTogglingBiometric = true);
+    try {
+      final authNotifier = ref.read(authProvider.notifier);
+      if (enable) {
+        final error = await authNotifier.enableBiometricAuth();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error ?? 'Autenticação por biometria ativada neste dispositivo.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        await authNotifier.disableBiometricAuth();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Autenticação por biometria desativada.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isTogglingBiometric = false);
+      }
+    }
+  }
 
   Future<void> _syncPendingTransactions(List<Transaction> pendingList) async {
     if (_isSyncing) return;
@@ -928,6 +963,47 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 subtitle: 'Exportar transações, boletos e cartões',
                 onTap: () => _exportCsvReport(context, transactions),
               ),
+              if (!kIsWeb && ref.watch(authProvider).biometricSupported) ...[
+                const Divider(color: AppTheme.cardBorder, height: 1),
+                SwitchListTile(
+                  key: const Key('more_setting_biometric_switch'),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  secondary: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppTheme.subtleSurface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.fingerprint_rounded,
+                      color: AppTheme.emeraldPrimary,
+                      size: 22,
+                    ),
+                  ),
+                  title: const Text(
+                    'Entrar com biometria',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Usar digital ou PIN do aparelho para acesso rápido',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                  activeThumbColor: AppTheme.emeraldPrimary,
+                  value: ref.watch(authProvider).biometricEnabled,
+                  onChanged: _isTogglingBiometric ? null : _toggleBiometricAuth,
+                ),
+              ],
               const Divider(color: AppTheme.cardBorder, height: 1),
               _SettingsTile(
                 key: const Key('more_logout_button'),
