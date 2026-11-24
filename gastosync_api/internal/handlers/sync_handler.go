@@ -474,14 +474,26 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 			dueDay = 10
 		}
 
+		var manualInvoiceAmount *float64
+		var manualInvoiceMonth *string
+		if card.ManualInvoiceAmount != nil && *card.ManualInvoiceAmount >= 0 && card.ManualInvoiceMonth != nil {
+			trimmedMonth := strings.TrimSpace(*card.ManualInvoiceMonth)
+			if len(trimmedMonth) == 7 {
+				val := *card.ManualInvoiceAmount
+				manualInvoiceAmount = &val
+				manualInvoiceMonth = &trimmedMonth
+			}
+		}
+
 		if clientUUID != "" {
 			const upsertCardByClientUUID = `
 				INSERT INTO credit_cards (
 					user_id, client_uuid, name, limit_amount,
 					target_min_percent, target_max_percent, due_day,
-					is_primary, updated_at, deleted_at
+					is_primary, manual_invoice_amount, manual_invoice_month,
+					updated_at, deleted_at
 				)
-				VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, NOW(), $9)
+				VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11)
 				ON CONFLICT (user_id, client_uuid)
 				DO UPDATE SET
 					name = EXCLUDED.name,
@@ -490,6 +502,8 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 					target_max_percent = EXCLUDED.target_max_percent,
 					due_day = EXCLUDED.due_day,
 					is_primary = EXCLUDED.is_primary,
+					manual_invoice_amount = EXCLUDED.manual_invoice_amount,
+					manual_invoice_month = EXCLUDED.manual_invoice_month,
 					updated_at = NOW(),
 					deleted_at = EXCLUDED.deleted_at
 			`
@@ -504,6 +518,8 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 				targetMax,
 				dueDay,
 				card.IsPrimary,
+				manualInvoiceAmount,
+				manualInvoiceMonth,
 				card.DeletedAt,
 			); err != nil {
 				return response.InternalError(
@@ -516,9 +532,11 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 			const insertCard = `
 				INSERT INTO credit_cards (
 					user_id, name, limit_amount, target_min_percent,
-					target_max_percent, due_day, is_primary, updated_at, deleted_at
+					target_max_percent, due_day, is_primary,
+					manual_invoice_amount, manual_invoice_month,
+					updated_at, deleted_at
 				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
 			`
 			if _, err := tx.Exec(
 				ctx,
@@ -530,6 +548,8 @@ func (h *SyncHandler) Push(c *fiber.Ctx) error {
 				targetMax,
 				dueDay,
 				card.IsPrimary,
+				manualInvoiceAmount,
+				manualInvoiceMonth,
 				card.DeletedAt,
 			); err != nil {
 				return response.InternalError(
@@ -700,7 +720,9 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 	const cardQuery = `
 		SELECT id, client_uuid::text, name, limit_amount::DOUBLE PRECISION,
 		       target_min_percent::DOUBLE PRECISION, target_max_percent::DOUBLE PRECISION,
-		       due_day, is_primary, updated_at, deleted_at
+		       due_day, is_primary,
+		       manual_invoice_amount::DOUBLE PRECISION, manual_invoice_month,
+		       updated_at, deleted_at
 		FROM credit_cards
 		WHERE user_id = $1 AND deleted_at IS NULL
 		ORDER BY is_primary DESC, id ASC
@@ -727,6 +749,8 @@ func (h *SyncHandler) Pull(c *fiber.Ctx) error {
 			&card.TargetMaxPercent,
 			&card.DueDay,
 			&card.IsPrimary,
+			&card.ManualInvoiceAmount,
+			&card.ManualInvoiceMonth,
 			&card.UpdatedAt,
 			&card.DeletedAt,
 		); err != nil {

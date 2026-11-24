@@ -187,11 +187,16 @@ CREATE TABLE IF NOT EXISTS credit_cards (
     target_max_percent NUMERIC(5, 2) NOT NULL DEFAULT 80.00,
     due_day INT NOT NULL DEFAULT 10 CHECK (due_day BETWEEN 1 AND 31),
     is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    manual_invoice_amount NUMERIC(14, 2),
+    manual_invoice_month VARCHAR(7),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ,
     UNIQUE (user_id, client_uuid)
 );
+
+ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS manual_invoice_amount NUMERIC(14, 2);
+ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS manual_invoice_month VARCHAR(7);
 
 CREATE INDEX IF NOT EXISTS idx_credit_cards_user ON credit_cards(user_id, is_primary DESC) WHERE deleted_at IS NULL;
 `

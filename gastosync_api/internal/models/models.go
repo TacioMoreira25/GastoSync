@@ -141,16 +141,18 @@ type BillDTO struct {
 
 // CreditCardDTO represents a credit card and its healthy utilization limits exchanged during synchronization.
 type CreditCardDTO struct {
-	ID               int64      `json:"id,omitempty"`
-	ClientUUID       string     `json:"client_uuid"`
-	Name             string     `json:"name"`
-	LimitAmount      float64    `json:"limit_amount"`
-	TargetMinPercent float64    `json:"target_min_percent"`
-	TargetMaxPercent float64    `json:"target_max_percent"`
-	DueDay           int        `json:"due_day"`
-	IsPrimary        bool       `json:"is_primary"`
-	UpdatedAt        time.Time  `json:"updated_at,omitempty"`
-	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	ID                  int64      `json:"id,omitempty"`
+	ClientUUID          string     `json:"client_uuid"`
+	Name                string     `json:"name"`
+	LimitAmount         float64    `json:"limit_amount"`
+	TargetMinPercent    float64    `json:"target_min_percent"`
+	TargetMaxPercent    float64    `json:"target_max_percent"`
+	DueDay              int        `json:"due_day"`
+	IsPrimary           bool       `json:"is_primary"`
+	ManualInvoiceAmount *float64   `json:"manual_invoice_amount,omitempty"`
+	ManualInvoiceMonth  *string    `json:"manual_invoice_month,omitempty"`
+	UpdatedAt           time.Time  `json:"updated_at,omitempty"`
+	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
 }
 
 // BudgetDTO represents a monthly category spending limit exchanged during synchronization.
