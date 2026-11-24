@@ -9,6 +9,7 @@ import '../../features/settings/domain/models/user_profile.dart';
 import '../../features/transactions/domain/models/bill.dart';
 import '../../features/transactions/presentation/controllers/transactions_controller.dart';
 import '../widgets/gastosync_notifications_modal.dart';
+import 'native_bill_notification_helper.dart';
 
 /// Representa uma janela de turno diário de lembrete de boletos (1º ou 2º turno).
 @immutable
@@ -117,12 +118,27 @@ class BillNotificationService extends Notifier<BillNotificationState> {
     _startPeriodicChecker();
 
     final bills = billsAsync.value;
-    if (bills != null && bills.isNotEmpty) {
+    if (bills != null) {
       Future.microtask(() {
-        evaluateAndDispatchIfDue(
-          profile: profile,
-          bills: bills,
+        final summary = summarizeActionableBills(bills);
+        final currencyFmt =
+            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+        unawaited(
+          NativeBillNotificationHelper.scheduleDailyBillReminders(
+            reminderTime1: profile.reminderTime1,
+            reminderTime2: profile.reminderTime2,
+            actionableCount: summary.totalActionableCount,
+            summaryBody: summary.hasActionableBills
+                ? _buildAlertMessage(summary, currencyFmt)
+                : '',
+          ),
         );
+        if (bills.isNotEmpty) {
+          evaluateAndDispatchIfDue(
+            profile: profile,
+            bills: bills,
+          );
+        }
       });
     }
 
@@ -342,6 +358,15 @@ class BillNotificationService extends Notifier<BillNotificationState> {
 
     // Aciona feedback sonoro/háptico nativo do dispositivo/navegador
     _triggerDeviceAlertSound();
+
+    // Dispara notificação nativa na barra do Android (visível mesmo em segundo plano)
+    unawaited(
+      NativeBillNotificationHelper.showImmediateAlert(
+        id: 2000 + effectiveWindow.shiftNumber,
+        title: title,
+        body: message,
+      ),
+    );
 
     // Publica o alerta de turno na Central de Notificações do GastoSync
     ref.read(notificationsControllerProvider.notifier).pushCustomNotification(

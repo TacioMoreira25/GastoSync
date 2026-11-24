@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/services/csv_export_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/brl_currency_formatter.dart';
 import '../../../planning/domain/models/credit_card_model.dart';
 import '../../../settings/domain/models/user_profile.dart';
 import '../../domain/models/bill.dart';
@@ -23,8 +23,11 @@ class TransactionsScreen extends ConsumerStatefulWidget {
 class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  int? _selectedYearMonthKey;
+  int? _selectedYearMonthKey =
+      DateTime.now().year * 100 + DateTime.now().month;
   int? _selectedDay;
+  String _txTypeFilter = 'all'; // 'all', 'expense', 'income'
+  String _billStatusFilter = 'all'; // 'all', 'pending', 'overdue', 'paid'
 
   static const List<String> _monthNamesFull = <String>[
     'Janeiro',
@@ -108,6 +111,61 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
+  Future<void> _handleUnpayBill(BuildContext context, Bill bill) async {
+    if (bill.id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Estornar pagamento?'),
+        content: Text(
+          bill.isCreditCardCharge
+              ? 'O lançamento "${bill.description}" voltará para pendente.'
+              : 'O boleto "${bill.description}" voltará para pendente e a despesa vinculada será removida do extrato.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+            ),
+            child: const Text('Estornar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      final reverted =
+          await ref.read(transactionsControllerProvider).unpayBill(bill.id!);
+      if (!context.mounted) return;
+      if (reverted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              bill.isCreditCardCharge
+                  ? 'Confirmação de "${bill.description}" desfeita.'
+                  : 'Pagamento de "${bill.description}" estornado e despesa removida do extrato.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Erro ao estornar boleto: $e'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(watchTransactionsProvider);
@@ -181,7 +239,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           final availableYearMonths = yearMonthSet.toList()
             ..sort((a, b) => b.compareTo(a));
 
-          // Filtra transações por categoria, mês/dia e termo de pesquisa
+          // Filtra transações por categoria, tipo, mês/dia e termo de pesquisa
           final query = _searchQuery.trim().toLowerCase();
           final filteredTransactions = transactions.where((tx) {
             final matchesMonth = _selectedYearMonthKey == null ||
@@ -189,8 +247,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             if (!matchesMonth) return false;
 
             final matchesDay =
-                _selectedDay == null || tx.date.day == _selectedDay;
+                _selectedDay == null || tx.date.day <= _selectedDay!;
             if (!matchesDay) return false;
+
+            if (_txTypeFilter == 'expense' && !tx.isExpense) return false;
+            if (_txTypeFilter == 'income' && !tx.isIncome) return false;
 
             final matchesCategory = selectedCategory == null ||
                 tx.category.toLowerCase() == selectedCategory.toLowerCase() ||
@@ -203,7 +264,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 tx.category.toLowerCase().contains(query);
           }).toList();
 
-          // Filtra boletos por categoria, mês/dia e termo de pesquisa
+          // Filtra boletos por categoria, status, mês/dia e termo de pesquisa
           final filteredBills = bills.where((bill) {
             final matchesMonth = _selectedYearMonthKey == null ||
                 (bill.dueDate.year * 100 + bill.dueDate.month) ==
@@ -211,8 +272,19 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             if (!matchesMonth) return false;
 
             final matchesDay =
-                _selectedDay == null || bill.dueDate.day == _selectedDay;
+                _selectedDay == null || bill.dueDate.day <= _selectedDay!;
             if (!matchesDay) return false;
+
+            if (_billStatusFilter == 'pending' &&
+                (bill.isPaid || bill.isOverdue())) {
+              return false;
+            }
+            if (_billStatusFilter == 'overdue' && !bill.isOverdue()) {
+              return false;
+            }
+            if (_billStatusFilter == 'paid' && !bill.isPaid) {
+              return false;
+            }
 
             final matchesCategory = selectedCategory == null ||
                 bill.category.toLowerCase() == selectedCategory.toLowerCase();
@@ -223,6 +295,17 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 bill.category.toLowerCase().contains(query) ||
                 bill.barcode.toLowerCase().contains(query);
           }).toList();
+
+          final periodLabel = _selectedYearMonthKey != null
+              ? _formatYearMonthLabel(_selectedYearMonthKey!)
+              : 'Todos os meses';
+          final selectedMonthDate = _selectedYearMonthKey != null
+              ? DateTime(
+                  _selectedYearMonthKey! ~/ 100,
+                  (_selectedYearMonthKey! % 100).clamp(1, 12),
+                  15,
+                )
+              : DateTime.now();
 
           return SingleChildScrollView(
             padding: EdgeInsets.fromLTRB(
@@ -252,46 +335,66 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // 2. Seletor segmentado ("Lançamentos" | "Boletos a Pagar") (T016)
+                // 2. Seletor segmentado ("Lançamentos" | "Boletos" | "Cartões")
                 _buildSubTabSelector(
                   selectedSubTab: selectedSubTab,
-                  transactionsCount: transactions.length,
+                  transactionsCount: filteredTransactions.length,
                   pendingBillsCount: pendingBillsCount,
+                  creditCardsCount: creditCards.length,
                 ),
                 const SizedBox(height: 16),
 
+                if (selectedSubTab == 0) ...[
+                  _buildTransactionsSummaryStrip(
+                    filtered: filteredTransactions,
+                    periodLabel: periodLabel,
+                    currencyFormatter: currencyFormatter,
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
                 if (selectedSubTab == 1) ...[
-                  // Resumo de Boletos separando Total Real a Pagar (!isCreditCardCharge)
-                  // de Lembretes no Cartão (Inclusos na Fatura) (isCreditCardCharge) (T016)
+                  // Resumo de Boletos FIEL AO PERÍODO FILTRADO (Novembro, Dezembro, etc.)
                   _buildBillsSummarySection(
                     context: context,
-                    bills: bills,
+                    bills: filteredBills,
+                    periodLabel: periodLabel,
                     currencyFormatter: currencyFormatter,
                     isDesktop: isDesktop,
                   ),
                   const SizedBox(height: 16),
                 ],
 
-                // 3. Barra de pesquisa
-                _buildSearchBar(selectedSubTab: selectedSubTab),
-                const SizedBox(height: 12),
-
-                // 3b. Filtro por Mês e Dia (Web e Mobile)
+                // 3b. Filtro por Mês e Dia (em Cartões, navega apenas por Mês)
                 _buildDateFilterBar(
                   context: context,
                   availableYearMonths: availableYearMonths,
+                  isCardsTab: selectedSubTab == 2,
                 ),
                 const SizedBox(height: 12),
 
-                // 4. Chips horizontais de categoria sem scrollbar visível
-                _buildCategoryFilterChips(
-                  context: context,
-                  categories: categories,
-                  selectedCategory: selectedCategory,
-                ),
-                const SizedBox(height: 18),
+                if (selectedSubTab != 2) ...[
+                  // 3. Barra de pesquisa
+                  _buildSearchBar(selectedSubTab: selectedSubTab),
+                  const SizedBox(height: 10),
 
-                // 5. Card unificado listando as transações ou os boletos
+                  // 3c. Filtros rápidos de Tipo (Lançamentos) ou Status (Boletos)
+                  _buildQuickTypeOrStatusFilters(
+                    selectedSubTab: selectedSubTab,
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 4. Chips horizontais de categoria sem scrollbar visível
+                  _buildCategoryFilterChips(
+                    context: context,
+                    categories: categories,
+                    selectedCategory: selectedCategory,
+                  ),
+                  const SizedBox(height: 18),
+                ] else
+                  const SizedBox(height: 6),
+
+                // 5. Conteúdo da sub-aba ativa
                 if (selectedSubTab == 0)
                   _buildUnifiedTransactionsCard(
                     context: context,
@@ -299,10 +402,23 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     currencyFormatter: currencyFormatter,
                     dateFormatter: dateFormatter,
                   )
-                else
+                else if (selectedSubTab == 1)
                   _buildUnifiedBillsCard(
                     context: context,
                     filteredBills: filteredBills,
+                    currencyFormatter: currencyFormatter,
+                    dateFormatter: dateFormatter,
+                  )
+                else
+                  _buildCreditCardsInvoiceTab(
+                    context: context,
+                    cards: creditCards,
+                    transactions: transactions,
+                    bills: bills,
+                    referenceDate: selectedMonthDate,
+                    periodLabel: _formatYearMonthLabel(
+                      selectedMonthDate.year * 100 + selectedMonthDate.month,
+                    ),
                     currencyFormatter: currencyFormatter,
                     dateFormatter: dateFormatter,
                   ),
@@ -472,6 +588,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     required int selectedSubTab,
     required int transactionsCount,
     required int pendingBillsCount,
+    required int creditCardsCount,
   }) {
     return Container(
       key: const Key('transactions_subtab_selector'),
@@ -491,7 +608,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   .read(selectedTransactionsSubTabProvider.notifier)
                   .selectSubTab(0),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: selectedSubTab == 0
@@ -507,7 +624,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     color: selectedSubTab == 0
                         ? Colors.white
                         : AppTheme.textSecondary,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight:
                         selectedSubTab == 0 ? FontWeight.w700 : FontWeight.w600,
                   ),
@@ -523,7 +640,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   .read(selectedTransactionsSubTabProvider.notifier)
                   .selectSubTab(1),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: selectedSubTab == 1
@@ -537,14 +654,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   children: [
                     Flexible(
                       child: Text(
-                        'Boletos a Pagar',
+                        'Boletos',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: selectedSubTab == 1
                               ? Colors.white
                               : AppTheme.textSecondary,
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: selectedSubTab == 1
                               ? FontWeight.w700
                               : FontWeight.w600,
@@ -552,10 +669,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       ),
                     ),
                     if (pendingBillsCount > 0) ...[
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 5),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
+                          horizontal: 6,
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
@@ -570,7 +687,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                             color: selectedSubTab == 1
                                 ? Colors.white
                                 : AppTheme.warningDark,
-                            fontSize: 11,
+                            fontSize: 10.5,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -581,14 +698,1047 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               ),
             ),
           ),
+          Expanded(
+            child: InkWell(
+              key: const Key('subtab_cartoes_button'),
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => ref
+                  .read(selectedTransactionsSubTabProvider.notifier)
+                  .selectSubTab(2),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selectedSubTab == 2
+                      ? AppTheme.navyDark
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  creditCardsCount > 0
+                      ? 'Cartões ($creditCardsCount)'
+                      : 'Cartões',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selectedSubTab == 2
+                        ? Colors.white
+                        : AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight:
+                        selectedSubTab == 2 ? FontWeight.w700 : FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
+  Widget _buildTransactionsSummaryStrip({
+    required List<Transaction> filtered,
+    required String periodLabel,
+    required NumberFormat currencyFormatter,
+  }) {
+    final totalIncome = TransactionCalculations.calculateTotalIncome(filtered);
+    final totalExpense =
+        TransactionCalculations.calculateTotalExpense(filtered);
+    final balance = totalIncome - totalExpense;
+
+    return Container(
+      key: const Key('transactions_filtered_summary_card'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'RESUMO FILTRADO • ${periodLabel.toUpperCase()}',
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Entradas',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        currencyFormatter.format(totalIncome),
+                        style: const TextStyle(
+                          color: AppTheme.emeraldPrimary,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Saídas',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        currencyFormatter.format(totalExpense),
+                        style: const TextStyle(
+                          color: AppTheme.errorColor,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Saldo',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        currencyFormatter.format(balance),
+                        style: TextStyle(
+                          color: balance >= 0
+                              ? AppTheme.textPrimary
+                              : AppTheme.errorColor,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickTypeOrStatusFilters({required int selectedSubTab}) {
+    if (selectedSubTab == 0) {
+      final options = <MapEntry<String, String>>[
+        const MapEntry('all', 'Todos'),
+        const MapEntry('expense', 'Despesas'),
+        const MapEntry('income', 'Receitas'),
+      ];
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: options.map((entry) {
+            final selected = _txTypeFilter == entry.key;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                key: Key('tx_type_filter_${entry.key}'),
+                label: Text(entry.value),
+                selected: selected,
+                showCheckmark: false,
+                selectedColor: AppTheme.navyDark,
+                backgroundColor: AppTheme.cardSurface,
+                labelStyle: TextStyle(
+                  color: selected ? Colors.white : AppTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                onSelected: (_) => setState(() => _txTypeFilter = entry.key),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    final statusOptions = <MapEntry<String, String>>[
+      const MapEntry('all', 'Todos'),
+      const MapEntry('pending', 'Pendentes'),
+      const MapEntry('overdue', 'Vencidos'),
+      const MapEntry('paid', 'Pagos'),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: statusOptions.map((entry) {
+          final selected = _billStatusFilter == entry.key;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              key: Key('bill_status_filter_${entry.key}'),
+              label: Text(entry.value),
+              selected: selected,
+              showCheckmark: false,
+              selectedColor: AppTheme.navyDark,
+              backgroundColor: AppTheme.cardSurface,
+              labelStyle: TextStyle(
+                color: selected ? Colors.white : AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+              onSelected: (_) => setState(() => _billStatusFilter = entry.key),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildCreditCardsInvoiceTab({
+    required BuildContext context,
+    required List<CreditCard> cards,
+    required List<Transaction> transactions,
+    required List<Bill> bills,
+    required DateTime referenceDate,
+    required String periodLabel,
+    required NumberFormat currencyFormatter,
+    required DateFormat dateFormatter,
+  }) {
+    final summaries = CreditCardUsageSummary.calculateAll(
+      cards: cards,
+      transactions: transactions,
+      bills: bills,
+      referenceDate: referenceDate,
+    );
+
+    if (summaries.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: AppTheme.whiteCardDecoration,
+        child: Column(
+          children: [
+            const Icon(
+              Icons.credit_card_outlined,
+              size: 40,
+              color: AppTheme.textMuted,
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Nenhum cartão cadastrado ainda',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Cadastre um cartão ao lançar uma compra no crédito ou em Planejamento para acompanhar suas faturas aqui.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12.5,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final refMonthKey = CreditCard.formatYearMonth(referenceDate);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('transactions_new_credit_card_button'),
+              onPressed: () => _showCreditCardDialogFromTransactions(context),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.navyDark,
+                backgroundColor: AppTheme.cardSurface,
+                side: const BorderSide(color: AppTheme.cardBorder),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.add_card_rounded, size: 18),
+              label: const Text(
+                'Novo Cartão de Crédito',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ),
+        ...summaries.map((summary) {
+        final card = summary.card;
+        final cardUuid = card.clientUuid.trim();
+        final acceptUnassigned =
+            card.isPrimary || (!cards.any((c) => c.isPrimary) && cards.first.id == card.id);
+
+        bool matchesCard(String? itemCardUuid) {
+          final norm = itemCardUuid?.trim() ?? '';
+          if (norm.isEmpty) return acceptUnassigned;
+          return cardUuid.isNotEmpty && norm == cardUuid;
+        }
+
+        final cycle = card.invoiceCycleForMonth(referenceDate);
+        final cardTransactions = transactions.where((tx) {
+          if (tx.isDeleted || !tx.isExpense) return false;
+          if (tx.date.isBefore(cycle.start) || tx.date.isAfter(cycle.end)) {
+            return false;
+          }
+          final lower = tx.paymentMethod.trim().toLowerCase();
+          final isCredit = lower == 'crédito' ||
+              lower == 'credito' ||
+              lower == 'cartão de crédito' ||
+              lower == 'cartao de credito';
+          return isCredit && matchesCard(tx.creditCardUuid);
+        }).toList();
+
+        final cardBills = bills.where((b) {
+          if (b.isDeleted || !b.isCreditCardCharge) return false;
+          if (b.dueDate.isBefore(cycle.start) ||
+              b.dueDate.isAfter(cycle.end)) {
+            return false;
+          }
+          return matchesCard(b.creditCardUuid);
+        }).toList();
+
+        final launchedAmount =
+            cardTransactions.fold<double>(0.0, (s, tx) => s + tx.amount) +
+                cardBills
+                    .where((b) => b.isPaid)
+                    .fold<double>(0.0, (s, b) => s + b.amount);
+        final plannedAmount = cardBills
+            .where((b) => !b.isPaid)
+            .fold<double>(0.0, (s, b) => s + b.amount);
+        final allCardBillsForMonth = cardBills;
+        final closingDay = card.closingDay;
+
+        final progress = card.limitAmount > 0
+            ? (summary.totalUsedAmount / card.limitAmount).clamp(0.0, 1.0)
+            : 0.0;
+
+        return Container(
+          key: Key('transactions_card_invoice_${card.id ?? card.name}'),
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(16),
+          decoration: AppTheme.whiteCardDecoration,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      color: AppTheme.navyDark.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.credit_card_rounded,
+                      size: 18,
+                      color: AppTheme.navyDark,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                card.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textPrimary,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            if (card.isPrimary) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: AppTheme.emeraldBadgeDecoration,
+                                child: const Text(
+                                  'Principal',
+                                  style: TextStyle(
+                                    color: AppTheme.emeraldDeep,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        Text(
+                          'Fatura de $periodLabel • Fecha dia $closingDay • Vence dia ${card.dueDay}',
+                          style: const TextStyle(
+                            color: AppTheme.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        currencyFormatter.format(summary.totalUsedAmount),
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        'de ${currencyFormatter.format(card.limitAmount)}',
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (card.id != null && card.id! > 0) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      key: Key('transactions_edit_card_${card.id}'),
+                      tooltip: 'Editar cartão',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(
+                        Icons.edit_outlined,
+                        size: 18,
+                        color: AppTheme.textSecondary,
+                      ),
+                      onPressed: () => _showCreditCardDialogFromTransactions(
+                        context,
+                        existing: card,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 7,
+                  backgroundColor: AppTheme.subtleSurface,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    summary.isLimitExceeded
+                        ? AppTheme.errorColor
+                        : (summary.isAboveHealthyCeiling
+                            ? AppTheme.warningAmber
+                            : AppTheme.emeraldPrimary),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Limite disponível: ${currencyFormatter.format(summary.remainingTotalLimit)}',
+                    style: const TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '${summary.utilizationPercent.toStringAsFixed(0)}% usado',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              if (launchedAmount > 0 || plannedAmount > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Já lançado: ${currencyFormatter.format(launchedAmount)}  •  Previsto no ciclo: ${currencyFormatter.format(plannedAmount)}',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              if (summary.hasManualInvoice) ...[
+                const SizedBox(height: 8),
+                Text(
+                  summary.untrackedInvoiceDifference > 0.01
+                      ? 'Fatura informada • Detalhado no app: ${currencyFormatter.format(summary.trackedUsedAmount)} (+ ${currencyFormatter.format(summary.untrackedInvoiceDifference)} outros)'
+                      : 'Fatura informada manualmente (${currencyFormatter.format(summary.totalUsedAmount)}) • Detalhado no app: ${currencyFormatter.format(summary.trackedUsedAmount)}',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              if (card.id != null && card.id! > 0) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _showManualInvoiceDialogFromTransactions(
+                        context: context,
+                        summary: summary,
+                        yearMonth: refMonthKey,
+                        periodLabel: periodLabel,
+                        currencyFormatter: currencyFormatter,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.navyDark,
+                        side: const BorderSide(color: AppTheme.cardBorder),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.edit_note_rounded, size: 16),
+                      label: Text(
+                        summary.hasManualInvoice
+                            ? 'Ajustar fatura'
+                            : 'Informar valor da fatura',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (summary.hasManualInvoice)
+                      TextButton.icon(
+                        onPressed: () async {
+                          await ref
+                              .read(transactionsControllerProvider)
+                              .updateCreditCardManualInvoice(
+                                card.id!,
+                                amount: null,
+                                yearMonth: null,
+                              );
+                        },
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppTheme.textSecondary,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.autorenew_rounded, size: 15),
+                        label: const Text(
+                          'Voltar ao automático',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(top: 4),
+                title: Text(
+                  'Itens inclusos nesta fatura (${cardTransactions.length + allCardBillsForMonth.length})',
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                children: [
+                  if (cardTransactions.isEmpty && allCardBillsForMonth.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'Nenhuma compra ou assinatura detalhada neste cartão neste mês.',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  if (cardTransactions.isNotEmpty ||
+                      allCardBillsForMonth.any((b) => b.isPaid)) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4, bottom: 2),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'JÁ LANÇADOS NA FATURA',
+                          style: TextStyle(
+                            color: AppTheme.emeraldDeep,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    ...cardTransactions.map(
+                      (tx) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.shopping_bag_outlined,
+                          size: 18,
+                          color: AppTheme.emeraldPrimary,
+                        ),
+                        title: Text(
+                          tx.description,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '${tx.category} • ${dateFormatter.format(tx.date)}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        trailing: Text(
+                          currencyFormatter.format(tx.amount),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        onTap: () => ManualTransactionFormModal.show(
+                          context,
+                          initialTransaction: tx,
+                        ),
+                      ),
+                    ),
+                    ...allCardBillsForMonth.where((b) => b.isPaid).map(
+                          (b) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              Icons.check_circle_outline_rounded,
+                              size: 18,
+                              color: AppTheme.emeraldPrimary,
+                            ),
+                            title: Text(
+                              b.description,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Confirmada na fatura • ${dateFormatter.format(b.dueDate)}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            trailing: Text(
+                              currencyFormatter.format(b.amount),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            onTap: () => ManualTransactionFormModal.show(
+                              context,
+                              initialBill: b,
+                            ),
+                          ),
+                        ),
+                  ],
+                  if (allCardBillsForMonth.any((b) => !b.isPaid)) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8, bottom: 2),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'PREVISTO (AINDA VAI ENTRAR / VENCER)',
+                          style: TextStyle(
+                            color: AppTheme.warningDark,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    ...allCardBillsForMonth.where((b) => !b.isPaid).map(
+                          (b) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              Icons.schedule_rounded,
+                              size: 18,
+                              color: AppTheme.warningAmber,
+                            ),
+                            title: Text(
+                              b.description,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Previsto • Vence ${dateFormatter.format(b.dueDate)}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            trailing: Text(
+                              currencyFormatter.format(b.amount),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                            onTap: () => ManualTransactionFormModal.show(
+                              context,
+                              initialBill: b,
+                            ),
+                          ),
+                        ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        );
+      }),
+      ],
+    );
+  }
+
+  Future<void> _showCreditCardDialogFromTransactions(
+    BuildContext context, {
+    CreditCard? existing,
+  }) async {
+    final nameController = TextEditingController(text: existing?.name ?? '');
+    final limitController = TextEditingController(
+      text: existing != null
+          ? BrlCurrencyInputFormatter.formatValue(existing.limitAmount)
+          : '',
+    );
+    final dueDayController = TextEditingController(
+      text: (existing?.dueDay ?? 10).toString(),
+    );
+    final closingDayController = TextEditingController(
+      text: (existing?.closingDay ?? 3).toString(),
+    );
+    var isPrimary = existing?.isPrimary ?? false;
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(existing != null ? 'Editar Cartão' : 'Novo Cartão'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nome do cartão (ex: Nubank)',
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Informe o nome do cartão.'
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: limitController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [BrlCurrencyInputFormatter()],
+                    decoration: const InputDecoration(
+                      labelText: 'Limite total (R\$)',
+                      prefixText: 'R\$ ',
+                    ),
+                    validator: (v) =>
+                        BrlCurrencyInputFormatter.parseValue(v ?? '') <= 0
+                            ? 'Informe um limite maior que zero.'
+                            : null,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: closingDayController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Dia fechamento (1–31)',
+                          ),
+                          validator: (v) {
+                            final day = int.tryParse((v ?? '').trim());
+                            if (day == null || day < 1 || day > 31) {
+                              return 'Inválido (1–31).';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: dueDayController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Dia vencimento (1–31)',
+                          ),
+                          validator: (v) {
+                            final day = int.tryParse((v ?? '').trim());
+                            if (day == null || day < 1 || day > 31) {
+                              return 'Inválido (1–31).';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Cartão Principal',
+                      style: TextStyle(fontSize: 13.5),
+                    ),
+                    value: isPrimary,
+                    onChanged: (v) => setDialogState(() => isPrimary = v),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            if (existing != null && existing.id != null && existing.id! > 0)
+              TextButton(
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: dialogContext,
+                    builder: (confirmCtx) => AlertDialog(
+                      title: const Text('Apagar cartão?'),
+                      content: Text(
+                        'Tem certeza que deseja apagar o cartão "${existing.name}"?',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(confirmCtx).pop(false),
+                          child: const Text('Cancelar'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.of(confirmCtx).pop(true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTheme.errorColor,
+                          ),
+                          child: const Text('Apagar'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm != true || !dialogContext.mounted) return;
+                  final allBills =
+                      ref.read(watchBillsProvider).value ?? const <Bill>[];
+                  final affectedBillsCount = allBills
+                      .where(
+                        (b) =>
+                            !b.isDeleted &&
+                            b.creditCardUuid != null &&
+                            b.creditCardUuid!.trim() ==
+                                existing.clientUuid.trim(),
+                      )
+                      .length;
+                  final messenger = ScaffoldMessenger.of(context);
+                  Navigator.of(dialogContext).pop();
+                  await ref
+                      .read(transactionsControllerProvider)
+                      .deleteCreditCard(existing.id!);
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      behavior: SnackBarBehavior.floating,
+                      content: Text(
+                        affectedBillsCount > 0
+                            ? 'Cartão "${existing.name}" apagado. $affectedBillsCount conta(s) ficaram sem cartão — edite-as em Boletos para escolher outro cartão.'
+                            : 'Cartão "${existing.name}" apagado.',
+                      ),
+                    ),
+                  );
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.errorColor,
+                ),
+                child: const Text('Apagar'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final limit =
+                    BrlCurrencyInputFormatter.parseValue(limitController.text);
+                final dueDay = int.parse(dueDayController.text.trim());
+                final closingDay = int.parse(closingDayController.text.trim());
+                Navigator.of(dialogContext).pop();
+                await ref.read(transactionsControllerProvider).upsertCreditCard(
+                      id: existing?.id,
+                      clientUuid: existing?.clientUuid,
+                      name: nameController.text.trim(),
+                      limitAmount: limit,
+                      targetMinPercent: existing?.targetMinPercent ?? 50.0,
+                      targetMaxPercent: existing?.targetMaxPercent ?? 80.0,
+                      dueDay: dueDay,
+                      closingDay: closingDay,
+                      isPrimary: isPrimary,
+                    );
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    Future<void>.delayed(const Duration(milliseconds: 300), () {
+      nameController.dispose();
+      limitController.dispose();
+      dueDayController.dispose();
+      closingDayController.dispose();
+    });
+  }
+
+  Future<void> _showManualInvoiceDialogFromTransactions({
+    required BuildContext context,
+    required CreditCardUsageSummary summary,
+    required String yearMonth,
+    required String periodLabel,
+    required NumberFormat currencyFormatter,
+  }) async {
+    final card = summary.card;
+    if (card.id == null) return;
+    final initialValue = summary.hasManualInvoice
+        ? summary.manualInvoiceAmount!
+        : summary.trackedUsedAmount;
+    final amountController = TextEditingController(
+      text: initialValue > 0
+          ? BrlCurrencyInputFormatter.formatValue(initialValue)
+          : '',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Fatura de $periodLabel • ${card.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Lançado no app neste mês: ${currencyFormatter.format(summary.trackedUsedAmount)}.',
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [BrlCurrencyInputFormatter()],
+              decoration: InputDecoration(
+                labelText: 'Valor da fatura (R\$)',
+                prefixText: 'R\$ ',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.emeraldPrimary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final parsed = BrlCurrencyInputFormatter.parseValue(
+                amountController.text,
+              );
+              Navigator.of(dialogContext).pop();
+              await ref
+                  .read(transactionsControllerProvider)
+                  .updateCreditCardManualInvoice(
+                    card.id!,
+                    amount: parsed,
+                    yearMonth: yearMonth,
+                  );
+            },
+            child: const Text('Salvar fatura'),
+          ),
+        ],
+      ),
+    );
+    amountController.dispose();
+  }
+
   Widget _buildBillsSummarySection({
     required BuildContext context,
     required List<Bill> bills,
+    required String periodLabel,
     required NumberFormat currencyFormatter,
     required bool isDesktop,
   }) {
@@ -626,10 +1776,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 ),
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'TOTAL REAL A PAGAR (CAIXA)',
-                  style: TextStyle(
+                  'A PAGAR • ${periodLabel.toUpperCase()}',
+                  style: const TextStyle(
                     color: AppTheme.textMuted,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -824,6 +1974,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   Widget _buildDateFilterBar({
     required BuildContext context,
     required List<int> availableYearMonths,
+    bool isCardsTab = false,
   }) {
     final now = DateTime.now();
     final hasMonth = _selectedYearMonthKey != null;
@@ -831,9 +1982,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     final monthLabel = hasMonth
         ? _formatYearMonthLabel(_selectedYearMonthKey!)
         : 'Mês: Todos';
-    final dayLabel = hasDay
-        ? 'Dia ${_selectedDay!.toString().padLeft(2, '0')}'
-        : 'Dia: Todos';
 
     Future<void> pickDateFromCalendar() async {
       final initialDate = _selectedYearMonthKey != null
@@ -857,152 +2005,81 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       }
     }
 
-    final mq = MediaQuery.of(context);
-    final usableHeight =
-        mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom;
-    final menuMaxHeight = math.max(180.0, math.min(320.0, usableHeight * 0.42));
+    void shiftMonth(int delta) {
+      final base = _selectedYearMonthKey != null
+          ? DateTime(
+              _selectedYearMonthKey! ~/ 100,
+              (_selectedYearMonthKey! % 100).clamp(1, 12),
+              1,
+            )
+          : DateTime(now.year, now.month, 1);
+      final target = DateTime(base.year, base.month + delta, 1);
+      setState(() {
+        _selectedYearMonthKey = target.year * 100 + target.month;
+        _selectedDay = null;
+      });
+    }
 
     return Wrap(
-      spacing: 8,
+      spacing: 6,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        PopupMenuButton<int>(
+        IconButton(
+          key: const Key('transactions_prev_month_button'),
+          tooltip: 'Mês anterior',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => shiftMonth(-1),
+          icon: const Icon(Icons.chevron_left_rounded, size: 22),
+        ),
+        InkWell(
           key: const Key('transactions_month_filter_button'),
-          tooltip: 'Filtrar por mês',
-          color: AppTheme.cardSurface,
-          position: PopupMenuPosition.under,
-          constraints: BoxConstraints(maxHeight: menuMaxHeight),
-          onSelected: (value) {
-            setState(() {
-              _selectedYearMonthKey = value == 0 ? null : value;
-            });
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem<int>(
-              value: 0,
-              child: Text(
-                'Todos os meses',
-                style: TextStyle(
-                  fontWeight: !hasMonth ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ),
-            const PopupMenuDivider(),
-            ...availableYearMonths.map(
-              (ym) => PopupMenuItem<int>(
-                value: ym,
-                child: Text(
-                  _formatYearMonthLabel(ym),
-                  style: TextStyle(
-                    fontWeight: _selectedYearMonthKey == ym
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(999),
+          onTap: isCardsTab ? null : pickDateFromCalendar,
           child: _DateFilterChipLabel(
             icon: Icons.calendar_month_rounded,
-            label: monthLabel,
-            isSelected: hasMonth,
+            label: isCardsTab
+                ? _formatYearMonthLabel(
+                    _selectedYearMonthKey ?? (now.year * 100 + now.month),
+                  )
+                : monthLabel,
+            isSelected: isCardsTab || hasMonth,
           ),
         ),
-        PopupMenuButton<int>(
-          key: const Key('transactions_day_filter_button'),
-          tooltip: 'Filtrar por dia',
-          color: AppTheme.cardSurface,
-          position: PopupMenuPosition.under,
-          constraints: BoxConstraints(maxHeight: menuMaxHeight),
-          onSelected: (value) async {
-            if (value == 0) {
-              setState(() => _selectedDay = null);
-            } else if (value == -2) {
-              setState(() {
-                _selectedYearMonthKey = now.year * 100 + now.month;
-                _selectedDay = now.day;
-              });
-            } else if (value == -1) {
-              await pickDateFromCalendar();
-            } else {
-              setState(() => _selectedDay = value);
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem<int>(
-              value: 0,
-              child: Text(
-                'Todos os dias',
-                style: TextStyle(
-                  fontWeight: !hasDay ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ),
-            PopupMenuItem<int>(
-              value: -2,
-              child: Text('Hoje (${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')})'),
-            ),
-            const PopupMenuItem<int>(
-              value: -1,
-              child: Row(
-                children: [
-                  Icon(Icons.event_rounded, size: 16, color: AppTheme.emeraldDeep),
-                  SizedBox(width: 8),
-                  Text('Escolher no calendário...'),
-                ],
-              ),
-            ),
-            const PopupMenuDivider(),
-            ...List.generate(
-              31,
-              (index) {
-                final day = index + 1;
-                return PopupMenuItem<int>(
-                  value: day,
-                  child: Text(
-                    'Dia ${day.toString().padLeft(2, '0')}',
-                    style: TextStyle(
-                      fontWeight: _selectedDay == day
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-          child: _DateFilterChipLabel(
-            icon: Icons.today_rounded,
-            label: dayLabel,
-            isSelected: hasDay,
-          ),
+        IconButton(
+          key: const Key('transactions_next_month_button'),
+          tooltip: 'Próximo mês',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => shiftMonth(1),
+          icon: const Icon(Icons.chevron_right_rounded, size: 22),
         ),
-        if (hasMonth || hasDay)
+        if (!isCardsTab && hasMonth)
           ActionChip(
-            key: const Key('transactions_clear_date_filter_button'),
-            avatar: const Icon(
-              Icons.close_rounded,
-              size: 15,
+            key: const Key('transactions_all_months_chip'),
+            label: const Text('Todos'),
+            onPressed: () => setState(() {
+              _selectedYearMonthKey = null;
+              _selectedDay = null;
+            }),
+            visualDensity: VisualDensity.compact,
+            backgroundColor: AppTheme.cardSurface,
+            labelStyle: const TextStyle(
               color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
-            label: const Text(
-              'Limpar data',
-              style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+          ),
+        if (!isCardsTab && hasDay)
+          ActionChip(
+            label: const Text('Mês inteiro'),
+            onPressed: () => setState(() => _selectedDay = null),
+            visualDensity: VisualDensity.compact,
+            backgroundColor: AppTheme.cardSurface,
+            labelStyle: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
-            backgroundColor: AppTheme.subtleSurface,
-            side: const BorderSide(color: AppTheme.cardBorder),
-            shape: const StadiumBorder(),
-            onPressed: () {
-              setState(() {
-                _selectedYearMonthKey = null;
-                _selectedDay = null;
-              });
-            },
           ),
       ],
     );
@@ -1677,7 +2754,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     ),
                   ],
                 ),
-                if (bill.hasBarcode || (!isPaid && bill.id != null)) ...[
+                if (bill.hasBarcode || bill.id != null) ...[
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
@@ -1733,6 +2810,30 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      if (isPaid && bill.id != null)
+                        OutlinedButton.icon(
+                          key: Key('unpay_bill_button_${bill.id}'),
+                          onPressed: () => _handleUnpayBill(context, bill),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.errorColor,
+                            side: BorderSide(
+                              color: AppTheme.errorColor.withValues(alpha: 0.45),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          icon: const Icon(Icons.undo_rounded, size: 15),
+                          label: const Text(
+                            'Estornar pagamento',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),

@@ -940,33 +940,86 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
           decoration: AppTheme.whiteCardDecoration,
           child: Column(
             children: [
-              _SettingsTile(
-                key: const Key('more_setting_base_income'),
-                icon: Icons.payments_outlined,
-                title: 'Renda Base Mensal',
-                subtitle: profile.monthlyBaseIncome > 0
-                    ? currencyFormatter.format(profile.monthlyBaseIncome)
-                    : 'Não definida (${currencyFormatter.format(0)})',
-                onTap: () => _showEditBaseIncomeDialog(context, profile),
+              Material(
+                color: Colors.transparent,
+                child: SwitchListTile(
+                  key: const Key('more_setting_simplified_mode'),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+                  secondary: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: profile.isSimplifiedMode
+                          ? AppTheme.emeraldBadgeBg
+                          : AppTheme.subtleSurface,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.auto_awesome_mosaic_outlined,
+                      color: profile.isSimplifiedMode
+                          ? AppTheme.emeraldPrimary
+                          : AppTheme.textSecondary,
+                      size: 20,
+                    ),
+                  ),
+                  title: const Text(
+                    'Modo Simplificado (Foco em Contas)',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    profile.isSimplifiedMode
+                        ? 'Ativo: oculta Planejamento, Reserva e Score. Foco em boletos, faturas e lançamentos.'
+                        : 'Oculte metas de longo prazo e reserva se quiser apenas acompanhar contas e gastos do mês.',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                  value: profile.isSimplifiedMode,
+                  activeThumbColor: Colors.white,
+                  activeTrackColor: AppTheme.emeraldPrimary,
+                  onChanged: (enabled) async {
+                    await ref
+                        .read(userProfileProvider.notifier)
+                        .setSimplifiedMode(enabled);
+                  },
+                ),
               ),
-              const Divider(color: AppTheme.cardBorder, height: 1),
-              _SettingsTile(
-                key: const Key('more_setting_savings_target'),
-                icon: Icons.savings_outlined,
-                title: 'Meta de Taxa de Poupança',
-                subtitle: profile.savingsRateTarget > 0
-                    ? '${profile.savingsRateTarget.toStringAsFixed(0)}% da renda mensal'
-                    : 'Não definida (0% da renda mensal)',
-                onTap: () => _showEditSavingsTargetDialog(context, profile),
-              ),
-              const Divider(color: AppTheme.cardBorder, height: 1),
-              _SettingsTile(
-                key: const Key('more_setting_manage_categories'),
-                icon: Icons.category_outlined,
-                title: 'Gerenciar Categorias',
-                subtitle: 'Editar tetos e categorias em Planejamento',
-                onTap: () => context.go('/planning'),
-              ),
+              if (!profile.isSimplifiedMode) ...[
+                const Divider(color: AppTheme.cardBorder, height: 1),
+                _SettingsTile(
+                  key: const Key('more_setting_base_income'),
+                  icon: Icons.payments_outlined,
+                  title: 'Renda Base Mensal',
+                  subtitle: profile.monthlyBaseIncome > 0
+                      ? currencyFormatter.format(profile.monthlyBaseIncome)
+                      : 'Não definida (${currencyFormatter.format(0)})',
+                  onTap: () => _showEditBaseIncomeDialog(context, profile),
+                ),
+                const Divider(color: AppTheme.cardBorder, height: 1),
+                _SettingsTile(
+                  key: const Key('more_setting_savings_target'),
+                  icon: Icons.savings_outlined,
+                  title: 'Meta de Taxa de Poupança',
+                  subtitle: profile.savingsRateTarget > 0
+                      ? '${profile.savingsRateTarget.toStringAsFixed(0)}% da renda mensal'
+                      : 'Não definida (0% da renda mensal)',
+                  onTap: () => _showEditSavingsTargetDialog(context, profile),
+                ),
+                const Divider(color: AppTheme.cardBorder, height: 1),
+                _SettingsTile(
+                  key: const Key('more_setting_manage_categories'),
+                  icon: Icons.category_outlined,
+                  title: 'Gerenciar Categorias',
+                  subtitle: 'Editar tetos e categorias em Planejamento',
+                  onTap: () => context.go('/planning'),
+                ),
+              ],
               const Divider(color: AppTheme.cardBorder, height: 1),
               _SettingsTile(
                 key: const Key('more_setting_export_csv'),

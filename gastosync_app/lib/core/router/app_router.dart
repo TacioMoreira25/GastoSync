@@ -233,7 +233,9 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
                 children: [
                   GastoSyncWebTopBar(
                     title: activeTab.headerTitle ?? 'Olá, ${profile.firstName}',
-                    subtitle: activeTab.headerSubtitle,
+                    subtitle: (currentIndex == 0 && profile.isSimplifiedMode)
+                        ? 'Resumo de contas, boletos e faturas do mês'
+                        : activeTab.headerSubtitle,
                     syncStatusLabel: syncLabel,
                     onAvatarTap: () => _onDestinationSelected(3),
                   ),
@@ -282,6 +284,7 @@ class ScaffoldWithAdaptiveNavigation extends ConsumerWidget {
       ),
       bottomNavigationBar: _GastoSyncMobileBottomBar(
         selectedIndex: currentIndex,
+        isSimplifiedMode: profile.isSimplifiedMode,
         onDestinationSelected: _onDestinationSelected,
         onAddPressed: () => ManualTransactionFormModal.show(context),
       ),
@@ -342,16 +345,78 @@ class _MobileCenterAddButton extends StatelessWidget {
 class _GastoSyncMobileBottomBar extends StatelessWidget {
   const _GastoSyncMobileBottomBar({
     required this.selectedIndex,
+    required this.isSimplifiedMode,
     required this.onDestinationSelected,
     required this.onAddPressed,
   });
 
   final int selectedIndex;
+  final bool isSimplifiedMode;
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback onAddPressed;
 
   @override
   Widget build(BuildContext context) {
+    if (isSimplifiedMode) {
+      return Container(
+        key: const Key('gastosync_mobile_bottom_bar'),
+        decoration: const BoxDecoration(
+          color: AppTheme.cardSurface,
+          border: Border(
+            top: BorderSide(color: AppTheme.cardBorder, width: 1),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          maintainBottomViewPadding: true,
+          child: SizedBox(
+            height: 64,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  _MobileTabButton(
+                    tab: _navTabs[0],
+                    isSelected: selectedIndex == 0,
+                    onTap: () => onDestinationSelected(0),
+                  ),
+                  _MobileTabButton(
+                    tab: _navTabs[1],
+                    isSelected: selectedIndex == 1,
+                    onTap: () => onDestinationSelected(1),
+                  ),
+                  _MobileTabButton(
+                    tab: _navTabs[3],
+                    isSelected: selectedIndex == 3,
+                    onTap: () => onDestinationSelected(3),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, right: 4),
+                    child: SizedBox(
+                      height: 44,
+                      child: FilledButton(
+                        key: const Key('mobile_center_add_button'),
+                        onPressed: onAddPressed,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppTheme.emeraldPrimary,
+                          foregroundColor: AppTheme.navyDark,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Icon(Icons.add_rounded, size: 24),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.topCenter,
@@ -520,8 +585,11 @@ class _GastoSyncWebSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
-          // Menu lateral de 4 abas
+          // Menu lateral de abas (oculta Planejamento no Modo Simplificado)
           ...List.generate(_navTabs.length, (index) {
+            if (profile.isSimplifiedMode && index == 2) {
+              return const SizedBox.shrink();
+            }
             final tab = _navTabs[index];
             final isSelected = selectedIndex == index;
 

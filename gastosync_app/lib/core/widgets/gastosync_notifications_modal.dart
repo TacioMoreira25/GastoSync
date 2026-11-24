@@ -326,6 +326,7 @@ final gastoSyncNotificationsProvider =
   );
 
   for (final budget in budgets) {
+    if (profile.isSimplifiedMode) break;
     final key = budget.category.trim().toLowerCase();
     if (deletedCategories.contains(key) || budget.limitAmount <= 0) continue;
     final spent = spentByCategory[key] ?? 0.0;
@@ -426,7 +427,9 @@ final gastoSyncNotificationsProvider =
   final monthlyCeiling =
       effectiveIncome * (1.0 - (profile.savingsRateTarget / 100.0));
 
-  if (metrics.totalExpense > 0 && metrics.monthEndProjection > monthlyCeiling) {
+  if (!profile.isSimplifiedMode &&
+      metrics.totalExpense > 0 &&
+      metrics.monthEndProjection > monthlyCeiling) {
     const id = 'burn_rate_ceiling_warning';
     if (!quickState.dismissedIds.contains(id)) {
       items.add(
@@ -471,7 +474,7 @@ final gastoSyncNotificationsProvider =
   }
 
   // 5. Status da Meta de Poupança quando há movimentações
-  if (metrics.totalIncome > 0) {
+  if (!profile.isSimplifiedMode && metrics.totalIncome > 0) {
     final metGoal = metrics.savingsRate >= profile.savingsRateTarget;
     final id = metGoal ? 'savings_goal_achieved' : 'savings_goal_below';
     if (!quickState.dismissedIds.contains(id)) {
@@ -502,7 +505,8 @@ final gastoSyncNotificationsProvider =
 
   // 6. Card de Status de Saúde Financeira & Motor Local
   const healthId = 'financial_health_overview';
-  if (!quickState.dismissedIds.contains(healthId)) {
+  if (!profile.isSimplifiedMode &&
+      !quickState.dismissedIds.contains(healthId)) {
     final displayScore = metrics.roundedScore;
     final statusLabel = metrics.scoreStatusLabel;
     final severity = !metrics.hasTransactions
@@ -536,7 +540,7 @@ final gastoSyncNotificationsProvider =
 
   // 7. Assistente GastoSync IA disponível
   const aiReadyId = 'ai_assistant_ready_tip';
-  if (!quickState.dismissedIds.contains(aiReadyId)) {
+  if (!profile.isSimplifiedMode && !quickState.dismissedIds.contains(aiReadyId)) {
     items.add(
       GastoSyncNotificationItem(
         id: aiReadyId,

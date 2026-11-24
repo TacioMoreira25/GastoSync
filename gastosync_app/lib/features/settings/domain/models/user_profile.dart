@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../auth/data/services/auth_service.dart';
 
@@ -14,6 +15,7 @@ class UserProfile {
     this.reminderTime1 = '09:00',
     this.reminderTime2 = '18:00',
     this.emailBillNotifications = true,
+    this.isSimplifiedMode = false,
     this.jwtToken,
   });
 
@@ -25,6 +27,7 @@ class UserProfile {
   final String reminderTime1;
   final String reminderTime2;
   final bool emailBillNotifications;
+  final bool isSimplifiedMode;
   final String? jwtToken;
 
   /// Teto mensal recomendado de despesas considerando a meta de poupança
@@ -66,6 +69,7 @@ class UserProfile {
     String? reminderTime1,
     String? reminderTime2,
     bool? emailBillNotifications,
+    bool? isSimplifiedMode,
     String? jwtToken,
     bool clearToken = false,
   }) {
@@ -79,14 +83,40 @@ class UserProfile {
       reminderTime2: reminderTime2 ?? this.reminderTime2,
       emailBillNotifications:
           emailBillNotifications ?? this.emailBillNotifications,
+      isSimplifiedMode: isSimplifiedMode ?? this.isSimplifiedMode,
       jwtToken: clearToken ? null : (jwtToken ?? this.jwtToken),
     );
   }
 }
 
 class UserProfileNotifier extends Notifier<UserProfile> {
+  static const String _simplifiedModeKey = 'gastosync_simplified_mode';
+  static const FlutterSecureStorage _prefsStorage = FlutterSecureStorage();
+
   @override
-  UserProfile build() => const UserProfile();
+  UserProfile build() {
+    _restoreSimplifiedMode();
+    return const UserProfile();
+  }
+
+  Future<void> _restoreSimplifiedMode() async {
+    try {
+      final raw = await _prefsStorage.read(key: _simplifiedModeKey);
+      if (raw == 'true' && !state.isSimplifiedMode) {
+        state = state.copyWith(isSimplifiedMode: true);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setSimplifiedMode(bool enabled) async {
+    state = state.copyWith(isSimplifiedMode: enabled);
+    try {
+      await _prefsStorage.write(
+        key: _simplifiedModeKey,
+        value: enabled ? 'true' : 'false',
+      );
+    } catch (_) {}
+  }
 
   Future<bool> updateProfile({
     String? fullName,

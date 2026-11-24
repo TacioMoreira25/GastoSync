@@ -11,7 +11,6 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/gastosync_top_header.dart';
 import '../../../auth/domain/auth_provider.dart';
 import '../../../planning/domain/models/credit_card_model.dart';
-import '../../../planning/presentation/screens/planning_screen.dart';
 import '../../../settings/domain/models/user_profile.dart';
 import '../../../transactions/domain/models/bill.dart';
 import '../../../transactions/domain/models/transaction.dart';
@@ -222,80 +221,134 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       currencyFormatter,
                       metrics,
                       profile,
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    flex: 7,
-                    child: _buildMonthSummarySection(
-                      context,
-                      currencyFormatter,
-                      metrics,
-                      profile,
-                      isDesktop: true,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: _buildBurnRateCard(
-                      context,
-                      currencyFormatter,
-                      metrics,
-                      profile,
-                      transactions: transactions,
                       bills: bills,
                     ),
                   ),
                   const SizedBox(width: 20),
                   Expanded(
-                    flex: 2,
-                    child: Column(
-                      children: [
-                        _buildUpcomingBillsCard(
-                          context,
-                          currencyFormatter,
-                          bills,
-                        ),
-                        const SizedBox(height: 20),
-                        _buildCreditCardHealthyLimitCard(
-                          context,
-                          currencyFormatter,
-                          cardSummaries,
-                        ),
-                        const SizedBox(height: 20),
-                        _buildRecentTransactionsAndInsightsCard(
-                          context,
-                          currencyFormatter,
-                          latestInsight,
-                          metrics,
-                          transactions,
-                        ),
-                      ],
-                    ),
+                    flex: 7,
+                    child: profile.isSimplifiedMode
+                        ? _buildSimplifiedMonthSummarySection(
+                            context,
+                            currencyFormatter,
+                            metrics,
+                            bills,
+                          )
+                        : _buildMonthSummarySection(
+                            context,
+                            currencyFormatter,
+                            metrics,
+                            profile,
+                            isDesktop: true,
+                          ),
                   ),
                 ],
               ),
+              const SizedBox(height: 24),
+              if (profile.isSimplifiedMode)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        children: [
+                          _buildUpcomingBillsCard(
+                            context,
+                            currencyFormatter,
+                            bills,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildCreditCardHealthyLimitCard(
+                            context,
+                            currencyFormatter,
+                            cardSummaries,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      flex: 2,
+                      child: _buildRecentTransactionsAndInsightsCard(
+                        context,
+                        currencyFormatter,
+                        latestInsight,
+                        metrics,
+                        transactions,
+                        isSimplifiedMode: profile.isSimplifiedMode,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildBurnRateCard(
+                        context,
+                        currencyFormatter,
+                        metrics,
+                        profile,
+                        transactions: transactions,
+                        bills: bills,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        children: [
+                          _buildUpcomingBillsCard(
+                            context,
+                            currencyFormatter,
+                            bills,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildCreditCardHealthyLimitCard(
+                            context,
+                            currencyFormatter,
+                            cardSummaries,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildRecentTransactionsAndInsightsCard(
+                            context,
+                            currencyFormatter,
+                            latestInsight,
+                            metrics,
+                            transactions,
+                            isSimplifiedMode: profile.isSimplifiedMode,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
             ] else ...[
               _buildHeroBalanceCard(
                 context,
                 currencyFormatter,
                 metrics,
                 profile,
+                bills: bills,
               ),
               const SizedBox(height: 22),
-              _buildMonthSummarySection(
-                context,
-                currencyFormatter,
-                metrics,
-                profile,
-                isDesktop: false,
-              ),
+              profile.isSimplifiedMode
+                  ? _buildSimplifiedMonthSummarySection(
+                      context,
+                      currencyFormatter,
+                      metrics,
+                      bills,
+                    )
+                  : _buildMonthSummarySection(
+                      context,
+                      currencyFormatter,
+                      metrics,
+                      profile,
+                      isDesktop: false,
+                    ),
               const SizedBox(height: 22),
               _buildUpcomingBillsCard(
                 context,
@@ -308,15 +361,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 currencyFormatter,
                 cardSummaries,
               ),
-              const SizedBox(height: 22),
-              _buildBurnRateCard(
-                context,
-                currencyFormatter,
-                metrics,
-                profile,
-                transactions: transactions,
-                bills: bills,
-              ),
+              if (!profile.isSimplifiedMode) ...[
+                const SizedBox(height: 22),
+                _buildBurnRateCard(
+                  context,
+                  currencyFormatter,
+                  metrics,
+                  profile,
+                  transactions: transactions,
+                  bills: bills,
+                ),
+              ],
               const SizedBox(height: 22),
               _buildRecentTransactionsAndInsightsCard(
                 context,
@@ -324,6 +379,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 latestInsight,
                 metrics,
                 transactions,
+                isSimplifiedMode: profile.isSimplifiedMode,
               ),
             ],
           ],
@@ -397,8 +453,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     BuildContext context,
     NumberFormat formatter,
     FinancialMetrics metrics,
-    UserProfile profile,
-  ) {
+    UserProfile profile, {
+    List<Bill> bills = const <Bill>[],
+  }) {
+    final now = DateTime.now();
+    final pendingMonthBillsTotal = bills
+        .where(
+          (b) =>
+              !b.isDeleted &&
+              !b.isPaid &&
+              !b.isCreditCardCharge &&
+              b.dueDate.year == now.year &&
+              b.dueDate.month == now.month,
+        )
+        .fold<double>(0.0, (sum, b) => sum + b.amount);
+    final simplifiedTotalAccounts =
+        metrics.totalExpense + pendingMonthBillsTotal;
     final effectiveIncome = metrics.totalIncome > 0
         ? metrics.totalIncome
         : profile.monthlyBaseIncome;
@@ -442,12 +512,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Flexible(
+              Flexible(
                 child: Text(
-                  'SALDO DISPONÍVEL',
+                  profile.isSimplifiedMode
+                      ? 'TOTAL DE CONTAS NO MÊS'
+                      : 'SALDO DISPONÍVEL',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Color(0xFF94A3B8),
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -496,7 +568,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              _formatValue(formatter, metrics.currentBalance),
+              _formatValue(
+                formatter,
+                profile.isSimplifiedMode
+                    ? simplifiedTotalAccounts
+                    : metrics.currentBalance,
+              ),
               maxLines: 1,
               style: const TextStyle(
                 color: Colors.white,
@@ -506,49 +583,51 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: !metrics.hasTransactions
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : AppTheme.emeraldPrimary.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  heroBadgeLabel,
-                  style: TextStyle(
+          if (!profile.isSimplifiedMode) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
                     color: !metrics.hasTransactions
-                        ? const Color(0xFFCBD5E1)
-                        : AppTheme.emeraldPrimary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : AppTheme.emeraldPrimary.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    heroBadgeLabel,
+                    style: TextStyle(
+                      color: !metrics.hasTransactions
+                          ? const Color(0xFFCBD5E1)
+                          : AppTheme.emeraldPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  'Patrimônio Líquido: ${_formatValue(formatter, metrics.netWorth)}',
-                  style: const TextStyle(
-                    color: Color(0xFFE2E8F0),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Patrimônio Líquido: ${_formatValue(formatter, metrics.netWorth)}',
+                    style: const TextStyle(
+                      color: Color(0xFFE2E8F0),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
           const SizedBox(height: 18),
           Container(
             height: 1,
@@ -559,11 +638,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             children: [
               Expanded(
                 child: _HeroSubMetric(
-                  label: isUsingBaseIncome
-                      ? 'Renda mensal (base)'
-                      : 'Renda mensal',
-                  value: _formatValue(formatter, effectiveIncome),
-                  icon: Icons.arrow_upward_rounded,
+                  label: profile.isSimplifiedMode
+                      ? 'Pago no mês'
+                      : (isUsingBaseIncome
+                          ? 'Renda mensal (base)'
+                          : 'Renda mensal'),
+                  value: _formatValue(
+                    formatter,
+                    profile.isSimplifiedMode
+                        ? metrics.totalExpense
+                        : effectiveIncome,
+                  ),
+                  icon: profile.isSimplifiedMode
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.arrow_upward_rounded,
                   iconColor: AppTheme.emeraldPrimary,
                 ),
               ),
@@ -576,49 +664,234 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: _HeroSubMetric(
-                  label: 'Despesas do mês',
-                  value: _formatValue(formatter, metrics.totalExpense),
-                  icon: Icons.arrow_downward_rounded,
-                  iconColor: const Color(0xFFF87171),
+                  label: profile.isSimplifiedMode
+                      ? 'Em aberto (boletos)'
+                      : 'Despesas do mês',
+                  value: _formatValue(
+                    formatter,
+                    profile.isSimplifiedMode
+                        ? pendingMonthBillsTotal
+                        : metrics.totalExpense,
+                  ),
+                  icon: profile.isSimplifiedMode
+                      ? Icons.receipt_long_rounded
+                      : Icons.arrow_downward_rounded,
+                  iconColor: profile.isSimplifiedMode
+                      ? AppTheme.warningAmber
+                      : const Color(0xFFF87171),
+                ),
+              ),
+            ],
+          ),
+          if (!profile.isSimplifiedMode) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppTheme.navyBorder.withValues(alpha: 0.6),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Fixos: ${_formatValue(formatter, metrics.fixedExpenses)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFCBD5E1),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Variáveis: ${_formatValue(formatter, metrics.variableExpenses)}',
+                      textAlign: TextAlign.end,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFCBD5E1),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Resumo limpo do mês para o Modo Simplificado (sem Reserva, Score ou Metas de Poupança)
+  Widget _buildSimplifiedMonthSummarySection(
+    BuildContext context,
+    NumberFormat formatter,
+    FinancialMetrics metrics,
+    List<Bill> bills,
+  ) {
+    final now = DateTime.now();
+    final monthBills = bills.where(
+      (b) =>
+          !b.isDeleted &&
+          !b.isPaid &&
+          !b.isCreditCardCharge &&
+          b.dueDate.year == now.year &&
+          b.dueDate.month == now.month,
+    );
+    final pendingMonthTotal =
+        monthBills.fold<double>(0.0, (sum, b) => sum + b.amount);
+    final pendingMonthCount = monthBills.length;
+
+    return Container(
+      key: const Key('dashboard_simplified_summary_card'),
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.whiteCardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Resumo de Contas do Mês',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  ProviderScope.containerOf(context, listen: false)
+                      .read(selectedTransactionsSubTabProvider.notifier)
+                      .selectSubTab(1);
+                  context.go('/transactions');
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.emeraldDeep,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text(
+                  'Ver boletos',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: AppTheme.navyBorder.withValues(alpha: 0.6),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.subtleSurface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Entradas no mês',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _formatValue(formatter, metrics.totalIncome),
+                          style: const TextStyle(
+                            color: AppTheme.emeraldPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.subtleSurface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Saídas no mês',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _formatValue(formatter, metrics.totalExpense),
+                          style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppTheme.emeraldSoftBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.emeraldBadgeBg),
             ),
             child: Row(
               children: [
-                Expanded(
-                  child: Text(
-                    'Fixos: ${_formatValue(formatter, metrics.fixedExpenses)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFCBD5E1),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                const Icon(
+                  Icons.receipt_long_rounded,
+                  size: 18,
+                  color: AppTheme.emeraldDeep,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Variáveis: ${_formatValue(formatter, metrics.variableExpenses)}',
-                    textAlign: TextAlign.end,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    pendingMonthCount > 0
+                        ? '$pendingMonthCount boleto(s) em aberto neste mês • Total: ${_formatValue(formatter, pendingMonthTotal)}'
+                        : 'Nenhum boleto em aberto para este mês.',
                     style: const TextStyle(
-                      color: Color(0xFFCBD5E1),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -1182,13 +1455,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     NumberFormat formatter,
     LocalAgentInsight? latestInsight,
     FinancialMetrics metrics,
-    List<Transaction> transactions,
-  ) {
+    List<Transaction> transactions, {
+    bool isSimplifiedMode = false,
+  }) {
     final tipText = latestInsight != null
         ? '[Categoria: ${latestInsight.categorySuggested} • Confiança ${(latestInsight.confidenceScore * 100).round()}%] ${latestInsight.budgetTip}'
         : (!metrics.hasTransactions
             ? 'Registre suas primeiras transações ou use o preenchimento inteligente para receber insights sobre seus gastos.'
             : 'Sua reserva de emergência atual cobre ${metrics.formattedEmergencyMonths} de despesas e seu Score Financeiro está em ${metrics.roundedScore}/100 (${metrics.scoreStatusLabel}).');
+    final showInsightBanner =
+        !isSimplifiedMode || latestInsight != null;
 
     final sortedTransactions = transactions.where((t) => !t.isDeleted).toList()
       ..sort((a, b) {
@@ -1237,44 +1513,46 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
           const SizedBox(height: 12),
 
-          // Banner cinza de insight da IA
-          Container(
-            key: const Key('dynamic_agent_insight_card'),
-            padding: const EdgeInsets.all(14.0),
-            decoration: AppTheme.subtleInsightBannerDecoration,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const GastoSyncAiBadge(size: 34),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Insight do Agente Preditivo (IA)',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12,
-                          color: AppTheme.textPrimary,
+          if (showInsightBanner) ...[
+            // Banner cinza de insight da IA
+            Container(
+              key: const Key('dynamic_agent_insight_card'),
+              padding: const EdgeInsets.all(14.0),
+              decoration: AppTheme.subtleInsightBannerDecoration,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const GastoSyncAiBadge(size: 34),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Insight do Agente Preditivo (IA)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                            color: AppTheme.textPrimary,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        tipText,
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 12,
-                          height: 1.35,
+                        const SizedBox(height: 3),
+                        Text(
+                          tipText,
+                          style: const TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
+          ],
 
           // Lista das últimas 4 transações
           if (recentFour.isEmpty)
@@ -1744,9 +2022,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   ) {
     void openCreditCardsTab() {
       ProviderScope.containerOf(context, listen: false)
-          .read(planningSubTabRequestProvider.notifier)
-          .openTab(2);
-      context.go('/planning?tab=cards');
+          .read(selectedTransactionsSubTabProvider.notifier)
+          .selectSubTab(2);
+      context.go('/transactions');
     }
 
     if (cardSummaries.isEmpty) {

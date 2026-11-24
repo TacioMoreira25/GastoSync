@@ -1881,6 +1881,18 @@ class $LocalCreditCardsTable extends LocalCreditCards
     requiredDuringInsert: false,
     defaultValue: const Constant(10),
   );
+  static const VerificationMeta _closingDayMeta = const VerificationMeta(
+    'closingDay',
+  );
+  @override
+  late final GeneratedColumn<int> closingDay = GeneratedColumn<int>(
+    'closing_day',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(3),
+  );
   static const VerificationMeta _isPrimaryMeta = const VerificationMeta(
     'isPrimary',
   );
@@ -1896,6 +1908,28 @@ class $LocalCreditCardsTable extends LocalCreditCards
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _manualInvoiceAmountMeta =
+      const VerificationMeta('manualInvoiceAmount');
+  @override
+  late final GeneratedColumn<double> manualInvoiceAmount =
+      GeneratedColumn<double>(
+        'manual_invoice_amount',
+        aliasedName,
+        true,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _manualInvoiceMonthMeta =
+      const VerificationMeta('manualInvoiceMonth');
+  @override
+  late final GeneratedColumn<String> manualInvoiceMonth =
+      GeneratedColumn<String>(
+        'manual_invoice_month',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _isSyncedMeta = const VerificationMeta(
     'isSynced',
   );
@@ -1943,7 +1977,10 @@ class $LocalCreditCardsTable extends LocalCreditCards
     targetMinPercent,
     targetMaxPercent,
     dueDay,
+    closingDay,
     isPrimary,
+    manualInvoiceAmount,
+    manualInvoiceMonth,
     isSynced,
     updatedAt,
     deletedAt,
@@ -2018,10 +2055,34 @@ class $LocalCreditCardsTable extends LocalCreditCards
         dueDay.isAcceptableOrUnknown(data['due_day']!, _dueDayMeta),
       );
     }
+    if (data.containsKey('closing_day')) {
+      context.handle(
+        _closingDayMeta,
+        closingDay.isAcceptableOrUnknown(data['closing_day']!, _closingDayMeta),
+      );
+    }
     if (data.containsKey('is_primary')) {
       context.handle(
         _isPrimaryMeta,
         isPrimary.isAcceptableOrUnknown(data['is_primary']!, _isPrimaryMeta),
+      );
+    }
+    if (data.containsKey('manual_invoice_amount')) {
+      context.handle(
+        _manualInvoiceAmountMeta,
+        manualInvoiceAmount.isAcceptableOrUnknown(
+          data['manual_invoice_amount']!,
+          _manualInvoiceAmountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('manual_invoice_month')) {
+      context.handle(
+        _manualInvoiceMonthMeta,
+        manualInvoiceMonth.isAcceptableOrUnknown(
+          data['manual_invoice_month']!,
+          _manualInvoiceMonthMeta,
+        ),
       );
     }
     if (data.containsKey('is_synced')) {
@@ -2083,10 +2144,22 @@ class $LocalCreditCardsTable extends LocalCreditCards
         DriftSqlType.int,
         data['${effectivePrefix}due_day'],
       )!,
+      closingDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}closing_day'],
+      )!,
       isPrimary: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_primary'],
       )!,
+      manualInvoiceAmount: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}manual_invoice_amount'],
+      ),
+      manualInvoiceMonth: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}manual_invoice_month'],
+      ),
       isSynced: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_synced'],
@@ -2117,7 +2190,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
   final double targetMinPercent;
   final double targetMaxPercent;
   final int dueDay;
+  final int closingDay;
   final bool isPrimary;
+  final double? manualInvoiceAmount;
+  final String? manualInvoiceMonth;
   final bool isSynced;
   final DateTime? updatedAt;
   final DateTime? deletedAt;
@@ -2130,7 +2206,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
     required this.targetMinPercent,
     required this.targetMaxPercent,
     required this.dueDay,
+    required this.closingDay,
     required this.isPrimary,
+    this.manualInvoiceAmount,
+    this.manualInvoiceMonth,
     required this.isSynced,
     this.updatedAt,
     this.deletedAt,
@@ -2146,7 +2225,14 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
     map['target_min_percent'] = Variable<double>(targetMinPercent);
     map['target_max_percent'] = Variable<double>(targetMaxPercent);
     map['due_day'] = Variable<int>(dueDay);
+    map['closing_day'] = Variable<int>(closingDay);
     map['is_primary'] = Variable<bool>(isPrimary);
+    if (!nullToAbsent || manualInvoiceAmount != null) {
+      map['manual_invoice_amount'] = Variable<double>(manualInvoiceAmount);
+    }
+    if (!nullToAbsent || manualInvoiceMonth != null) {
+      map['manual_invoice_month'] = Variable<String>(manualInvoiceMonth);
+    }
     map['is_synced'] = Variable<bool>(isSynced);
     if (!nullToAbsent || updatedAt != null) {
       map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -2167,7 +2253,14 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
       targetMinPercent: Value(targetMinPercent),
       targetMaxPercent: Value(targetMaxPercent),
       dueDay: Value(dueDay),
+      closingDay: Value(closingDay),
       isPrimary: Value(isPrimary),
+      manualInvoiceAmount: manualInvoiceAmount == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manualInvoiceAmount),
+      manualInvoiceMonth: manualInvoiceMonth == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manualInvoiceMonth),
       isSynced: Value(isSynced),
       updatedAt: updatedAt == null && nullToAbsent
           ? const Value.absent()
@@ -2192,7 +2285,14 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
       targetMinPercent: serializer.fromJson<double>(json['targetMinPercent']),
       targetMaxPercent: serializer.fromJson<double>(json['targetMaxPercent']),
       dueDay: serializer.fromJson<int>(json['dueDay']),
+      closingDay: serializer.fromJson<int>(json['closingDay']),
       isPrimary: serializer.fromJson<bool>(json['isPrimary']),
+      manualInvoiceAmount: serializer.fromJson<double?>(
+        json['manualInvoiceAmount'],
+      ),
+      manualInvoiceMonth: serializer.fromJson<String?>(
+        json['manualInvoiceMonth'],
+      ),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
       updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
       deletedAt: serializer.fromJson<DateTime?>(json['deletedAt']),
@@ -2210,7 +2310,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
       'targetMinPercent': serializer.toJson<double>(targetMinPercent),
       'targetMaxPercent': serializer.toJson<double>(targetMaxPercent),
       'dueDay': serializer.toJson<int>(dueDay),
+      'closingDay': serializer.toJson<int>(closingDay),
       'isPrimary': serializer.toJson<bool>(isPrimary),
+      'manualInvoiceAmount': serializer.toJson<double?>(manualInvoiceAmount),
+      'manualInvoiceMonth': serializer.toJson<String?>(manualInvoiceMonth),
       'isSynced': serializer.toJson<bool>(isSynced),
       'updatedAt': serializer.toJson<DateTime?>(updatedAt),
       'deletedAt': serializer.toJson<DateTime?>(deletedAt),
@@ -2226,7 +2329,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
     double? targetMinPercent,
     double? targetMaxPercent,
     int? dueDay,
+    int? closingDay,
     bool? isPrimary,
+    Value<double?> manualInvoiceAmount = const Value.absent(),
+    Value<String?> manualInvoiceMonth = const Value.absent(),
     bool? isSynced,
     Value<DateTime?> updatedAt = const Value.absent(),
     Value<DateTime?> deletedAt = const Value.absent(),
@@ -2239,7 +2345,14 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
     targetMinPercent: targetMinPercent ?? this.targetMinPercent,
     targetMaxPercent: targetMaxPercent ?? this.targetMaxPercent,
     dueDay: dueDay ?? this.dueDay,
+    closingDay: closingDay ?? this.closingDay,
     isPrimary: isPrimary ?? this.isPrimary,
+    manualInvoiceAmount: manualInvoiceAmount.present
+        ? manualInvoiceAmount.value
+        : this.manualInvoiceAmount,
+    manualInvoiceMonth: manualInvoiceMonth.present
+        ? manualInvoiceMonth.value
+        : this.manualInvoiceMonth,
     isSynced: isSynced ?? this.isSynced,
     updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -2262,7 +2375,16 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
           ? data.targetMaxPercent.value
           : this.targetMaxPercent,
       dueDay: data.dueDay.present ? data.dueDay.value : this.dueDay,
+      closingDay: data.closingDay.present
+          ? data.closingDay.value
+          : this.closingDay,
       isPrimary: data.isPrimary.present ? data.isPrimary.value : this.isPrimary,
+      manualInvoiceAmount: data.manualInvoiceAmount.present
+          ? data.manualInvoiceAmount.value
+          : this.manualInvoiceAmount,
+      manualInvoiceMonth: data.manualInvoiceMonth.present
+          ? data.manualInvoiceMonth.value
+          : this.manualInvoiceMonth,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -2280,7 +2402,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
           ..write('targetMinPercent: $targetMinPercent, ')
           ..write('targetMaxPercent: $targetMaxPercent, ')
           ..write('dueDay: $dueDay, ')
+          ..write('closingDay: $closingDay, ')
           ..write('isPrimary: $isPrimary, ')
+          ..write('manualInvoiceAmount: $manualInvoiceAmount, ')
+          ..write('manualInvoiceMonth: $manualInvoiceMonth, ')
           ..write('isSynced: $isSynced, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt')
@@ -2298,7 +2423,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
     targetMinPercent,
     targetMaxPercent,
     dueDay,
+    closingDay,
     isPrimary,
+    manualInvoiceAmount,
+    manualInvoiceMonth,
     isSynced,
     updatedAt,
     deletedAt,
@@ -2315,7 +2443,10 @@ class LocalCreditCard extends DataClass implements Insertable<LocalCreditCard> {
           other.targetMinPercent == this.targetMinPercent &&
           other.targetMaxPercent == this.targetMaxPercent &&
           other.dueDay == this.dueDay &&
+          other.closingDay == this.closingDay &&
           other.isPrimary == this.isPrimary &&
+          other.manualInvoiceAmount == this.manualInvoiceAmount &&
+          other.manualInvoiceMonth == this.manualInvoiceMonth &&
           other.isSynced == this.isSynced &&
           other.updatedAt == this.updatedAt &&
           other.deletedAt == this.deletedAt);
@@ -2330,7 +2461,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
   final Value<double> targetMinPercent;
   final Value<double> targetMaxPercent;
   final Value<int> dueDay;
+  final Value<int> closingDay;
   final Value<bool> isPrimary;
+  final Value<double?> manualInvoiceAmount;
+  final Value<String?> manualInvoiceMonth;
   final Value<bool> isSynced;
   final Value<DateTime?> updatedAt;
   final Value<DateTime?> deletedAt;
@@ -2343,7 +2477,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
     this.targetMinPercent = const Value.absent(),
     this.targetMaxPercent = const Value.absent(),
     this.dueDay = const Value.absent(),
+    this.closingDay = const Value.absent(),
     this.isPrimary = const Value.absent(),
+    this.manualInvoiceAmount = const Value.absent(),
+    this.manualInvoiceMonth = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -2357,7 +2494,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
     this.targetMinPercent = const Value.absent(),
     this.targetMaxPercent = const Value.absent(),
     this.dueDay = const Value.absent(),
+    this.closingDay = const Value.absent(),
     this.isPrimary = const Value.absent(),
+    this.manualInvoiceAmount = const Value.absent(),
+    this.manualInvoiceMonth = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -2372,7 +2512,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
     Expression<double>? targetMinPercent,
     Expression<double>? targetMaxPercent,
     Expression<int>? dueDay,
+    Expression<int>? closingDay,
     Expression<bool>? isPrimary,
+    Expression<double>? manualInvoiceAmount,
+    Expression<String>? manualInvoiceMonth,
     Expression<bool>? isSynced,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? deletedAt,
@@ -2386,7 +2529,12 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
       if (targetMinPercent != null) 'target_min_percent': targetMinPercent,
       if (targetMaxPercent != null) 'target_max_percent': targetMaxPercent,
       if (dueDay != null) 'due_day': dueDay,
+      if (closingDay != null) 'closing_day': closingDay,
       if (isPrimary != null) 'is_primary': isPrimary,
+      if (manualInvoiceAmount != null)
+        'manual_invoice_amount': manualInvoiceAmount,
+      if (manualInvoiceMonth != null)
+        'manual_invoice_month': manualInvoiceMonth,
       if (isSynced != null) 'is_synced': isSynced,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -2402,7 +2550,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
     Value<double>? targetMinPercent,
     Value<double>? targetMaxPercent,
     Value<int>? dueDay,
+    Value<int>? closingDay,
     Value<bool>? isPrimary,
+    Value<double?>? manualInvoiceAmount,
+    Value<String?>? manualInvoiceMonth,
     Value<bool>? isSynced,
     Value<DateTime?>? updatedAt,
     Value<DateTime?>? deletedAt,
@@ -2416,7 +2567,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
       targetMinPercent: targetMinPercent ?? this.targetMinPercent,
       targetMaxPercent: targetMaxPercent ?? this.targetMaxPercent,
       dueDay: dueDay ?? this.dueDay,
+      closingDay: closingDay ?? this.closingDay,
       isPrimary: isPrimary ?? this.isPrimary,
+      manualInvoiceAmount: manualInvoiceAmount ?? this.manualInvoiceAmount,
+      manualInvoiceMonth: manualInvoiceMonth ?? this.manualInvoiceMonth,
       isSynced: isSynced ?? this.isSynced,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -2450,8 +2604,19 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
     if (dueDay.present) {
       map['due_day'] = Variable<int>(dueDay.value);
     }
+    if (closingDay.present) {
+      map['closing_day'] = Variable<int>(closingDay.value);
+    }
     if (isPrimary.present) {
       map['is_primary'] = Variable<bool>(isPrimary.value);
+    }
+    if (manualInvoiceAmount.present) {
+      map['manual_invoice_amount'] = Variable<double>(
+        manualInvoiceAmount.value,
+      );
+    }
+    if (manualInvoiceMonth.present) {
+      map['manual_invoice_month'] = Variable<String>(manualInvoiceMonth.value);
     }
     if (isSynced.present) {
       map['is_synced'] = Variable<bool>(isSynced.value);
@@ -2476,7 +2641,10 @@ class LocalCreditCardsCompanion extends UpdateCompanion<LocalCreditCard> {
           ..write('targetMinPercent: $targetMinPercent, ')
           ..write('targetMaxPercent: $targetMaxPercent, ')
           ..write('dueDay: $dueDay, ')
+          ..write('closingDay: $closingDay, ')
           ..write('isPrimary: $isPrimary, ')
+          ..write('manualInvoiceAmount: $manualInvoiceAmount, ')
+          ..write('manualInvoiceMonth: $manualInvoiceMonth, ')
           ..write('isSynced: $isSynced, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt')
@@ -5026,7 +5194,10 @@ typedef $$LocalCreditCardsTableCreateCompanionBuilder =
       Value<double> targetMinPercent,
       Value<double> targetMaxPercent,
       Value<int> dueDay,
+      Value<int> closingDay,
       Value<bool> isPrimary,
+      Value<double?> manualInvoiceAmount,
+      Value<String?> manualInvoiceMonth,
       Value<bool> isSynced,
       Value<DateTime?> updatedAt,
       Value<DateTime?> deletedAt,
@@ -5041,7 +5212,10 @@ typedef $$LocalCreditCardsTableUpdateCompanionBuilder =
       Value<double> targetMinPercent,
       Value<double> targetMaxPercent,
       Value<int> dueDay,
+      Value<int> closingDay,
       Value<bool> isPrimary,
+      Value<double?> manualInvoiceAmount,
+      Value<String?> manualInvoiceMonth,
       Value<bool> isSynced,
       Value<DateTime?> updatedAt,
       Value<DateTime?> deletedAt,
@@ -5096,8 +5270,23 @@ class $$LocalCreditCardsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get closingDay => $composableBuilder(
+    column: $table.closingDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<bool> get isPrimary => $composableBuilder(
     column: $table.isPrimary,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get manualInvoiceAmount => $composableBuilder(
+    column: $table.manualInvoiceAmount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get manualInvoiceMonth => $composableBuilder(
+    column: $table.manualInvoiceMonth,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5166,8 +5355,23 @@ class $$LocalCreditCardsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get closingDay => $composableBuilder(
+    column: $table.closingDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isPrimary => $composableBuilder(
     column: $table.isPrimary,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get manualInvoiceAmount => $composableBuilder(
+    column: $table.manualInvoiceAmount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get manualInvoiceMonth => $composableBuilder(
+    column: $table.manualInvoiceMonth,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -5228,8 +5432,23 @@ class $$LocalCreditCardsTableAnnotationComposer
   GeneratedColumn<int> get dueDay =>
       $composableBuilder(column: $table.dueDay, builder: (column) => column);
 
+  GeneratedColumn<int> get closingDay => $composableBuilder(
+    column: $table.closingDay,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get isPrimary =>
       $composableBuilder(column: $table.isPrimary, builder: (column) => column);
+
+  GeneratedColumn<double> get manualInvoiceAmount => $composableBuilder(
+    column: $table.manualInvoiceAmount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get manualInvoiceMonth => $composableBuilder(
+    column: $table.manualInvoiceMonth,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<bool> get isSynced =>
       $composableBuilder(column: $table.isSynced, builder: (column) => column);
@@ -5286,7 +5505,10 @@ class $$LocalCreditCardsTableTableManager
                 Value<double> targetMinPercent = const Value.absent(),
                 Value<double> targetMaxPercent = const Value.absent(),
                 Value<int> dueDay = const Value.absent(),
+                Value<int> closingDay = const Value.absent(),
                 Value<bool> isPrimary = const Value.absent(),
+                Value<double?> manualInvoiceAmount = const Value.absent(),
+                Value<String?> manualInvoiceMonth = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime?> updatedAt = const Value.absent(),
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -5299,7 +5521,10 @@ class $$LocalCreditCardsTableTableManager
                 targetMinPercent: targetMinPercent,
                 targetMaxPercent: targetMaxPercent,
                 dueDay: dueDay,
+                closingDay: closingDay,
                 isPrimary: isPrimary,
+                manualInvoiceAmount: manualInvoiceAmount,
+                manualInvoiceMonth: manualInvoiceMonth,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
@@ -5314,7 +5539,10 @@ class $$LocalCreditCardsTableTableManager
                 Value<double> targetMinPercent = const Value.absent(),
                 Value<double> targetMaxPercent = const Value.absent(),
                 Value<int> dueDay = const Value.absent(),
+                Value<int> closingDay = const Value.absent(),
                 Value<bool> isPrimary = const Value.absent(),
+                Value<double?> manualInvoiceAmount = const Value.absent(),
+                Value<String?> manualInvoiceMonth = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime?> updatedAt = const Value.absent(),
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -5327,7 +5555,10 @@ class $$LocalCreditCardsTableTableManager
                 targetMinPercent: targetMinPercent,
                 targetMaxPercent: targetMaxPercent,
                 dueDay: dueDay,
+                closingDay: closingDay,
                 isPrimary: isPrimary,
+                manualInvoiceAmount: manualInvoiceAmount,
+                manualInvoiceMonth: manualInvoiceMonth,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,

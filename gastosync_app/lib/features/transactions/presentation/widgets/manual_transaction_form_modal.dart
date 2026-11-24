@@ -103,6 +103,12 @@ class _ManualTransactionFormModalState
   bool _isBillMode = false;
   bool _isRecurring = false;
   bool _isCreditCardCharge = false;
+  // Frequência para novos boletos: 'single' (Único), 'installment' (Parcelado), 'recurring' (Fixo)
+  String _billFrequency = 'single';
+  int _billInstallmentsCount = 2;
+  int _creditInstallmentsCount = 1;
+  bool _installmentInputIsTotal = false;
+  bool _showBarcodeField = false;
   String _selectedCategory = 'Alimentação';
   String _selectedPaymentMethod = 'PIX';
   String? _selectedCreditCardUuid;
@@ -162,9 +168,25 @@ class _ManualTransactionFormModalState
   bool get _isEditingBill => widget.initialBill != null;
   bool get _isEditing => _isEditingTransaction || _isEditingBill;
 
+  void _onAmountChanged() {
+    if (!mounted) return;
+    final showPreview = (_isBillMode &&
+            !_isEditingBill &&
+            _billFrequency == 'installment') ||
+        (!_isBillMode &&
+            !_isEditingTransaction &&
+            _selectedType == TransactionType.expense &&
+            _selectedPaymentMethod == 'Crédito' &&
+            _creditInstallmentsCount > 1);
+    if (showPreview) {
+      setState(() {});
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _amountController.addListener(_onAmountChanged);
     final initialBill = widget.initialBill;
     final initialTx = widget.initialTransaction;
 
@@ -185,6 +207,7 @@ class _ManualTransactionFormModalState
         _selectedCategory = 'Moradia';
       }
       _barcodeController.text = initialBill.barcode;
+      _showBarcodeField = initialBill.barcode.trim().isNotEmpty;
       _isRecurring = initialBill.isRecurring;
       _isCreditCardCharge = initialBill.isCreditCardCharge;
       _selectedCreditCardUuid = initialBill.creditCardUuid;
@@ -221,6 +244,7 @@ class _ManualTransactionFormModalState
 
   @override
   void dispose() {
+    _amountController.removeListener(_onAmountChanged);
     _smartInputController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
@@ -752,6 +776,19 @@ class _ManualTransactionFormModalState
               updatedAt: DateTime.now(),
             ),
           );
+        } else if (_billFrequency == 'installment' &&
+            _billInstallmentsCount >= 2) {
+          await controller.createInstallmentBills(
+            description: description,
+            inputAmount: amount,
+            inputIsTotal: _installmentInputIsTotal,
+            installments: _billInstallmentsCount,
+            firstDueDate: _selectedDate,
+            category: effectiveCategory,
+            barcode: _barcodeController.text.trim(),
+            isCreditCardCharge: _isCreditCardCharge,
+            creditCardUuid: effectiveBillCardUuid,
+          );
         } else {
           await controller.createBill(
             description: description,
@@ -759,7 +796,7 @@ class _ManualTransactionFormModalState
             dueDate: _selectedDate,
             category: effectiveCategory,
             barcode: _barcodeController.text.trim(),
-            isRecurring: _isRecurring,
+            isRecurring: _billFrequency == 'recurring',
             isCreditCardCharge: _isCreditCardCharge,
             creditCardUuid: effectiveBillCardUuid,
           );
@@ -783,6 +820,17 @@ class _ManualTransactionFormModalState
               isSynced: false,
               updatedAt: DateTime.now(),
             ),
+          );
+        } else if (isCreditExpense && _creditInstallmentsCount >= 2) {
+          await controller.createInstallmentTransactions(
+            description: description,
+            inputAmount: amount,
+            inputIsTotal: _installmentInputIsTotal,
+            installments: _creditInstallmentsCount,
+            firstDate: _selectedDate,
+            category: effectiveCategory,
+            paymentMethod: _selectedPaymentMethod,
+            creditCardUuid: effectiveTxCardUuid,
           );
         } else {
           final prediction = _lastAiPrediction;
@@ -847,6 +895,209 @@ class _ManualTransactionFormModalState
         date.day == now.day;
     final formatted = DateFormat('dd/MM/yyyy').format(date);
     return isToday ? 'Hoje, $formatted' : formatted;
+  }
+
+  Widget _buildInstallmentControls({
+    required String title,
+    required int currentCount,
+    required int minCount,
+    required int maxCount,
+    required bool isBusy,
+    required ValueChanged<int> onCountChanged,
+  }) {
+    final parsedAmount =
+        BrlCurrencyInputFormatter.parseValue(_amountController.text);
+    final safeCount = currentCount.clamp(minCount, maxCount);
+    final isMultiple = safeCount > 1;
+    final amounts = parsedAmount > 0 && isMultiple
+        ? TransactionsController.splitInstallmentAmounts(
+            inputAmount: parsedAmount,
+            installments: safeCount,
+            inputIsTotal: _installmentInputIsTotal,
+          )
+        : const <double>[];
+    final perInstallment = amounts.isNotEmpty ? amounts.first : parsedAmount;
+    final totalAmount = amounts.isNotEmpty
+        ? amounts.fold<double>(0.0, (sum, v) => sum + v)
+        : parsedAmount;
+    final lastDate = TransactionsController.addMonthsClamped(
+      _selectedDate,
+      safeCount - 1,
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.backgroundLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const Key('installment_decrement_button'),
+                visualDensity: VisualDensity.compact,
+                onPressed: isBusy || safeCount <= minCount
+                    ? null
+                    : () => onCountChanged(safeCount - 1),
+                icon: const Icon(Icons.remove_circle_outline_rounded, size: 20),
+              ),
+              SizedBox(
+                width: 62,
+                child: TextFormField(
+                  key: const Key('installment_count_input'),
+                  initialValue: '$safeCount',
+                  enabled: !isBusy,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(2),
+                  ],
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    suffixText: 'x',
+                    suffixStyle: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    filled: true,
+                    fillColor: AppTheme.cardSurface,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppTheme.cardBorder),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppTheme.cardBorder),
+                    ),
+                  ),
+                  onChanged: (raw) {
+                    final parsed = int.tryParse(raw.trim());
+                    if (parsed != null &&
+                        parsed >= minCount &&
+                        parsed <= maxCount) {
+                      onCountChanged(parsed);
+                    }
+                  },
+                ),
+              ),
+              IconButton(
+                key: const Key('installment_increment_button'),
+                visualDensity: VisualDensity.compact,
+                onPressed: isBusy || safeCount >= maxCount
+                    ? null
+                    : () => onCountChanged(safeCount + 1),
+                icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
+              ),
+            ],
+          ),
+          if (isMultiple) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                ChoiceChip(
+                  key: const Key('installment_mode_per_parcel_chip'),
+                  label: const Text('Valor de cada parcela'),
+                  selected: !_installmentInputIsTotal,
+                  showCheckmark: false,
+                  selectedColor: AppTheme.navyDark,
+                  backgroundColor: AppTheme.cardSurface,
+                  labelStyle: TextStyle(
+                    color: !_installmentInputIsTotal
+                        ? Colors.white
+                        : AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  onSelected: isBusy
+                      ? null
+                      : (_) =>
+                          setState(() => _installmentInputIsTotal = false),
+                ),
+                ChoiceChip(
+                  key: const Key('installment_mode_total_chip'),
+                  label: const Text('Valor total da compra'),
+                  selected: _installmentInputIsTotal,
+                  showCheckmark: false,
+                  selectedColor: AppTheme.navyDark,
+                  backgroundColor: AppTheme.cardSurface,
+                  labelStyle: TextStyle(
+                    color: _installmentInputIsTotal
+                        ? Colors.white
+                        : AppTheme.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  onSelected: isBusy
+                      ? null
+                      : (_) => setState(() => _installmentInputIsTotal = true),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.emeraldSoftBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.emeraldBadgeBg),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    parsedAmount > 0
+                        ? '${safeCount}x de R\$ ${BrlCurrencyInputFormatter.formatValue(perInstallment)} • Total R\$ ${BrlCurrencyInputFormatter.formatValue(totalAmount)}'
+                        : '$safeCount parcelas mensais (informe o valor acima para ver o cálculo)',
+                    style: const TextStyle(
+                      color: AppTheme.emeraldDeep,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Início: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}  •  Fim: ${DateFormat('dd/MM/yyyy').format(lastDate)}',
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -1448,13 +1699,33 @@ class _ManualTransactionFormModalState
                   cards: creditCards,
                   isBusy: isBusy,
                 ),
+                if (!_isEditingTransaction) ...[
+                  const SizedBox(height: 14),
+                  _buildInstallmentControls(
+                    title: 'Parcelamento no Cartão',
+                    currentCount: _creditInstallmentsCount,
+                    minCount: 1,
+                    maxCount: 24,
+                    isBusy: isBusy,
+                    onCountChanged: (val) =>
+                        setState(() => _creditInstallmentsCount = val),
+                  ),
+                ],
                 const SizedBox(height: 16),
               ],
             ],
 
             // Seletor de Data / Data de Vencimento
             Text(
-              _isBillMode ? 'Data de Vencimento' : 'Data',
+              _isBillMode
+                  ? (_billFrequency == 'installment' && !_isEditingBill
+                      ? 'Vencimento da 1ª Parcela (Início)'
+                      : 'Data de Vencimento')
+                  : (_creditInstallmentsCount > 1 &&
+                          !_isEditingTransaction &&
+                          _selectedPaymentMethod == 'Crédito'
+                      ? 'Data da 1ª Parcela'
+                      : 'Data'),
               style: const TextStyle(
                 color: AppTheme.textSecondary,
                 fontSize: 12,
@@ -1499,47 +1770,80 @@ class _ManualTransactionFormModalState
             ),
 
             if (_isBillMode) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
-              // Linha Digitável / PIX Copia e Cola (Opcional) (T015)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Linha Digitável / PIX Copia e Cola (Opcional)',
-                    style: TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton.icon(
-                        key: const Key('manual_bill_paste_barcode_button'),
-                        onPressed: isBusy ? null : _pasteBarcodeFromClipboard,
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              if (!_showBarcodeField && _barcodeController.text.trim().isEmpty)
+                Row(
+                  children: [
+                    TextButton.icon(
+                      key: const Key('manual_bill_expand_barcode_button'),
+                      onPressed: isBusy
+                          ? null
+                          : () => setState(() => _showBarcodeField = true),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppTheme.textSecondary,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
                         ),
-                        icon: const Icon(Icons.content_paste_rounded, size: 14),
-                        label: const Text(
-                          'Colar',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.qr_code_2_rounded, size: 17),
+                      label: const Text(
+                        '+ Código de barras / PIX (opcional)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      if (_barcodeController.text.trim().isNotEmpty)
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      key: const Key('manual_bill_paste_barcode_button'),
+                      onPressed: isBusy
+                          ? null
+                          : () async {
+                              setState(() => _showBarcodeField = true);
+                              await _pasteBarcodeFromClipboard();
+                            },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: const Icon(Icons.content_paste_rounded, size: 14),
+                      label: const Text(
+                        'Colar',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else ...[
+                // Linha Digitável / PIX Copia e Cola (Opcional) (T015)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Código de barras / PIX (Opcional)',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                         TextButton.icon(
-                          key: const Key('manual_bill_copy_barcode_button'),
-                          onPressed: isBusy ? null : _copyBarcodeToClipboard,
+                          key: const Key('manual_bill_paste_barcode_button'),
+                          onPressed: isBusy ? null : _pasteBarcodeFromClipboard,
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -1548,60 +1852,82 @@ class _ManualTransactionFormModalState
                             minimumSize: Size.zero,
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
-                          icon: const Icon(Icons.copy_rounded, size: 14),
+                          icon: const Icon(Icons.content_paste_rounded, size: 14),
                           label: const Text(
-                            'Copiar',
+                            'Colar',
                             style: TextStyle(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              TextFormField(
-                key: const Key('manual_bill_barcode_field'),
-                controller: _barcodeController,
-                enabled: !isBusy,
-                onChanged: (_) => setState(() {}),
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 13,
-                  fontFamily: 'monospace',
+                        if (_barcodeController.text.trim().isNotEmpty)
+                          TextButton.icon(
+                            key: const Key('manual_bill_copy_barcode_button'),
+                            onPressed: isBusy ? null : _copyBarcodeToClipboard,
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.copy_rounded, size: 14),
+                            label: const Text(
+                              'Copiar',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
-                decoration: InputDecoration(
-                  hintText: 'Cole aqui o código de barras ou PIX Copia e Cola...',
-                  hintStyle: const TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 12.5,
+                const SizedBox(height: 6),
+                TextFormField(
+                  key: const Key('manual_bill_barcode_field'),
+                  controller: _barcodeController,
+                  enabled: !isBusy,
+                  onChanged: (_) => setState(() {}),
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13,
+                    fontFamily: 'monospace',
                   ),
-                  prefixIcon: const Icon(
-                    Icons.qr_code_2_rounded,
-                    size: 18,
-                    color: AppTheme.textMuted,
-                  ),
-                  filled: true,
-                  fillColor: AppTheme.backgroundLight,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: AppTheme.cardBorder),
+                  decoration: InputDecoration(
+                    hintText: 'Cole aqui o código de barras ou PIX...',
+                    hintStyle: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12.5,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.qr_code_2_rounded,
+                      size: 18,
+                      color: AppTheme.textMuted,
+                    ),
+                    filled: true,
+                    fillColor: AppTheme.backgroundLight,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: AppTheme.cardBorder),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: AppTheme.cardBorder),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 14),
+              ],
+              const SizedBox(height: 12),
 
-              // Switch Repetir mensalmente (Recorrente) (T015)
+              // Frequência do Boleto: Único / Parcelado / Fixo mensal
               Container(
                 decoration: BoxDecoration(
                   color: AppTheme.subtleSurface,
@@ -1610,35 +1936,149 @@ class _ManualTransactionFormModalState
                 ),
                 child: Column(
                   children: [
-                    SwitchListTile(
-                      key: const Key('manual_bill_recurring_switch'),
-                      value: _isRecurring,
-                      thumbColor: _billSwitchThumbColor,
-                      trackColor: _billSwitchTrackColor,
-                      trackOutlineColor: _billSwitchOutlineColor,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 2,
-                      ),
-                      title: const Text(
-                        'Repetir mensalmente (Recorrente)',
-                        style: TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
+                    if (!_isEditingBill) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Frequência',
+                              style: TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                ChoiceChip(
+                                  key: const Key('bill_freq_single_chip'),
+                                  label: const Text('Único'),
+                                  selected: _billFrequency == 'single',
+                                  showCheckmark: false,
+                                  selectedColor: AppTheme.emeraldPrimary,
+                                  backgroundColor: AppTheme.cardSurface,
+                                  labelStyle: TextStyle(
+                                    color: _billFrequency == 'single'
+                                        ? Colors.white
+                                        : AppTheme.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  onSelected: isBusy
+                                      ? null
+                                      : (_) => setState(() {
+                                            _billFrequency = 'single';
+                                            _isRecurring = false;
+                                          }),
+                                ),
+                                ChoiceChip(
+                                  key: const Key('bill_freq_installment_chip'),
+                                  label: const Text('Parcelado'),
+                                  selected: _billFrequency == 'installment',
+                                  showCheckmark: false,
+                                  selectedColor: AppTheme.emeraldPrimary,
+                                  backgroundColor: AppTheme.cardSurface,
+                                  labelStyle: TextStyle(
+                                    color: _billFrequency == 'installment'
+                                        ? Colors.white
+                                        : AppTheme.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  onSelected: isBusy
+                                      ? null
+                                      : (_) => setState(() {
+                                            _billFrequency = 'installment';
+                                            _isRecurring = false;
+                                            if (_billInstallmentsCount < 2) {
+                                              _billInstallmentsCount = 2;
+                                            }
+                                          }),
+                                ),
+                                ChoiceChip(
+                                  key: const Key('bill_freq_recurring_chip'),
+                                  label: const Text('Fixo mensal'),
+                                  selected: _billFrequency == 'recurring',
+                                  showCheckmark: false,
+                                  selectedColor: AppTheme.emeraldPrimary,
+                                  backgroundColor: AppTheme.cardSurface,
+                                  labelStyle: TextStyle(
+                                    color: _billFrequency == 'recurring'
+                                        ? Colors.white
+                                        : AppTheme.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  onSelected: isBusy
+                                      ? null
+                                      : (_) => setState(() {
+                                            _billFrequency = 'recurring';
+                                            _isRecurring = true;
+                                          }),
+                                ),
+                              ],
+                            ),
+                            if (_billFrequency == 'recurring') ...[
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Sem data fim: ao dar baixa, agenda automaticamente o próximo mês.',
+                                style: TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                            ],
+                            if (_billFrequency == 'installment') ...[
+                              const SizedBox(height: 12),
+                              _buildInstallmentControls(
+                                title: 'Parcelas do Boleto / Compra',
+                                currentCount: _billInstallmentsCount,
+                                minCount: 2,
+                                maxCount: 60,
+                                isBusy: isBusy,
+                                onCountChanged: (val) => setState(
+                                  () => _billInstallmentsCount = val,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      subtitle: const Text(
-                        'Ao dar baixa, agenda automaticamente o próximo mês.',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 11.5,
+                    ] else
+                      SwitchListTile(
+                        key: const Key('manual_bill_recurring_switch'),
+                        value: _isRecurring,
+                        thumbColor: _billSwitchThumbColor,
+                        trackColor: _billSwitchTrackColor,
+                        trackOutlineColor: _billSwitchOutlineColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 2,
                         ),
+                        title: const Text(
+                          'Repetir mensalmente (Recorrente)',
+                          style: TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Ao dar baixa, agenda automaticamente o próximo mês.',
+                          style: TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        onChanged: isBusy
+                            ? null
+                            : (val) => setState(() => _isRecurring = val),
                       ),
-                      onChanged: isBusy
-                          ? null
-                          : (val) => setState(() => _isRecurring = val),
-                    ),
                     const Divider(height: 1, color: AppTheme.cardBorder),
                     // Switch Desconta no Cartão (Incluso na Fatura) (T015 / FR-011b)
                     SwitchListTile(

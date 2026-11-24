@@ -722,6 +722,10 @@ class CloudSyncService {
               (item['target_max_percent'] as num?)?.toDouble() ?? 80.0;
           final dueDay = (item['due_day'] as num?)?.toInt() ?? 10;
           final isPrimary = item['is_primary'] == true;
+          final manualInvoiceAmount =
+              (item['manual_invoice_amount'] as num?)?.toDouble();
+          final manualInvoiceMonth =
+              (item['manual_invoice_month'] as String?)?.trim();
           final updatedAt = item['updated_at'] is String
               ? DateTime.tryParse(item['updated_at'] as String)?.toLocal()
               : null;
@@ -735,6 +739,8 @@ class CloudSyncService {
             targetMaxPercent: targetMax,
             dueDay: dueDay,
             isPrimary: isPrimary,
+            manualInvoiceAmount: manualInvoiceAmount,
+            manualInvoiceMonth: manualInvoiceMonth,
             updatedAt: updatedAt,
           );
           if (changed) {
@@ -781,6 +787,12 @@ class CloudSyncService {
         'target_max_percent': card.targetMaxPercent,
         'due_day': card.dueDay,
         'is_primary': card.isPrimary,
+        if (card.manualInvoiceAmount != null &&
+            card.manualInvoiceMonth != null &&
+            card.manualInvoiceMonth!.trim().length == 7) ...{
+          'manual_invoice_amount': card.manualInvoiceAmount,
+          'manual_invoice_month': card.manualInvoiceMonth!.trim(),
+        },
         'updated_at': (card.updatedAt ?? DateTime.now()).toUtc().toIso8601String(),
         if (card.deletedAt != null)
           'deleted_at': card.deletedAt!.toUtc().toIso8601String(),

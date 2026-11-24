@@ -81,7 +81,10 @@ class LocalCreditCards extends Table {
   RealColumn get targetMaxPercent =>
       real().withDefault(const Constant(80.0))();
   IntColumn get dueDay => integer().withDefault(const Constant(10))();
+  IntColumn get closingDay => integer().withDefault(const Constant(3))();
   BoolColumn get isPrimary => boolean().withDefault(const Constant(false))();
+  RealColumn get manualInvoiceAmount => real().nullable()();
+  TextColumn get manualInvoiceMonth => text().nullable()();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
   DateTimeColumn get updatedAt => dateTime().nullable()();
   DateTimeColumn get deletedAt => dateTime().nullable()();
@@ -144,7 +147,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -181,6 +184,22 @@ class AppDatabase extends _$AppDatabase {
             );
             await customStatement(
               "DELETE FROM local_credit_cards WHERE name = 'Cartão Principal' AND limit_amount = 1500.0;",
+            );
+          }
+          if (from < 5) {
+            await m.addColumn(
+              localCreditCards,
+              localCreditCards.manualInvoiceAmount,
+            );
+            await m.addColumn(
+              localCreditCards,
+              localCreditCards.manualInvoiceMonth,
+            );
+          }
+          if (from < 6) {
+            await m.addColumn(
+              localCreditCards,
+              localCreditCards.closingDay,
             );
           }
         },
@@ -375,6 +394,8 @@ class AppDatabase extends _$AppDatabase {
     required double targetMaxPercent,
     required int dueDay,
     required bool isPrimary,
+    double? manualInvoiceAmount,
+    String? manualInvoiceMonth,
     DateTime? updatedAt,
   }) async {
     final normalizedEmail = userEmail.trim().toLowerCase();
@@ -383,6 +404,16 @@ class AppDatabase extends _$AppDatabase {
     if (normalizedUuid.isEmpty || trimmedName.isEmpty || limitAmount <= 0) {
       return false;
     }
+
+    final normalizedManualMonth =
+        (manualInvoiceAmount != null &&
+                manualInvoiceAmount >= 0 &&
+                manualInvoiceMonth != null &&
+                manualInvoiceMonth.trim().length == 7)
+            ? manualInvoiceMonth.trim()
+            : null;
+    final normalizedManualAmount =
+        normalizedManualMonth != null ? manualInvoiceAmount : null;
 
     final existingRows = await (select(localCreditCards)
           ..where((c) => c.userEmail.equals(normalizedEmail)))
@@ -401,12 +432,21 @@ class AppDatabase extends _$AppDatabase {
         return false;
       }
 
+      final sameManualAmount = (match.manualInvoiceAmount == null &&
+              normalizedManualAmount == null) ||
+          (match.manualInvoiceAmount != null &&
+              normalizedManualAmount != null &&
+              (match.manualInvoiceAmount! - normalizedManualAmount).abs() <=
+                  0.001);
+
       final changed = match.name != trimmedName ||
           (match.limitAmount - limitAmount).abs() > 0.001 ||
           (match.targetMinPercent - targetMinPercent).abs() > 0.01 ||
           (match.targetMaxPercent - targetMaxPercent).abs() > 0.01 ||
           match.dueDay != dueDay ||
-          match.isPrimary != isPrimary;
+          match.isPrimary != isPrimary ||
+          !sameManualAmount ||
+          match.manualInvoiceMonth != normalizedManualMonth;
       if (!changed) {
         return false;
       }
@@ -420,6 +460,8 @@ class AppDatabase extends _$AppDatabase {
           targetMaxPercent: Value(targetMaxPercent),
           dueDay: Value(dueDay.clamp(1, 31)),
           isPrimary: Value(isPrimary),
+          manualInvoiceAmount: Value(normalizedManualAmount),
+          manualInvoiceMonth: Value(normalizedManualMonth),
           isSynced: const Value(true),
           updatedAt: Value(updatedAt ?? DateTime.now()),
         ),
@@ -437,11 +479,36 @@ class AppDatabase extends _$AppDatabase {
         targetMaxPercent: Value(targetMaxPercent),
         dueDay: Value(dueDay.clamp(1, 31)),
         isPrimary: Value(isPrimary),
+        manualInvoiceAmount: Value(normalizedManualAmount),
+        manualInvoiceMonth: Value(normalizedManualMonth),
         isSynced: const Value(true),
         updatedAt: Value(updatedAt ?? DateTime.now()),
       ),
     );
     return true;
+  }
+
+  /// Atualiza (ou limpa, quando `manualInvoiceAmount == null`) o valor informado manualmente
+  /// para a fatura atual do cartão no mês `manualInvoiceMonth` (`YYYY-MM`).
+  Future<int> updateCreditCardManualInvoice(
+    int cardId, {
+    double? manualInvoiceAmount,
+    String? manualInvoiceMonth,
+  }) {
+    final now = DateTime.now();
+    final hasValidManual = manualInvoiceAmount != null &&
+        manualInvoiceAmount >= 0 &&
+        manualInvoiceMonth != null &&
+        manualInvoiceMonth.trim().length == 7;
+    return (update(localCreditCards)..where((c) => c.id.equals(cardId))).write(
+      LocalCreditCardsCompanion(
+        manualInvoiceAmount: Value(hasValidManual ? manualInvoiceAmount : null),
+        manualInvoiceMonth:
+            Value(hasValidManual ? manualInvoiceMonth.trim() : null),
+        isSynced: const Value(false),
+        updatedAt: Value(now),
+      ),
+    );
   }
 
   /// Atualização de status de sincronização com o backend
@@ -649,6 +716,54 @@ class AppDatabase extends _$AppDatabase {
         createdTransactionUuid: createdTxUuid,
         nextRecurringBillId: nextRecurringBillId,
       );
+    });
+  }
+
+  /// Estorna (desfaz) o pagamento de um boleto já marcado como pago:
+  /// 1. Reverte o status do boleto para `pending` (ou `overdue` se já venceu) e limpa `paidAt` / vínculo.
+  /// 2. Faz soft-delete da despesa vinculada em `LocalTransactions` (para sincronizar exclusão na nuvem).
+  Future<bool> unpayBillAndRevertTransaction(int billId) {
+    return transaction(() async {
+      final bill = await (select(localBills)..where((b) => b.id.equals(billId)))
+          .getSingleOrNull();
+      if (bill == null || bill.deletedAt != null || bill.status != 'paid') {
+        return false;
+      }
+
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final dueDayDate =
+          DateTime(bill.dueDate.year, bill.dueDate.month, bill.dueDate.day);
+      final revertedStatus = dueDayDate.isBefore(today) ? 'overdue' : 'pending';
+
+      // Remove (soft-delete) a despesa vinculada no extrato, se existir
+      if (bill.linkedTransactionId != null) {
+        await deleteTransactionById(bill.linkedTransactionId!, softDelete: true);
+      } else if (bill.linkedTxUuid != null &&
+          bill.linkedTxUuid!.trim().isNotEmpty) {
+        final linkedTx = await (select(localTransactions)
+              ..where(
+                (t) =>
+                    t.clientUuid.equals(bill.linkedTxUuid!.trim()) &
+                    t.deletedAt.isNull(),
+              ))
+            .getSingleOrNull();
+        if (linkedTx != null) {
+          await deleteTransactionById(linkedTx.id, softDelete: true);
+        }
+      }
+
+      await (update(localBills)..where((b) => b.id.equals(bill.id))).write(
+        LocalBillsCompanion(
+          status: Value(revertedStatus),
+          paidAt: const Value(null),
+          linkedTransactionId: const Value(null),
+          linkedTxUuid: const Value(null),
+          isSynced: const Value(false),
+          updatedAt: Value(now),
+        ),
+      );
+      return true;
     });
   }
 
@@ -1041,6 +1156,7 @@ class AppDatabase extends _$AppDatabase {
     double targetMinPercent = 50.0,
     double targetMaxPercent = 80.0,
     int dueDay = 10,
+    int? closingDay,
     bool isPrimary = false,
     String? userEmail,
   }) async {
@@ -1050,6 +1166,8 @@ class AppDatabase extends _$AppDatabase {
         : 'marcos.pereira@gastosync.local';
     final now = DateTime.now();
     final safeDueDay = dueDay.clamp(1, 31);
+    final safeClosingDay =
+        (closingDay ?? (((safeDueDay - 7 - 1) % 28) + 1)).clamp(1, 31);
     final safeMin = targetMinPercent.clamp(0.0, 100.0);
     final safeMax = targetMaxPercent.clamp(safeMin, 100.0);
 
@@ -1101,6 +1219,7 @@ class AppDatabase extends _$AppDatabase {
             targetMinPercent: Value(safeMin),
             targetMaxPercent: Value(safeMax),
             dueDay: Value(safeDueDay),
+            closingDay: Value(safeClosingDay),
             isPrimary: Value(effectiveIsPrimary),
             isSynced: const Value(false),
             updatedAt: Value(now),
@@ -1125,6 +1244,7 @@ class AppDatabase extends _$AppDatabase {
           targetMinPercent: Value(safeMin),
           targetMaxPercent: Value(safeMax),
           dueDay: Value(safeDueDay),
+          closingDay: Value(safeClosingDay),
           isPrimary: Value(effectiveIsPrimary),
           isSynced: const Value(false),
           updatedAt: Value(now),
@@ -1160,6 +1280,28 @@ class AppDatabase extends _$AppDatabase {
         affected =
             await (delete(localCreditCards)..where((c) => c.id.equals(cardId)))
                 .go();
+      }
+
+      if (target != null && target.clientUuid.trim().isNotEmpty) {
+        final deletedUuid = target.clientUuid.trim();
+        await (update(localBills)
+              ..where((b) => b.creditCardUuid.equals(deletedUuid)))
+            .write(
+          LocalBillsCompanion(
+            creditCardUuid: const Value(null),
+            isSynced: const Value(false),
+            updatedAt: Value(now),
+          ),
+        );
+        await (update(localTransactions)
+              ..where((t) => t.creditCardUuid.equals(deletedUuid)))
+            .write(
+          LocalTransactionsCompanion(
+            creditCardUuid: const Value(null),
+            isSynced: const Value(false),
+            updatedAt: Value(now),
+          ),
+        );
       }
 
       if (target != null && target.isPrimary) {

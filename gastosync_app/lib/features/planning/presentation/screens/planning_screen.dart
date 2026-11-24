@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/brl_currency_formatter.dart';
 import '../../../dashboard/domain/services/financial_health_engine.dart';
 import '../../../dashboard/presentation/controllers/dashboard_controller.dart';
 import '../../../settings/domain/models/user_profile.dart';
@@ -1170,11 +1171,13 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'TOTAL UTILIZADO NO MÊS (FIXAS + COMPRAS)',
+                    Text(
+                      summary.hasManualInvoice
+                          ? 'FATURA ATUAL INFORMADA (MÊS VIGENTE)'
+                          : 'TOTAL UTILIZADO NO MÊS (FIXAS + COMPRAS)',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: AppTheme.textMuted,
                         fontSize: 10.5,
                         fontWeight: FontWeight.w700,
@@ -1320,6 +1323,136 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+
+          // Controle flexível de valor direto da fatura (sem duplicar lançamentos do extrato)
+          if (summary.hasManualInvoice) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: summary.untrackedInvoiceDifference < -0.01
+                    ? AppTheme.warningBadgeBg.withValues(alpha: 0.5)
+                    : AppTheme.subtleSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: summary.untrackedInvoiceDifference < -0.01
+                      ? AppTheme.warningBorder
+                      : AppTheme.cardBorder,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        summary.untrackedInvoiceDifference < -0.01
+                            ? Icons.info_outline_rounded
+                            : Icons.receipt_long_rounded,
+                        size: 15,
+                        color: summary.untrackedInvoiceDifference < -0.01
+                            ? AppTheme.warningDark
+                            : AppTheme.navyDark,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          summary.untrackedInvoiceDifference > 0.01
+                              ? 'Detalhado no app: ${currencyFormatter.format(summary.trackedUsedAmount)} • Outros gastos na fatura: ${currencyFormatter.format(summary.untrackedInvoiceDifference)}'
+                              : (summary.untrackedInvoiceDifference < -0.01
+                                  ? 'Seus lançamentos no app (${currencyFormatter.format(summary.trackedUsedAmount)}) já superaram a fatura informada (${currencyFormatter.format(summary.totalUsedAmount)}). Atualize ou volte ao automático.'
+                                  : 'Valor informado coincide exatamente com seus lançamentos no app.'),
+                          style: TextStyle(
+                            color: summary.untrackedInvoiceDifference < -0.01
+                                ? AppTheme.warningDark
+                                : AppTheme.textSecondary,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (card.id != null && card.id! > 0)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  key: Key('manual_invoice_button_${card.id}'),
+                  onPressed: () => _showManualInvoiceDialog(
+                    context,
+                    summary,
+                    currencyFormatter,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.navyDark,
+                    side: const BorderSide(color: AppTheme.cardBorder),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.edit_note_rounded, size: 17),
+                  label: Text(
+                    summary.hasManualInvoice
+                        ? 'Ajustar valor da fatura'
+                        : 'Informar valor da fatura',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (summary.hasManualInvoice)
+                  TextButton.icon(
+                    key: Key('reset_manual_invoice_button_${card.id}'),
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      await ref
+                          .read(transactionsControllerProvider)
+                          .updateCreditCardManualInvoice(
+                            card.id!,
+                            amount: null,
+                            yearMonth: null,
+                          );
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Cartão "${card.name}" voltou para o cálculo automático (fixas + compras).',
+                          ),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.textSecondary,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.autorenew_rounded, size: 16),
+                    label: const Text(
+                      'Voltar ao automático',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           const SizedBox(height: 12),
 
           // Faixa Saudável de Relacionamento Bancário (50% a 80%)
@@ -1370,6 +1503,143 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showManualInvoiceDialog(
+    BuildContext context,
+    CreditCardUsageSummary summary,
+    NumberFormat currencyFormatter,
+  ) async {
+    final card = summary.card;
+    if (card.id == null) return;
+    final initialValue = summary.hasManualInvoice
+        ? summary.manualInvoiceAmount!
+        : summary.trackedUsedAmount;
+    final amountController = TextEditingController(
+      text: initialValue > 0
+          ? BrlCurrencyInputFormatter.formatValue(initialValue)
+          : '',
+    );
+    final currentMonth = CreditCard.formatYearMonth(DateTime.now());
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            'Fatura atual • ${card.name}',
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Informe o valor total que está aparecendo na fatura do seu banco neste mês. Isso atualiza o limite saudável do cartão sem duplicar compras no extrato.',
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12.5,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.subtleSurface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppTheme.cardBorder),
+                    ),
+                    child: Text(
+                      'Lançado no app este mês: ${currencyFormatter.format(summary.trackedUsedAmount)} (${summary.fixedSubscriptionsCount} fixa(s) + ${summary.variablePurchasesCount} compra(s))',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    key: const Key('manual_invoice_amount_field'),
+                    controller: amountController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [BrlCurrencyInputFormatter()],
+                    decoration: InputDecoration(
+                      labelText: 'Valor atual da fatura (R\$)',
+                      hintText: '0,00',
+                      prefixText: 'R\$ ',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    validator: (value) {
+                      final parsed =
+                          BrlCurrencyInputFormatter.parseValue(value ?? '');
+                      if (parsed < 0) {
+                        return 'Informe um valor válido.';
+                      }
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const Key('save_manual_invoice_button'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.emeraldPrimary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final parsed = BrlCurrencyInputFormatter.parseValue(
+                  amountController.text,
+                );
+                final messenger = ScaffoldMessenger.of(context);
+                Navigator.of(dialogContext).pop();
+                await ref
+                    .read(transactionsControllerProvider)
+                    .updateCreditCardManualInvoice(
+                      card.id!,
+                      amount: parsed,
+                      yearMonth: currentMonth,
+                    );
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Fatura de "${card.name}" atualizada para ${currencyFormatter.format(parsed)}.',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              child: const Text('Salvar fatura'),
+            ),
+          ],
+        );
+      },
+    );
+    amountController.dispose();
   }
 
   Future<void> _showUpsertCreditCardDialog(

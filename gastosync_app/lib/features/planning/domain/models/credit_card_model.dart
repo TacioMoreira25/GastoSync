@@ -30,7 +30,10 @@ class CreditCard {
     this.targetMinPercent = 50.0,
     this.targetMaxPercent = 80.0,
     this.dueDay = 10,
+    this.closingDay = 3,
     this.isPrimary = false,
+    this.manualInvoiceAmount,
+    this.manualInvoiceMonth,
     this.isSynced = false,
     this.updatedAt,
     this.deletedAt,
@@ -44,12 +47,59 @@ class CreditCard {
   final double targetMinPercent;
   final double targetMaxPercent;
   final int dueDay;
+  final int closingDay;
   final bool isPrimary;
+  final double? manualInvoiceAmount;
+  final String? manualInvoiceMonth;
   final bool isSynced;
   final DateTime? updatedAt;
   final DateTime? deletedAt;
 
   bool get isDeleted => deletedAt != null;
+
+  static String formatYearMonth(DateTime date) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    return '$y-$m';
+  }
+
+  /// Retorna o intervalo real `(inicio, fim)` de compras que entram na fatura
+  /// com vencimento no mês de [referenceDate], considerando [closingDay] e [dueDay].
+  ({DateTime start, DateTime end}) invoiceCycleForMonth(
+    DateTime referenceDate,
+  ) {
+    final safeClosing = closingDay.clamp(1, 31);
+    final safeDue = dueDay.clamp(1, 31);
+    // Se fecha depois do vencimento (ex.: fecha 25, vence 05), o fechamento da fatura
+    // de Dezembro ocorreu em Novembro (25/11); caso contrário (ex.: fecha 21, vence 28),
+    // ocorre no próprio mês (21/12).
+    final endBase = safeClosing > safeDue
+        ? DateTime(referenceDate.year, referenceDate.month - 1, 1)
+        : DateTime(referenceDate.year, referenceDate.month, 1);
+    final endLastDay = DateTime(endBase.year, endBase.month + 1, 0).day;
+    final endDay = safeClosing > endLastDay ? endLastDay : safeClosing;
+    final end = DateTime(endBase.year, endBase.month, endDay, 23, 59, 59);
+
+    final prevBase = DateTime(endBase.year, endBase.month - 1, 1);
+    final prevLastDay = DateTime(prevBase.year, prevBase.month + 1, 0).day;
+    final prevClosingDay =
+        safeClosing > prevLastDay ? prevLastDay : safeClosing;
+    final prevClosing = DateTime(prevBase.year, prevBase.month, prevClosingDay);
+    final start = DateTime(
+      prevClosing.year,
+      prevClosing.month,
+      prevClosing.day,
+    ).add(const Duration(days: 1));
+    return (start: start, end: end);
+  }
+
+  /// Retorna o valor de fatura informado manualmente se pertencer ao mês de [referenceDate].
+  double? manualInvoiceForMonth([DateTime? referenceDate]) {
+    if (manualInvoiceAmount == null || manualInvoiceAmount! < 0) return null;
+    final refMonth = formatYearMonth(referenceDate ?? DateTime.now());
+    if (manualInvoiceMonth?.trim() != refMonth) return null;
+    return manualInvoiceAmount;
+  }
 
   /// Valor em Reais correspondente ao piso da faixa ideal de relacionamento (ex.: 50% de R$ 1.500 = R$ 750,00)
   double get healthyMinAmount =>
@@ -100,7 +150,10 @@ class CreditCard {
       targetMinPercent: row.targetMinPercent,
       targetMaxPercent: row.targetMaxPercent,
       dueDay: row.dueDay,
+      closingDay: row.closingDay,
       isPrimary: row.isPrimary,
+      manualInvoiceAmount: row.manualInvoiceAmount,
+      manualInvoiceMonth: row.manualInvoiceMonth,
       isSynced: row.isSynced,
       updatedAt: row.updatedAt,
       deletedAt: row.deletedAt,
@@ -124,7 +177,10 @@ class CreditCard {
       targetMinPercent: drift.Value(targetMinPercent),
       targetMaxPercent: drift.Value(targetMaxPercent),
       dueDay: drift.Value(dueDay.clamp(1, 31)),
+      closingDay: drift.Value(closingDay.clamp(1, 31)),
       isPrimary: drift.Value(isPrimary),
+      manualInvoiceAmount: drift.Value(manualInvoiceAmount),
+      manualInvoiceMonth: drift.Value(manualInvoiceMonth),
       isSynced: drift.Value(isSynced),
       updatedAt: drift.Value(updatedAt ?? DateTime.now()),
       deletedAt: deletedAt != null
@@ -142,7 +198,11 @@ class CreditCard {
     double? targetMinPercent,
     double? targetMaxPercent,
     int? dueDay,
+    int? closingDay,
     bool? isPrimary,
+    double? manualInvoiceAmount,
+    String? manualInvoiceMonth,
+    bool clearManualInvoice = false,
     bool? isSynced,
     DateTime? updatedAt,
     DateTime? deletedAt,
@@ -157,7 +217,14 @@ class CreditCard {
       targetMinPercent: targetMinPercent ?? this.targetMinPercent,
       targetMaxPercent: targetMaxPercent ?? this.targetMaxPercent,
       dueDay: dueDay ?? this.dueDay,
+      closingDay: closingDay ?? this.closingDay,
       isPrimary: isPrimary ?? this.isPrimary,
+      manualInvoiceAmount: clearManualInvoice
+          ? null
+          : (manualInvoiceAmount ?? this.manualInvoiceAmount),
+      manualInvoiceMonth: clearManualInvoice
+          ? null
+          : (manualInvoiceMonth ?? this.manualInvoiceMonth),
       isSynced: isSynced ?? this.isSynced,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
@@ -167,8 +234,8 @@ class CreditCard {
 
 /// Resumo consolidado do uso mensal de um cartão de crédito, separando
 /// assinaturas/cobranças fixas (`fixedSubscriptionsAmount`) e compras avulsas
-/// no crédito (`variablePurchasesAmount`), além dos indicadores da faixa saudável
-/// de relacionamento bancário (50% a 80%) (T028 / US5).
+/// no crédito (`variablePurchasesAmount`), além do valor manual opcional da fatura
+/// (`manualInvoiceAmount`) e dos indicadores da faixa saudável (50% a 80%) (T028 / US5).
 @immutable
 class CreditCardUsageSummary {
   const CreditCardUsageSummary({
@@ -177,6 +244,7 @@ class CreditCardUsageSummary {
     required this.variablePurchasesAmount,
     this.fixedSubscriptionsCount = 0,
     this.variablePurchasesCount = 0,
+    this.manualInvoiceAmount,
   });
 
   final CreditCard card;
@@ -190,9 +258,25 @@ class CreditCardUsageSummary {
   final int fixedSubscriptionsCount;
   final int variablePurchasesCount;
 
-  /// Total utilizado no cartão no mês (Fixas + Variáveis)
-  double get totalUsedAmount =>
+  /// Valor de fatura informado manualmente pelo usuário para o mês vigente (opcional)
+  final double? manualInvoiceAmount;
+
+  /// Indica se há um valor de fatura informado manualmente ativo para este mês
+  bool get hasManualInvoice => manualInvoiceAmount != null;
+
+  /// Soma detalhada no app (Fixas + Variáveis lançadas no cartão)
+  double get trackedUsedAmount =>
       fixedSubscriptionsAmount + variablePurchasesAmount;
+
+  /// Diferença entre a fatura informada manualmente e o que foi detalhado no app
+  /// (positivo = gastos anteriores/não lançados no app; negativo = lançamentos no app superaram o valor informado)
+  double get untrackedInvoiceDifference =>
+      hasManualInvoice ? (manualInvoiceAmount! - trackedUsedAmount) : 0.0;
+
+  /// Total utilizado no cartão no mês: usa o valor informado da fatura quando definido,
+  /// ou a soma automática das compras e cobranças fixas lançadas no app.
+  double get totalUsedAmount =>
+      hasManualInvoice ? manualInvoiceAmount! : trackedUsedAmount;
 
   /// Percentual de utilização sobre o limite total do cartão (`0`..`100+`)
   double get utilizationPercent =>
@@ -273,11 +357,14 @@ class CreditCardUsageSummary {
       return cardUuid.isNotEmpty && normalized == cardUuid;
     }
 
+    final cycle = card.invoiceCycleForMonth(now);
+
     double fixedSum = 0.0;
     int fixedCount = 0;
     for (final bill in bills) {
       if (bill.isDeleted || !bill.isCreditCardCharge) continue;
-      if (bill.dueDate.year != now.year || bill.dueDate.month != now.month) {
+      if (bill.dueDate.isBefore(cycle.start) ||
+          bill.dueDate.isAfter(cycle.end)) {
         continue;
       }
       if (matchesCard(bill.creditCardUuid)) {
@@ -290,7 +377,9 @@ class CreditCardUsageSummary {
     int variableCount = 0;
     for (final tx in transactions) {
       if (tx.isDeleted || !tx.isExpense) continue;
-      if (tx.date.year != now.year || tx.date.month != now.month) continue;
+      if (tx.date.isBefore(cycle.start) || tx.date.isAfter(cycle.end)) {
+        continue;
+      }
       if (!_isCreditPaymentMethod(tx.paymentMethod)) continue;
       if (matchesCard(tx.creditCardUuid)) {
         variableSum += tx.amount;
@@ -304,6 +393,7 @@ class CreditCardUsageSummary {
       variablePurchasesAmount: variableSum,
       fixedSubscriptionsCount: fixedCount,
       variablePurchasesCount: variableCount,
+      manualInvoiceAmount: card.manualInvoiceForMonth(now),
     );
   }
 

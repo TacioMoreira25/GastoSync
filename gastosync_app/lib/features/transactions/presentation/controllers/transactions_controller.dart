@@ -49,13 +49,13 @@ final selectedCategoryFilterProvider =
   SelectedCategoryFilterNotifier.new,
 );
 
-/// Sub-aba selecionada na tela de Transações (`0` = Lançamentos, `1` = Boletos a Pagar)
+/// Sub-aba selecionada na tela de Transações (`0` = Lançamentos, `1` = Boletos, `2` = Cartões)
 class TransactionsSubTabNotifier extends Notifier<int> {
   @override
   int build() => 0;
 
   void selectSubTab(int index) {
-    state = index.clamp(0, 1);
+    state = index.clamp(0, 2);
   }
 }
 
@@ -337,6 +337,168 @@ class TransactionsController {
     return res;
   }
 
+  /// Estorna (desfaz) o pagamento de um boleto já pago, revertendo status e removendo
+  /// a despesa vinculada no extrato (com sincronização em nuvem).
+  Future<bool> unpayBill(int billId) async {
+    final reverted = await _db.unpayBillAndRevertTransaction(billId);
+    if (reverted) {
+      _triggerBackgroundCloudSync();
+    }
+    return reverted;
+  }
+
+  /// Calcula a data de vencimento/lançamento após [monthsToAdd] meses preservando o dia
+  /// original e ajustando para o último dia válido de meses mais curtos (ex.: 31/01 → 28/02).
+  static DateTime addMonthsClamped(DateTime base, int monthsToAdd) {
+    final totalMonths = (base.year * 12) + (base.month - 1) + monthsToAdd;
+    final targetYear = totalMonths ~/ 12;
+    final targetMonth = (totalMonths % 12) + 1;
+    final lastDayOfMonth = DateTime(targetYear, targetMonth + 1, 0).day;
+    final clampedDay =
+        base.day > lastDayOfMonth ? lastDayOfMonth : base.day;
+    return DateTime(
+      targetYear,
+      targetMonth,
+      clampedDay,
+      base.hour,
+      base.minute,
+      base.second,
+    );
+  }
+
+  /// Divide [totalAmount] em [installments] parcelas com arredondamento exato em centavos
+  /// (eventual diferença de centavos fica na última parcela para a soma bater 100%).
+  static List<double> splitInstallmentAmounts({
+    required double inputAmount,
+    required int installments,
+    required bool inputIsTotal,
+  }) {
+    final count = installments.clamp(1, 60);
+    if (count == 1 || !inputIsTotal) {
+      final perInstallment =
+          double.parse(inputAmount.toStringAsFixed(2));
+      return List<double>.filled(count, perInstallment);
+    }
+    final totalCents = (inputAmount * 100).round();
+    final baseCents = totalCents ~/ count;
+    final remainderCents = totalCents - (baseCents * count);
+    return List<double>.generate(count, (index) {
+      final cents =
+          index == count - 1 ? baseCents + remainderCents : baseCents;
+      return cents / 100.0;
+    });
+  }
+
+  /// Cria um conjunto de boletos parcelados (`1/N` até `N/N`), um por mês a partir de [firstDueDate].
+  Future<List<int>> createInstallmentBills({
+    required String description,
+    required double inputAmount,
+    required bool inputIsTotal,
+    required int installments,
+    required DateTime firstDueDate,
+    required String category,
+    String barcode = '',
+    bool isCreditCardCharge = false,
+    String? creditCardUuid,
+  }) async {
+    final count = installments.clamp(2, 60);
+    final amounts = splitInstallmentAmounts(
+      inputAmount: inputAmount,
+      installments: count,
+      inputIsTotal: inputIsTotal,
+    );
+    final email = _currentUserEmail;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final baseDesc = description.trim();
+    final ids = <int>[];
+
+    for (var i = 0; i < count; i++) {
+      final dueDate = addMonthsClamped(firstDueDate, i);
+      final targetDue = DateTime(dueDate.year, dueDate.month, dueDate.day);
+      final status =
+          targetDue.isBefore(today) ? BillStatus.overdue : BillStatus.pending;
+      final bill = Bill(
+        clientUuid: AppDatabase.generateClientUuid(),
+        userEmail: email,
+        description: '$baseDesc (${i + 1}/$count)',
+        amount: amounts[i],
+        dueDate: dueDate,
+        category: category,
+        barcode: i == 0 ? barcode : '',
+        isRecurring: false,
+        isCreditCardCharge: isCreditCardCharge,
+        creditCardUuid: creditCardUuid,
+        status: status,
+        isSynced: false,
+        updatedAt: now,
+      );
+      ids.add(await _db.insertBill(bill.toCompanion()));
+    }
+
+    _triggerBackgroundCloudSync();
+    return ids;
+  }
+
+  /// Cria uma compra parcelada no cartão de crédito (`1/N` até `N/N`), lançando uma transação por mês.
+  Future<List<int>> createInstallmentTransactions({
+    required String description,
+    required double inputAmount,
+    required bool inputIsTotal,
+    required int installments,
+    required DateTime firstDate,
+    required String category,
+    String paymentMethod = 'Crédito',
+    String? creditCardUuid,
+  }) async {
+    final count = installments.clamp(2, 24);
+    final amounts = splitInstallmentAmounts(
+      inputAmount: inputAmount,
+      installments: count,
+      inputIsTotal: inputIsTotal,
+    );
+    final email = _currentUserEmail;
+    final now = DateTime.now();
+    final baseDesc = description.trim();
+    final ids = <int>[];
+
+    for (var i = 0; i < count; i++) {
+      final txDate = addMonthsClamped(firstDate, i);
+      final tx = Transaction(
+        clientUuid: AppDatabase.generateClientUuid(),
+        userEmail: email,
+        description: '$baseDesc (${i + 1}/$count)',
+        amount: amounts[i],
+        date: txDate,
+        type: TransactionType.expense,
+        category: category,
+        paymentMethod: paymentMethod,
+        creditCardUuid: creditCardUuid,
+        isSynced: false,
+        updatedAt: now,
+      );
+      ids.add(await _repository.addTransaction(tx));
+    }
+
+    _triggerBackgroundCloudSync();
+    return ids;
+  }
+
+  /// Define (ou limpa, quando `amount == null`) o valor informado manualmente para a fatura atual do cartão.
+  Future<int> updateCreditCardManualInvoice(
+    int cardId, {
+    double? amount,
+    String? yearMonth,
+  }) async {
+    final rows = await _db.updateCreditCardManualInvoice(
+      cardId,
+      manualInvoiceAmount: amount,
+      manualInvoiceMonth: yearMonth,
+    );
+    _triggerBackgroundCloudSync();
+    return rows;
+  }
+
   /// Cria ou atualiza um cartão de crédito (`LocalCreditCards`) e dispara sync em nuvem.
   Future<int> upsertCreditCard({
     int? id,
@@ -347,6 +509,7 @@ class TransactionsController {
     double targetMinPercent = 50.0,
     double targetMaxPercent = 80.0,
     int dueDay = 10,
+    int? closingDay,
     bool isPrimary = false,
   }) async {
     final effectiveEmail = (userEmail ?? _currentUserEmail)?.trim().toLowerCase();
@@ -359,6 +522,7 @@ class TransactionsController {
       targetMinPercent: targetMinPercent,
       targetMaxPercent: targetMaxPercent,
       dueDay: dueDay,
+      closingDay: closingDay,
       isPrimary: isPrimary,
     );
     _triggerBackgroundCloudSync();

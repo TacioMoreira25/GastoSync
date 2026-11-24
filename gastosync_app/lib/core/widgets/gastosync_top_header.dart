@@ -1176,6 +1176,21 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
     ),
   ];
 
+  static const List<_QuickPrompt> _simplifiedQuickPrompts = [
+    _QuickPrompt(
+      Icons.receipt_long_rounded,
+      'Quais boletos vencem este mês?',
+    ),
+    _QuickPrompt(
+      Icons.credit_card_rounded,
+      'Como está minha fatura do cartão?',
+    ),
+    _QuickPrompt(
+      Icons.pie_chart_outline_rounded,
+      'Resumo dos meus gastos do mês',
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -1247,7 +1262,9 @@ class _GastoSyncAiChatModalState extends ConsumerState<GastoSyncAiChatModal> {
       if (!hasUserMessages) ...[
         const SizedBox(height: 20),
         _SuggestionList(
-          prompts: _quickPrompts,
+          prompts: ref.watch(userProfileProvider).isSimplifiedMode
+              ? _simplifiedQuickPrompts
+              : _quickPrompts,
           enabled: !isSending,
           onSelected: _sendPrompt,
         ),
