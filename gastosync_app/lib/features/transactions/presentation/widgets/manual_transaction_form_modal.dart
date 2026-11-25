@@ -761,21 +761,70 @@ class _ManualTransactionFormModalState
         final effectiveBillCardUuid =
             _isCreditCardCharge ? selectedCardUuid : null;
         if (widget.initialBill != null) {
-          await controller.updateBill(
-            widget.initialBill!.copyWith(
-              description: description,
-              amount: amount,
-              dueDate: _selectedDate,
-              category: effectiveCategory,
-              barcode: _barcodeController.text.trim(),
-              isRecurring: _isRecurring,
-              isCreditCardCharge: _isCreditCardCharge,
-              creditCardUuid: effectiveBillCardUuid,
-              clearCreditCardUuid: effectiveBillCardUuid == null,
-              isSynced: false,
-              updatedAt: DateTime.now(),
-            ),
+          final updatedBill = widget.initialBill!.copyWith(
+            description: description,
+            amount: amount,
+            dueDate: _selectedDate,
+            category: effectiveCategory,
+            barcode: _barcodeController.text.trim(),
+            isRecurring: _isRecurring,
+            isCreditCardCharge: _isCreditCardCharge,
+            creditCardUuid: effectiveBillCardUuid,
+            clearCreditCardUuid: effectiveBillCardUuid == null,
+            isSynced: false,
+            updatedAt: DateTime.now(),
           );
+          final isInstallmentBill = TransactionsController
+              .installmentDescriptionPattern
+              .hasMatch(widget.initialBill!.description.trim());
+          if (isInstallmentBill && mounted) {
+            final scope = await showDialog<String>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Aplicar alteração em:'),
+                content: const Text(
+                  'Esta conta faz parte de um parcelamento. Deseja atualizar apenas esta parcela ou todas as parcelas?',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop('single'),
+                    child: const Text('Só esta'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop('all'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.emeraldPrimary,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Todas as parcelas'),
+                  ),
+                ],
+              ),
+            );
+            if (scope == null) {
+              if (mounted) {
+                setState(() => _isSubmitting = false);
+              }
+              return;
+            }
+            if (scope == 'all') {
+              final allBills =
+                  ref.read(watchBillsProvider).value ?? const <Bill>[];
+              await controller.updateBillInstallmentSeries(
+                original: widget.initialBill!,
+                updated: updatedBill,
+                allBills: allBills,
+              );
+            } else {
+              await controller.updateBill(updatedBill);
+            }
+          } else {
+            await controller.updateBill(updatedBill);
+          }
         } else if (_billFrequency == 'installment' &&
             _billInstallmentsCount >= 2) {
           await controller.createInstallmentBills(
@@ -2049,7 +2098,9 @@ class _ManualTransactionFormModalState
                           ],
                         ),
                       ),
-                    ] else
+                    ] else if (!TransactionsController
+                        .installmentDescriptionPattern
+                        .hasMatch(widget.initialBill!.description.trim()))
                       SwitchListTile(
                         key: const Key('manual_bill_recurring_switch'),
                         value: _isRecurring,

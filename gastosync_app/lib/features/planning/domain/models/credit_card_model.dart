@@ -244,6 +244,7 @@ class CreditCardUsageSummary {
     required this.variablePurchasesAmount,
     this.fixedSubscriptionsCount = 0,
     this.variablePurchasesCount = 0,
+    this.futureInstallmentsAmount = 0.0,
     this.manualInvoiceAmount,
   });
 
@@ -257,6 +258,9 @@ class CreditCardUsageSummary {
 
   final int fixedSubscriptionsCount;
   final int variablePurchasesCount;
+
+  /// Soma das parcelas futuras em aberto (`2/12`..`12/12`) que também consomem o limite do cartão
+  final double futureInstallmentsAmount;
 
   /// Valor de fatura informado manualmente pelo usuário para o mês vigente (opcional)
   final double? manualInvoiceAmount;
@@ -292,9 +296,13 @@ class CreditCardUsageSummary {
   double get remainingHealthyMargin =>
       math.max(0.0, healthyMaxAmount - totalUsedAmount);
 
+  /// Total comprometido no limite do cartão (fatura atual + parcelas futuras em aberto)
+  double get totalCommittedLimit =>
+      totalUsedAmount + futureInstallmentsAmount;
+
   /// Limite total restante em Reais até atingir 100% do limite do cartão
   double get remainingTotalLimit =>
-      math.max(0.0, card.limitAmount - totalUsedAmount);
+      math.max(0.0, card.limitAmount - totalCommittedLimit);
 
   /// Valor excedente acima do teto saudável configurado (`0.0` se estiver dentro do teto)
   double get amountAboveHealthyCeiling =>
@@ -358,18 +366,21 @@ class CreditCardUsageSummary {
     }
 
     final cycle = card.invoiceCycleForMonth(now);
+    final installmentSuffix = RegExp(r'\(\d+/\d+\)\s*$');
 
     double fixedSum = 0.0;
     int fixedCount = 0;
+    double futureInstallmentsSum = 0.0;
     for (final bill in bills) {
       if (bill.isDeleted || !bill.isCreditCardCharge) continue;
-      if (bill.dueDate.isBefore(cycle.start) ||
-          bill.dueDate.isAfter(cycle.end)) {
-        continue;
-      }
-      if (matchesCard(bill.creditCardUuid)) {
+      if (!matchesCard(bill.creditCardUuid)) continue;
+      if (!bill.dueDate.isBefore(cycle.start) &&
+          !bill.dueDate.isAfter(cycle.end)) {
         fixedSum += bill.amount;
         fixedCount++;
+      } else if (bill.dueDate.isAfter(cycle.end) &&
+          installmentSuffix.hasMatch(bill.description.trim())) {
+        futureInstallmentsSum += bill.amount;
       }
     }
 
@@ -377,13 +388,14 @@ class CreditCardUsageSummary {
     int variableCount = 0;
     for (final tx in transactions) {
       if (tx.isDeleted || !tx.isExpense) continue;
-      if (tx.date.isBefore(cycle.start) || tx.date.isAfter(cycle.end)) {
-        continue;
-      }
       if (!_isCreditPaymentMethod(tx.paymentMethod)) continue;
-      if (matchesCard(tx.creditCardUuid)) {
+      if (!matchesCard(tx.creditCardUuid)) continue;
+      if (!tx.date.isBefore(cycle.start) && !tx.date.isAfter(cycle.end)) {
         variableSum += tx.amount;
         variableCount++;
+      } else if (tx.date.isAfter(cycle.end) &&
+          installmentSuffix.hasMatch(tx.description.trim())) {
+        futureInstallmentsSum += tx.amount;
       }
     }
 
@@ -393,6 +405,7 @@ class CreditCardUsageSummary {
       variablePurchasesAmount: variableSum,
       fixedSubscriptionsCount: fixedCount,
       variablePurchasesCount: variableCount,
+      futureInstallmentsAmount: futureInstallmentsSum,
       manualInvoiceAmount: card.manualInvoiceForMonth(now),
     );
   }

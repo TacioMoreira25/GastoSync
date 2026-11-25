@@ -166,6 +166,116 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
+  Future<void> _handleDeleteBill(BuildContext context, Bill bill) async {
+    if (bill.id == null) return;
+    final isInstallment = TransactionsController.installmentDescriptionPattern
+        .hasMatch(bill.description.trim());
+    if (!isInstallment) {
+      await ref.read(transactionsControllerProvider).deleteBill(bill.id!);
+      return;
+    }
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Apagar compra parcelada?'),
+        content: Text(
+          '"${bill.description}" faz parte de um parcelamento. Deseja apagar apenas esta parcela ou todas as parcelas da compra?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(ctx).pop('single'),
+            child: const Text('Só esta'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('all'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+            ),
+            child: const Text('Todas as parcelas'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    if (choice == 'all') {
+      final allBills = ref.read(watchBillsProvider).value ?? const <Bill>[];
+      final removed = await ref
+          .read(transactionsControllerProvider)
+          .deleteBillInstallmentSeries(bill, allBills);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('$removed parcela(s) removida(s).'),
+        ),
+      );
+    } else {
+      await ref.read(transactionsControllerProvider).deleteBill(bill.id!);
+    }
+  }
+
+  Future<void> _handleDeleteTransaction(
+    BuildContext context,
+    Transaction tx,
+  ) async {
+    if (tx.id == null) return;
+    final isInstallment = TransactionsController.installmentDescriptionPattern
+        .hasMatch(tx.description.trim());
+    if (!isInstallment) {
+      await ref.read(transactionsControllerProvider).deleteTransaction(tx.id!);
+      return;
+    }
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Apagar compra parcelada?'),
+        content: Text(
+          '"${tx.description}" faz parte de um parcelamento. Deseja apagar apenas esta parcela ou todas as parcelas?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(ctx).pop('single'),
+            child: const Text('Só esta'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('all'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+            ),
+            child: const Text('Todas as parcelas'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    if (choice == 'all') {
+      final allTxs =
+          ref.read(watchTransactionsProvider).value ?? const <Transaction>[];
+      final removed = await ref
+          .read(transactionsControllerProvider)
+          .deleteTransactionInstallmentSeries(tx, allTxs);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('$removed parcela(s) removida(s).'),
+        ),
+      );
+    } else {
+      await ref.read(transactionsControllerProvider).deleteTransaction(tx.id!);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(watchTransactionsProvider);
@@ -349,6 +459,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     filtered: filteredTransactions,
                     periodLabel: periodLabel,
                     currencyFormatter: currencyFormatter,
+                    isSimplifiedMode: profile.isSimplifiedMode,
                   ),
                   const SizedBox(height: 14),
                 ],
@@ -741,6 +852,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     required List<Transaction> filtered,
     required String periodLabel,
     required NumberFormat currencyFormatter,
+    bool isSimplifiedMode = false,
   }) {
     final totalIncome = TransactionCalculations.calculateTotalIncome(filtered);
     final totalExpense =
@@ -766,39 +878,40 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Entradas',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 11,
-                      ),
-                    ),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        currencyFormatter.format(totalIncome),
-                        style: const TextStyle(
-                          color: AppTheme.emeraldPrimary,
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
+              if (!isSimplifiedMode || totalIncome > 0)
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Entradas',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11,
                         ),
                       ),
-                    ),
-                  ],
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          currencyFormatter.format(totalIncome),
+                          style: const TextStyle(
+                            color: AppTheme.emeraldPrimary,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Saídas',
-                      style: TextStyle(
+                    Text(
+                      isSimplifiedMode ? 'Total de despesas no período' : 'Saídas',
+                      style: const TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 11,
                       ),
@@ -818,34 +931,35 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   ],
                 ),
               ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Saldo',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 11,
-                      ),
-                    ),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        currencyFormatter.format(balance),
+              if (!isSimplifiedMode)
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Saldo',
                         style: TextStyle(
-                          color: balance >= 0
-                              ? AppTheme.textPrimary
-                              : AppTheme.errorColor,
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
+                          color: AppTheme.textSecondary,
+                          fontSize: 11,
                         ),
                       ),
-                    ),
-                  ],
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          currencyFormatter.format(balance),
+                          style: TextStyle(
+                            color: balance >= 0
+                                ? AppTheme.textPrimary
+                                : AppTheme.errorColor,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -1036,19 +1150,28 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           return matchesCard(b.creditCardUuid);
         }).toList();
 
+        final now = DateTime.now();
+        final isFutureMonth = now.isBefore(cycle.start);
+
+        bool isAlreadyOnInvoice(Bill b) =>
+            b.isPaid ||
+            (b.isCreditCardCharge &&
+                TransactionsController.installmentDescriptionPattern
+                    .hasMatch(b.description.trim()));
+
         final launchedAmount =
             cardTransactions.fold<double>(0.0, (s, tx) => s + tx.amount) +
                 cardBills
-                    .where((b) => b.isPaid)
+                    .where(isAlreadyOnInvoice)
                     .fold<double>(0.0, (s, b) => s + b.amount);
         final plannedAmount = cardBills
-            .where((b) => !b.isPaid)
+            .where((b) => !isAlreadyOnInvoice(b))
             .fold<double>(0.0, (s, b) => s + b.amount);
         final allCardBillsForMonth = cardBills;
         final closingDay = card.closingDay;
 
         final progress = card.limitAmount > 0
-            ? (summary.totalUsedAmount / card.limitAmount).clamp(0.0, 1.0)
+            ? (summary.totalCommittedLimit / card.limitAmount).clamp(0.0, 1.0)
             : 0.0;
 
         return Container(
@@ -1161,47 +1284,61 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 ],
               ),
               const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 7,
-                  backgroundColor: AppTheme.subtleSurface,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    summary.isLimitExceeded
-                        ? AppTheme.errorColor
-                        : (summary.isAboveHealthyCeiling
-                            ? AppTheme.warningAmber
-                            : AppTheme.emeraldPrimary),
+              if (!isFutureMonth) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 7,
+                    backgroundColor: AppTheme.subtleSurface,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      summary.isLimitExceeded
+                          ? AppTheme.errorColor
+                          : (summary.isAboveHealthyCeiling
+                              ? AppTheme.warningAmber
+                              : AppTheme.emeraldPrimary),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Limite disponível: ${currencyFormatter.format(summary.remainingTotalLimit)}',
-                    style: const TextStyle(
-                      color: AppTheme.emeraldDeep,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Limite disponível: ${currencyFormatter.format(summary.remainingTotalLimit)}',
+                      style: const TextStyle(
+                        color: AppTheme.emeraldDeep,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  Text(
-                    '${summary.utilizationPercent.toStringAsFixed(0)}% usado',
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
+                    Text(
+                      '${summary.utilizationPercent.toStringAsFixed(0)}% usado',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
+                  ],
+                ),
+              ] else
+                Text(
+                  'Fatura prevista para $periodLabel',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
-                ],
-              ),
-              if (launchedAmount > 0 || plannedAmount > 0) ...[
+                ),
+              if (launchedAmount > 0 ||
+                  plannedAmount > 0 ||
+                  (!isFutureMonth && summary.futureInstallmentsAmount > 0)) ...[
                 const SizedBox(height: 4),
                 Text(
-                  'Já lançado: ${currencyFormatter.format(launchedAmount)}  •  Previsto no ciclo: ${currencyFormatter.format(plannedAmount)}',
+                  (!isFutureMonth && summary.futureInstallmentsAmount > 0)
+                      ? 'Fatura: ${currencyFormatter.format(summary.totalUsedAmount)}  •  Parcelas futuras no limite: ${currencyFormatter.format(summary.futureInstallmentsAmount)}'
+                      : 'Já lançado: ${currencyFormatter.format(launchedAmount)}  •  Previsto no ciclo: ${currencyFormatter.format(plannedAmount)}',
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
                     fontSize: 11.5,
@@ -1305,7 +1442,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       ),
                     ),
                   if (cardTransactions.isNotEmpty ||
-                      allCardBillsForMonth.any((b) => b.isPaid)) ...[
+                      allCardBillsForMonth.any(isAlreadyOnInvoice)) ...[
                     const Padding(
                       padding: EdgeInsets.only(top: 4, bottom: 2),
                       child: Align(
@@ -1354,7 +1491,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                         ),
                       ),
                     ),
-                    ...allCardBillsForMonth.where((b) => b.isPaid).map(
+                    ...allCardBillsForMonth.where(isAlreadyOnInvoice).map(
                           (b) => ListTile(
                             dense: true,
                             contentPadding: EdgeInsets.zero,
@@ -1371,7 +1508,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                               ),
                             ),
                             subtitle: Text(
-                              'Confirmada na fatura • ${dateFormatter.format(b.dueDate)}',
+                              'Na fatura • ${dateFormatter.format(b.dueDate)}',
                               style: const TextStyle(fontSize: 11),
                             ),
                             trailing: Text(
@@ -1388,7 +1525,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           ),
                         ),
                   ],
-                  if (allCardBillsForMonth.any((b) => !b.isPaid)) ...[
+                  if (allCardBillsForMonth.any((b) => !isAlreadyOnInvoice(b))) ...[
                     const Padding(
                       padding: EdgeInsets.only(top: 8, bottom: 2),
                       child: Align(
@@ -1404,7 +1541,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                         ),
                       ),
                     ),
-                    ...allCardBillsForMonth.where((b) => !b.isPaid).map(
+                    ...allCardBillsForMonth
+                        .where((b) => !isAlreadyOnInvoice(b))
+                        .map(
                           (b) => ListTile(
                             dense: true,
                             contentPadding: EdgeInsets.zero,
@@ -2352,11 +2491,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           padding: EdgeInsets.zero,
                           visualDensity: VisualDensity.compact,
                           tooltip: 'Excluir transação',
-                          onPressed: () {
-                            ref
-                                .read(transactionsControllerProvider)
-                                .deleteTransaction(tx.id!);
-                          },
+                          onPressed: () => _handleDeleteTransaction(context, tx),
                         ),
                       ],
                     ],
@@ -2459,11 +2594,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     ),
                     visualDensity: VisualDensity.compact,
                     tooltip: 'Excluir transação',
-                    onPressed: () {
-                      ref
-                          .read(transactionsControllerProvider)
-                          .deleteTransaction(tx.id!);
-                    },
+                    onPressed: () => _handleDeleteTransaction(context, tx),
                   ),
                 ],
               ],
@@ -2553,6 +2684,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         ),
         itemBuilder: (context, index) {
           final bill = filteredBills[index];
+          final isInstallmentCardBill = bill.isCreditCardCharge &&
+              TransactionsController.installmentDescriptionPattern
+                  .hasMatch(bill.description.trim());
           final iconData = _categoryIcon(bill.category, isIncome: false);
           final isPaid = bill.isPaid;
           final isOverdue = bill.isOverdue();
@@ -2742,11 +2876,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                                 ),
                                 visualDensity: VisualDensity.compact,
                                 tooltip: 'Excluir boleto',
-                                onPressed: () {
-                                  ref
-                                      .read(transactionsControllerProvider)
-                                      .deleteBill(bill.id!);
-                                },
+                                onPressed: () => _handleDeleteBill(context, bill),
                               ),
                             ],
                           ),
@@ -2782,7 +2912,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                             ),
                           ),
                         ),
-                      if (!isPaid && bill.id != null)
+                      if (!isPaid && bill.id != null && !isInstallmentCardBill)
                         FilledButton.icon(
                           key: Key('pay_bill_button_${bill.id}'),
                           onPressed: () => _handlePayBill(context, bill),

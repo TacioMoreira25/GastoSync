@@ -330,6 +330,122 @@ class TransactionsController {
     return rows;
   }
 
+  static final RegExp installmentDescriptionPattern =
+      RegExp(r'^(.+?)\s*\((\d+)/(\d+)\)\s*$');
+
+  /// Remove de uma vez todas as parcelas da mesma compra parcelada em `LocalBills`
+  /// (ex.: `SSD (1/12)` até `SSD (12/12)`), propagando exclusão na nuvem.
+  Future<int> deleteBillInstallmentSeries(
+    Bill target,
+    List<Bill> allBills,
+  ) async {
+    final match =
+        installmentDescriptionPattern.firstMatch(target.description.trim());
+    if (match == null) {
+      if (target.id == null) return 0;
+      return deleteBill(target.id!);
+    }
+    final baseName = match.group(1)!.trim().toLowerCase();
+    final total = match.group(3)!;
+    var count = 0;
+    for (final b in allBills) {
+      if (b.isDeleted || b.id == null) continue;
+      final m = installmentDescriptionPattern.firstMatch(b.description.trim());
+      if (m != null &&
+          m.group(1)!.trim().toLowerCase() == baseName &&
+          m.group(3) == total) {
+        await _db.deleteBillById(b.id!, softDelete: true);
+        count++;
+      }
+    }
+    if (count > 0) {
+      _triggerBackgroundCloudSync();
+    }
+    return count;
+  }
+
+  /// Atualiza de uma vez todas as parcelas da mesma compra parcelada em `LocalBills`
+  /// (mantendo o sufixo `(k/N)` e a data de vencimento de cada mês).
+  Future<int> updateBillInstallmentSeries({
+    required Bill original,
+    required Bill updated,
+    required List<Bill> allBills,
+  }) async {
+    final origMatch =
+        installmentDescriptionPattern.firstMatch(original.description.trim());
+    if (origMatch == null) {
+      await updateBill(updated);
+      return 1;
+    }
+    final oldBase = origMatch.group(1)!.trim().toLowerCase();
+    final total = origMatch.group(3)!;
+
+    final newMatch =
+        installmentDescriptionPattern.firstMatch(updated.description.trim());
+    final newBase = newMatch != null
+        ? newMatch.group(1)!.trim()
+        : updated.description.trim();
+
+    final now = DateTime.now();
+    var count = 0;
+    for (final b in allBills) {
+      if (b.isDeleted || b.id == null) continue;
+      final m = installmentDescriptionPattern.firstMatch(b.description.trim());
+      if (m != null &&
+          m.group(1)!.trim().toLowerCase() == oldBase &&
+          m.group(3) == total) {
+        final idx = m.group(2)!;
+        final nextBill = b.copyWith(
+          description: '$newBase ($idx/$total)',
+          amount: updated.amount,
+          category: updated.category,
+          isCreditCardCharge: updated.isCreditCardCharge,
+          creditCardUuid: updated.creditCardUuid,
+          clearCreditCardUuid: updated.creditCardUuid == null,
+          isSynced: false,
+          updatedAt: now,
+        );
+        await _db.updateBill(b.id!, nextBill.toCompanion());
+        count++;
+      }
+    }
+    if (count > 0) {
+      _triggerBackgroundCloudSync();
+    }
+    return count;
+  }
+
+  /// Remove de uma vez todas as parcelas da mesma compra parcelada em `LocalTransactions`.
+  Future<int> deleteTransactionInstallmentSeries(
+    Transaction target,
+    List<Transaction> allTransactions,
+  ) async {
+    final match =
+        installmentDescriptionPattern.firstMatch(target.description.trim());
+    if (match == null) {
+      if (target.id == null) return 0;
+      await deleteTransaction(target.id!);
+      return 1;
+    }
+    final baseName = match.group(1)!.trim().toLowerCase();
+    final total = match.group(3)!;
+    var count = 0;
+    for (final tx in allTransactions) {
+      if (tx.isDeleted || tx.id == null) continue;
+      final m = installmentDescriptionPattern.firstMatch(tx.description.trim());
+      if (m != null &&
+          m.group(1)!.trim().toLowerCase() == baseName &&
+          m.group(3) == total) {
+        await _repository.deleteTransaction(tx.id!);
+        count++;
+      }
+    }
+    if (count > 0) {
+      _triggerBackgroundCloudSync();
+    }
+    return count;
+  }
+
   /// Dá baixa em um boleto (`payBillAndCreateTransaction`) (T014)
   Future<PayBillResult> payBill(int billId, {DateTime? paidAt}) async {
     final res = await _db.payBillAndCreateTransaction(billId, paidAt: paidAt);
@@ -416,8 +532,10 @@ class TransactionsController {
     for (var i = 0; i < count; i++) {
       final dueDate = addMonthsClamped(firstDueDate, i);
       final targetDue = DateTime(dueDate.year, dueDate.month, dueDate.day);
-      final status =
-          targetDue.isBefore(today) ? BillStatus.overdue : BillStatus.pending;
+      // Compra parcelada no cartão já entra confirmada na fatura de todos os meses
+      final status = isCreditCardCharge
+          ? BillStatus.paid
+          : (targetDue.isBefore(today) ? BillStatus.overdue : BillStatus.pending);
       final bill = Bill(
         clientUuid: AppDatabase.generateClientUuid(),
         userEmail: email,
@@ -430,6 +548,7 @@ class TransactionsController {
         isCreditCardCharge: isCreditCardCharge,
         creditCardUuid: creditCardUuid,
         status: status,
+        paidAt: isCreditCardCharge ? now : null,
         isSynced: false,
         updatedAt: now,
       );
