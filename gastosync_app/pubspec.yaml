@@ -1,7 +1,7 @@
 name: gastosync_app
 description: "GastoSync - Gestão Financeira Pessoal Offline-First e Agente Preditivo IA."
 publish_to: 'none'
-version: 1.1.1+5
+version: 1.2.0+6
 
 environment:
   sdk: ^3.13.2
